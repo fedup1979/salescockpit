@@ -1,9 +1,24 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
+from pathlib import Path
+import sys
 
 import streamlit as st
 
+ROOT_DIR = Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from sales_cockpit.business_rules import (
+    DEMO_TEMPLATE_CATALOG,
+    LEAD_TYPES,
+    OPERATING_RULES,
+    QUALIFICATION_STATUSES,
+    SALES_ACTORS,
+    SCHEDULE_RULES,
+    SEQUENCES,
+)
 from sales_cockpit.db import seed_initial_data
 from sales_cockpit.services.whatsapp_rules import parse_dt
 from sales_cockpit.services.schooldrive import SchoolDriveConnector
@@ -11,15 +26,19 @@ from sales_cockpit.store import (
     add_manual_note,
     authenticate,
     complete_task,
-    create_call_task,
+    create_next_action,
     create_template,
     get_conversation,
+    get_next_action_for_lead,
     get_template,
+    handoff_to_closer,
+    list_actions_for_lead,
     list_conversations,
     list_messages,
     list_tasks,
     list_templates,
     list_users,
+    schedule_followup,
     send_freeform_message,
     send_template_message,
     set_conversation_status,
@@ -30,8 +49,11 @@ from sales_cockpit.ui.styles import APP_CSS
 
 SALES_STAGES = ["new", "setting", "appointment_booked", "closing", "won", "lost", "not_interesting", "no_show", "blacklist"]
 TEMPERATURES = ["cold", "warm", "hot"]
-LEAD_STATUSES = ["new", "suspect", "lead", "prospect", "deal_pending", "deal_confirmed", "dead_lead", "dead_prospect"]
+LEAD_STATUSES = [item["value"] for item in QUALIFICATION_STATUSES]
 URGENCIES = ["low", "normal", "high", "urgent"]
+WORK_QUEUES = ["todo", "follow_up", "waiting", "resolved"]
+RESPONSIBILITIES = ["all", "setter", "closer"]
+ACTION_TYPES = ["reply", "call", "follow_up", "closing_call", "other"]
 OUTCOMES = ["Reached", "No answer", "Wrong number", "Callback requested", "Appointment booked", "Not interested", "Converted", "Other"]
 
 DISPLAY_LABELS = {
@@ -51,6 +73,12 @@ DISPLAY_LABELS = {
     "suspect": "Suspect",
     "lead": "Lead",
     "prospect": "Prospect",
+    "neutral": "Neutre",
+    "eligible": "Éligible",
+    "not_relevant": "Non pertinent",
+    "will_sign": "Va signer",
+    "signed": "A signé",
+    "do_not_contact": "Ne plus contacter",
     "deal_pending": "Deal en attente",
     "deal_confirmed": "Deal confirmé",
     "dead_lead": "Lead perdu",
@@ -60,6 +88,13 @@ DISPLAY_LABELS = {
     "in_progress": "En cours",
     "done": "Terminée",
     "cancelled": "Annulée",
+    "todo": "À traiter",
+    "follow_up": "À relancer",
+    "waiting": "En attente",
+    "reply": "Répondre",
+    "call": "Appeler",
+    "closing_call": "Appel closing",
+    "other": "Autre",
     "low": "Faible",
     "normal": "Normale",
     "high": "Élevée",
@@ -68,6 +103,7 @@ DISPLAY_LABELS = {
     "pending": "En attente",
     "approved": "Approuvé",
     "utility": "Utilitaire",
+    "marketing": "Marketing",
     "admin": "Admin",
     "setter": "Setter",
     "closer": "Closer",
@@ -91,8 +127,7 @@ HELP_TEXTS = {
         "chaud = forte probabilité d'action rapide."
     ),
     "lead_status": (
-        "Statut CRM du contact. Il décrit la nature du contact dans le pipeline, "
-        "par exemple nouveau, lead, prospect, deal en attente ou perdu."
+        "Qualification commerciale. Non pertinent, Ne plus contacter et A signé arrêtent les relances."
     ),
 }
 
@@ -111,7 +146,7 @@ def main() -> None:
 
 def render_login() -> None:
     st.title("Sales Cockpit")
-    st.caption("Interface interne ESSR pour WhatsApp, tâches d'appel et qualification des leads.")
+    st.caption("Interface interne ESSR pour WhatsApp, actions commerciales et qualification des leads.")
 
     with st.form("login", clear_on_submit=False):
         email = st.text_input("E-mail", placeholder="prenom.nom@essr.ch")
@@ -135,7 +170,7 @@ def render_shell() -> None:
         st.caption(f"{user['full_name']} · {user['role']}")
         nav = st.radio(
             "Navigation",
-            ["Inbox", "Tâches", "Modèles", "Admin"],
+            ["Inbox", "À faire", "Modèles", "Admin"],
             label_visibility="collapsed",
         )
         if st.button("Déconnexion", use_container_width=True):
@@ -144,8 +179,8 @@ def render_shell() -> None:
 
     if nav == "Inbox":
         render_inbox(user)
-    elif nav == "Tâches":
-        render_tasks(user)
+    elif nav == "À faire":
+        render_work_queue(user)
     elif nav == "Modèles":
         render_templates(user)
     elif nav == "Admin":
@@ -154,12 +189,20 @@ def render_shell() -> None:
 
 def render_inbox(user: dict) -> None:
     st.title("Inbox WhatsApp")
-    st.caption("Tous les leads sont visibles. Le texte libre est bloqué si la fenêtre WhatsApp est fermée.")
 
-    filters = st.columns([2, 1])
+    filters = st.columns([2, 1, 1])
     search = filters[0].text_input("Recherche", placeholder="Nom, téléphone, cours, message...")
     stage = filters[1].selectbox("Étape", ["all"] + SALES_STAGES, format_func=labelize)
-    conversations = list_conversations(search=search, stage=stage)
+    responsibility = filters[2].selectbox(
+        "Responsabilité",
+        RESPONSIBILITIES,
+        format_func=labelize,
+    )
+    conversations = list_conversations(
+        search=search,
+        stage=stage,
+        responsibility=responsibility,
+    )
 
     if not conversations:
         st.warning("Aucune conversation trouvée.")
@@ -167,29 +210,33 @@ def render_inbox(user: dict) -> None:
 
     left, right = st.columns([0.95, 1.45], gap="large")
     with left:
-        st.subheader("Conversations")
-        open_conversations = [
-            conv for conv in conversations if conv["conversation_status"] != "resolved"
-        ]
-        resolved_conversations = [
-            conv for conv in conversations if conv["conversation_status"] == "resolved"
-        ]
+        st.subheader("File de travail")
+        conversations_by_queue = {
+            queue: [conv for conv in conversations if conv["work_queue"] == queue]
+            for queue in WORK_QUEUES
+        }
 
         visible_ids = {conv["conversation_id"] for conv in conversations}
         if st.session_state.get("selected_conversation_id") not in visible_ids:
-            default = open_conversations[0] if open_conversations else conversations[0]
+            default = next(
+                (
+                    queue_conversations[0]
+                    for queue_conversations in conversations_by_queue.values()
+                    if queue_conversations
+                ),
+                conversations[0],
+            )
             st.session_state.selected_conversation_id = default["conversation_id"]
 
         tabs = st.tabs(
             [
-                f"Ouvertes ({len(open_conversations)})",
-                f"Résolues ({len(resolved_conversations)})",
+                f"{labelize(queue)} ({len(conversations_by_queue[queue])})"
+                for queue in WORK_QUEUES
             ]
         )
-        with tabs[0]:
-            render_conversation_rows(open_conversations, "open")
-        with tabs[1]:
-            render_conversation_rows(resolved_conversations, "resolved")
+        for index, queue in enumerate(WORK_QUEUES):
+            with tabs[index]:
+                render_conversation_rows(conversations_by_queue[queue], queue)
         conversation_id = st.session_state.selected_conversation_id
 
     with right:
@@ -198,7 +245,7 @@ def render_inbox(user: dict) -> None:
 
 def render_conversation_rows(conversations: list[dict], bucket: str) -> None:
     if not conversations:
-        st.info("Aucune conversation dans cet onglet.")
+        st.info("Aucune conversation dans cette file.")
         return
 
     for conv in conversations:
@@ -220,18 +267,28 @@ def render_conversation_rows(conversations: list[dict], bucket: str) -> None:
 
 
 def conversation_row_html(conv: dict) -> str:
-    owner = conv.get("closer_name") or conv.get("setter_name") or "Non assigné"
+    owner = (
+        conv.get("next_action_assigned_to_name")
+        or conv.get("closer_name")
+        or conv.get("setter_name")
+        or "Non assigné"
+    )
     preview = compact_text(conv.get("last_message_body") or "Aucun message", 96)
+    action = conv.get("next_action_title") or "Aucune action ouverte"
+    due = format_due(conv.get("next_action_due_at"))
     name = escape_html(f"{conv['first_name']} {conv['last_name']}")
     course = escape_html(conv.get("course_title") or "Sans cours")
     owner_html = escape_html(owner)
     preview_html = escape_html(preview)
-    tasks = int(conv.get("open_tasks") or 0)
-    task_label = f"{tasks} tâche" if tasks == 1 else f"{tasks} tâches"
+    action_html = escape_html(compact_text(action, 92))
+    due_html = escape_html(due)
+    queue_html = escape_html(labelize(conv.get("work_queue")))
     return f"""
         <div class="sc-conversation-row">
           <div class="sc-conversation-title"><strong>{name}</strong></div>
-          <div class="sc-row-meta">{course} · {owner_html} · {task_label}</div>
+          <div class="sc-row-meta">{course} · {owner_html}</div>
+          <div class="sc-next-action-line"><span>{queue_html}</span> · {action_html}</div>
+          <div class="sc-row-meta">{due_html}</div>
           <div class="sc-preview">{preview_html}</div>
         </div>
     """
@@ -281,7 +338,9 @@ def render_conversation_detail(user: dict, conversation_id: int) -> None:
     info_cols[2].metric("Température", labelize(conv["temperature"]))
     info_cols[3].metric("Conversation", labelize(conv["status"]))
 
-    tabs = st.tabs(["Conversation", "Qualification", "Tâches", "Note privée"])
+    render_next_action_summary(conv)
+
+    tabs = st.tabs(["Conversation", "Qualification", "À faire", "Note privée"])
     with tabs[0]:
         render_messages(conversation_id)
         st.markdown('<div class="sc-reply-anchor"></div>', unsafe_allow_html=True)
@@ -289,7 +348,7 @@ def render_conversation_detail(user: dict, conversation_id: int) -> None:
     with tabs[1]:
         render_qualification(user, conv)
     with tabs[2]:
-        render_task_box(user, conv)
+        render_next_action_box(user, conv)
     with tabs[3]:
         render_manual_note_box(user, conv)
 
@@ -302,7 +361,7 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
             if ok:
                 st.rerun()
     else:
-        if st.button("Marquer comme résolue", use_container_width=True):
+        if st.button("Marquer résolue", use_container_width=True):
             ok, message = set_conversation_status(conv["id"], user["id"], "resolved")
             show_result(ok, message)
             if ok:
@@ -430,38 +489,199 @@ def render_qualification(user: dict, conv: dict) -> None:
         st.rerun()
 
 
-def render_task_box(user: dict, conv: dict) -> None:
-    tasks = [task for task in list_tasks("all") if task["lead_id"] == conv["lead_id"]]
-    for task in tasks:
-        status = labelize(task["status"])
+def render_next_action_summary(conv: dict) -> None:
+    action = get_next_action_for_lead(conv["lead_id"])
+    if conv["status"] == "resolved":
+        queue = "resolved"
+        title = "Aucune action nécessaire"
+        assignee = "Conversation résolue"
+        due = "Aucune échéance"
+        urgency = "normal"
+    elif action:
+        queue = detail_work_queue(conv, action)
+        title = action["title"]
+        assignee = action.get("assigned_to_name") or "Non assigné"
+        due = format_due(action.get("due_at"))
+        urgency = action.get("urgency") or "normal"
+    else:
+        queue = "waiting"
+        title = "Aucune action ouverte"
+        assignee = conv.get("setter_name") or "Non assigné"
+        due = "À définir"
+        urgency = "normal"
+
+    st.markdown(
+        f"""
+        <div class="sc-action-panel">
+          <div>
+            <div class="sc-compact-label">Prochaine action</div>
+            <div class="sc-action-title">{escape_html(title)}</div>
+            <div class="sc-row-meta">{escape_html(assignee)} · {escape_html(due)}</div>
+          </div>
+          <div class="sc-action-badges">
+            <span class="sc-badge sc-badge-neutral">{escape_html(labelize(queue))}</span>
+            <span class="sc-badge sc-badge-neutral">{escape_html(labelize(urgency))}</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_next_action_box(user: dict, conv: dict) -> None:
+    action = get_next_action_for_lead(conv["lead_id"])
+    users = list_users()
+    active_assignee_id = default_assignee_id(conv, action, user)
+
+    if action:
+        st.markdown("**Action en cours**")
         st.markdown(
-            f"**{escape_html(task['title'])}** · {status} · {labelize(task['urgency'])} · {task.get('assigned_to_name') or 'Non assigné'}"
+            f"""
+            <div class="sc-panel">
+              <div class="sc-action-title">{escape_html(action['title'])}</div>
+              <div class="sc-row-meta">
+                {escape_html(labelize(action['type']))} · {escape_html(action.get('assigned_to_name') or 'Non assigné')} ·
+                {escape_html(format_due(action.get('due_at')))} · {escape_html(labelize(action.get('urgency')))}
+              </div>
+              {f"<div class='sc-action-description'>{escape_html(action['description'])}</div>" if action.get('description') else ""}
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
-        if task["status"] != "done":
-            outcome = st.selectbox("Résultat", OUTCOMES, key=f"outcome_{task['id']}", format_func=labelize)
-            if st.button("Marquer terminé", key=f"complete_{task['id']}"):
-                complete_task(task["id"], user["id"], outcome)
-                st.rerun()
+        outcome = st.selectbox(
+            "Résultat",
+            OUTCOMES,
+            key=f"next_action_outcome_{action['id']}",
+            format_func=labelize,
+        )
+        if st.button("Terminer l’action", key=f"complete_next_action_{action['id']}"):
+            complete_task(action["id"], user["id"], outcome)
+            st.rerun()
+    else:
+        st.info("Aucune action ouverte pour cette conversation.")
 
     st.divider()
-    with st.form(f"new_task_{conv['lead_id']}"):
-        users = list_users()
-        assignee = st.selectbox("Assigné à", users, format_func=lambda u: f"{u['full_name']} · {labelize(u['role'])}")
-        title = st.text_input("Titre", value=f"Appeler {conv['first_name']}")
-        urgency = st.selectbox("Urgence", URGENCIES, index=1, format_func=labelize)
-        submitted = st.form_submit_button("Créer une tâche d'appel")
-    if submitted:
-        create_call_task(
-            conv["lead_id"],
+    st.markdown("**Décision rapide**")
+    quick_cols = st.columns(3)
+    if quick_cols[0].button("Relancer demain", use_container_width=True):
+        ok, message = schedule_followup(
             conv["id"],
-            title.strip(),
-            assignee["id"],
             user["id"],
-            urgency,
-            due_at=(datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+            active_assignee_id,
+            quick_due_at(days=1),
+            urgency="normal",
         )
-        st.success("Tâche créée.")
-        st.rerun()
+        show_result(ok, message)
+        if ok:
+            st.rerun()
+    if quick_cols[1].button("Relancer dans 3 jours", use_container_width=True):
+        ok, message = schedule_followup(
+            conv["id"],
+            user["id"],
+            active_assignee_id,
+            quick_due_at(days=3),
+            urgency="normal",
+        )
+        show_result(ok, message)
+        if ok:
+            st.rerun()
+    if quick_cols[2].button("Résoudre", use_container_width=True):
+        ok, message = set_conversation_status(conv["id"], user["id"], "resolved")
+        show_result(ok, message)
+        if ok:
+            st.rerun()
+
+    st.divider()
+    followup_col, closer_col = st.columns(2, gap="large")
+    with followup_col:
+        st.markdown("**Planifier une relance**")
+        with st.form(f"schedule_followup_{conv['lead_id']}"):
+            assignee = st.selectbox(
+                "Assigné à",
+                users,
+                index=safe_user_index(users, active_assignee_id),
+                format_func=format_user,
+            )
+            followup_date = st.date_input("Date", value=(datetime.now().date() + timedelta(days=1)))
+            followup_time = st.time_input("Heure", value=time(9, 0))
+            urgency = st.selectbox("Urgence", URGENCIES, index=1, format_func=labelize)
+            notes = st.text_area("Note interne", height=90)
+            submitted = st.form_submit_button("Planifier la relance")
+        if submitted:
+            ok, message = schedule_followup(
+                conv["id"],
+                user["id"],
+                assignee["id"],
+                local_due_at(followup_date, followup_time),
+                urgency=urgency,
+                notes=notes.strip() or None,
+            )
+            show_result(ok, message)
+            if ok:
+                st.rerun()
+
+    with closer_col:
+        st.markdown("**Passer au closer**")
+        closers = [item for item in users if item["role"] == "closer"]
+        if not closers:
+            st.warning("Aucun closer actif.")
+        else:
+            with st.form(f"handoff_closer_{conv['lead_id']}"):
+                closer = st.selectbox("Closer", closers, format_func=format_user)
+                appointment_note = st.text_input("RDV / contexte", placeholder="Ex. disponible demain à 14h")
+                notes = st.text_area("Remarques pour le closer", height=90)
+                submitted = st.form_submit_button("Passer au closer")
+            if submitted:
+                ok, message = handoff_to_closer(
+                    conv["id"],
+                    user["id"],
+                    closer["id"],
+                    appointment_note.strip(),
+                    notes.strip(),
+                )
+                show_result(ok, message)
+                if ok:
+                    st.rerun()
+
+    with st.expander("Créer une action manuelle"):
+        with st.form(f"manual_action_{conv['lead_id']}"):
+            assignee = st.selectbox(
+                "Responsable",
+                users,
+                index=safe_user_index(users, active_assignee_id),
+                format_func=format_user,
+            )
+            action_type = st.selectbox("Type d’action", ACTION_TYPES, format_func=labelize)
+            title = st.text_input("Titre", value=f"Contacter {conv['first_name']} {conv['last_name']}")
+            action_date = st.date_input("Échéance", value=datetime.now().date())
+            action_time = st.time_input("Heure", value=time(9, 0), key=f"manual_action_time_{conv['lead_id']}")
+            urgency = st.selectbox("Urgence", URGENCIES, index=1, format_func=labelize, key=f"manual_action_urgency_{conv['lead_id']}")
+            description = st.text_area("Description", height=90)
+            submitted = st.form_submit_button("Créer l’action")
+        if submitted:
+            create_next_action(
+                conv["lead_id"],
+                conv["id"],
+                action_type,
+                title.strip(),
+                assignee["id"],
+                user["id"],
+                urgency=urgency,
+                due_at=local_due_at(action_date, action_time),
+                description=description.strip() or None,
+            )
+            st.success("Action créée.")
+            st.rerun()
+
+    actions = list_actions_for_lead(conv["lead_id"], "all")
+    if actions:
+        st.divider()
+        st.markdown("**Historique des actions**")
+        for item in actions:
+            st.caption(
+                f"{item['title']} · {labelize(item['type'])} · {labelize(item['status'])} · "
+                f"{item.get('assigned_to_name') or 'Non assigné'} · {format_due(item.get('due_at'))}"
+            )
 
 
 def render_manual_note_box(user: dict, conv: dict) -> None:
@@ -476,25 +696,60 @@ def render_manual_note_box(user: dict, conv: dict) -> None:
             st.rerun()
 
 
-def render_tasks(user: dict) -> None:
-    st.title("Tâches d'appel")
-    status = st.selectbox("Statut", ["open", "in_progress", "done", "cancelled", "all"], format_func=labelize)
+def render_work_queue(user: dict) -> None:
+    st.title("À faire")
+    filters = st.columns([1, 1, 1])
+    status = filters[0].selectbox(
+        "Statut",
+        ["open", "in_progress", "done", "cancelled", "all"],
+        format_func=labelize,
+    )
+    responsibility = filters[1].selectbox(
+        "Responsabilité",
+        RESPONSIBILITIES,
+        format_func=labelize,
+        key="work_queue_responsibility",
+    )
+    action_type = filters[2].selectbox(
+        "Type d’action",
+        ["all"] + ACTION_TYPES,
+        format_func=labelize,
+    )
     tasks = list_tasks(status)
+    if responsibility != "all":
+        tasks = [task for task in tasks if task.get("assigned_to_role") == responsibility]
+    if action_type != "all":
+        tasks = [task for task in tasks if task["type"] == action_type]
+
     if not tasks:
-        st.info("Aucune tâche.")
+        st.info("Aucune action.")
         return
     for task in tasks:
         with st.container(border=True):
-            st.write(f"**{task['title']}**")
-            st.caption(
-                f"{task['first_name']} {task['last_name']} · {task.get('course_title') or 'Sans cours'} · "
-                f"{task.get('assigned_to_name') or 'Non assigné'} · {labelize(task['urgency'])} · {labelize(task['status'])}"
-            )
-            if task["status"] != "done":
-                outcome = st.selectbox("Résultat", OUTCOMES, key=f"task_page_outcome_{task['id']}", format_func=labelize)
-                if st.button("Terminer", key=f"task_page_complete_{task['id']}"):
-                    complete_task(task["id"], user["id"], outcome)
-                    st.rerun()
+            title_col, meta_col, action_col = st.columns([0.48, 0.32, 0.2], vertical_alignment="center")
+            with title_col:
+                st.write(f"**{task['title']}**")
+                st.caption(
+                    f"{task['first_name']} {task['last_name']} · {task.get('course_title') or 'Sans cours'}"
+                )
+            with meta_col:
+                st.caption(
+                    f"{task.get('assigned_to_name') or 'Non assigné'} · {labelize(task['type'])} · "
+                    f"{labelize(task['urgency'])} · {format_due(task.get('due_at'))}"
+                )
+                st.caption(labelize(task["status"]))
+            with action_col:
+                if task["status"] != "done":
+                    outcome = st.selectbox(
+                        "Résultat",
+                        OUTCOMES,
+                        key=f"task_page_outcome_{task['id']}",
+                        format_func=labelize,
+                        label_visibility="collapsed",
+                    )
+                    if st.button("Terminer", key=f"task_page_complete_{task['id']}", use_container_width=True):
+                        complete_task(task["id"], user["id"], outcome)
+                        st.rerun()
 
 
 def render_templates(user: dict) -> None:
@@ -535,17 +790,46 @@ def render_admin(user: dict) -> None:
     st.title("Admin")
     if user["role"] != "admin":
         st.warning("Accès lecture seul. Les réglages sont réservés aux admins.")
-    st.subheader("Utilisateurs")
-    st.dataframe(list_users(active_only=False), hide_index=True, use_container_width=True)
-    st.subheader("Intégrations")
-    st.markdown(
-        """
-        - Twilio : mock local actif.
-        - SchoolDrive : connecteur read-only à brancher.
-        - Notion : connecteur read-only à brancher.
-        - Front.io : aucun changement de webhook en V1 locale.
-        """
-    )
+
+    tabs = st.tabs(["Utilisateurs", "Règles métier", "Séquences", "Templates", "Intégrations"])
+    with tabs[0]:
+        st.subheader("Utilisateurs")
+        st.dataframe(list_users(active_only=False), hide_index=True, use_container_width=True)
+        st.subheader("Rôles commerciaux")
+        st.dataframe(SALES_ACTORS, hide_index=True, use_container_width=True)
+
+    with tabs[1]:
+        st.subheader("Qualifications")
+        st.dataframe(QUALIFICATION_STATUSES, hide_index=True, use_container_width=True)
+        st.subheader("Règles opérationnelles")
+        st.dataframe(OPERATING_RULES, hide_index=True, use_container_width=True)
+        st.subheader("Horaires et bascules")
+        st.dataframe(SCHEDULE_RULES, hide_index=True, use_container_width=True)
+        st.subheader("Types de leads SchoolDrive")
+        st.dataframe(LEAD_TYPES, hide_index=True, use_container_width=True)
+
+    with tabs[2]:
+        st.subheader("Séquences de relance")
+        st.dataframe(SEQUENCES, hide_index=True, use_container_width=True)
+        st.info(
+            "V1 affiche les règles. L'automatisation des séquences sera branchée après synchronisation SchoolDrive/Twilio."
+        )
+
+    with tabs[3]:
+        st.subheader("Templates de démo")
+        st.dataframe(DEMO_TEMPLATE_CATALOG, hide_index=True, use_container_width=True)
+        st.caption("Les vrais templates seront synchronisés depuis Twilio. Les noms ci-dessus servent de mapping provisoire.")
+
+    with tabs[4]:
+        st.subheader("Intégrations")
+        st.markdown(
+            """
+            - Twilio : mock local actif, synchronisation templates à brancher.
+            - SchoolDrive : connecteur read-only à brancher pour leads, types de leads et dates de cours.
+            - Notion : connecteur read-only en V1, écriture future possible pour qualifications.
+            - Front.io : aucun changement de webhook en V1 locale.
+            """
+        )
 
 
 def default_variable_value(conv: dict, key: str) -> str:
@@ -596,6 +880,65 @@ def format_dt(value: str | None) -> str:
     if not parsed:
         return "Non disponible"
     return parsed.astimezone().strftime("%d.%m.%Y %H:%M")
+
+
+def format_due(value: str | None) -> str:
+    if not value:
+        return "Aucune échéance"
+    parsed = parse_dt(value)
+    if not parsed:
+        return "Échéance invalide"
+    local = parsed.astimezone()
+    now = datetime.now(timezone.utc)
+    today = datetime.now().date()
+    if parsed < now:
+        return f"En retard depuis {local.strftime('%d.%m %H:%M')}"
+    if local.date() == today:
+        return f"Aujourd’hui {local.strftime('%H:%M')}"
+    return local.strftime("%d.%m.%Y %H:%M")
+
+
+def detail_work_queue(conv: dict, action: dict | None) -> str:
+    if conv["status"] == "resolved":
+        return "resolved"
+    if not action:
+        return "waiting"
+    due_at = parse_dt(action.get("due_at"))
+    if due_at and due_at > datetime.now(timezone.utc):
+        return "waiting"
+    if action.get("type") == "follow_up":
+        return "follow_up"
+    return "todo"
+
+
+def default_assignee_id(conv: dict, action: dict | None, user: dict) -> int:
+    if action and action.get("assigned_to_user_id"):
+        return int(action["assigned_to_user_id"])
+    if conv.get("sales_stage") in {"closing", "appointment_booked"} and conv.get("closer_user_id"):
+        return int(conv["closer_user_id"])
+    if conv.get("setter_user_id"):
+        return int(conv["setter_user_id"])
+    return int(user["id"])
+
+
+def safe_user_index(users: list[dict], user_id: int | None) -> int:
+    for index, item in enumerate(users):
+        if item["id"] == user_id:
+            return index
+    return 0
+
+
+def format_user(user: dict) -> str:
+    return f"{user['full_name']} · {labelize(user['role'])}"
+
+
+def quick_due_at(days: int) -> str:
+    return local_due_at(datetime.now().date() + timedelta(days=days), time(9, 0))
+
+
+def local_due_at(selected_date, selected_time: time) -> str:
+    local_dt = datetime.combine(selected_date, selected_time)
+    return local_dt.astimezone(timezone.utc).isoformat()
 
 
 def compact_text(value: str, max_chars: int) -> str:

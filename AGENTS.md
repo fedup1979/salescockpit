@@ -56,13 +56,26 @@ Core source-of-truth decisions:
 
 There are two different concepts. Do not merge them:
 
-- Conversation status: user-controlled operational state, `open` or `resolved`. This drives inbox tabs.
+- Conversation status: user-controlled operational state, `open` or `resolved`.
 - WhatsApp window state: technical 24-hour API window, `open` or `closed`. This drives whether free-form messages are allowed.
+- Next action: operational work item stored in the `tasks` table but displayed as `prochaine action` / `À faire`, not as an abstract task list.
 
-Inbox tabs must mean:
+Inbox tabs are work queues:
 
-- `Ouvertes`: conversations requiring operational attention.
-- `Résolues`: conversations manually marked as resolved.
+- `À traiter`: a setter/closer must act now.
+- `À relancer`: a follow-up action is due now or overdue.
+- `En attente`: no immediate action, usually a future follow-up.
+- `Résolues`: conversation manually marked as resolved.
+
+Operational rule:
+
+- New inbound WhatsApp messages reopen the conversation and create/update a `reply` next action assigned to the setter.
+- Passing to closer completes current open actions, moves the lead to `closing`, and creates a `closing_call` action for the closer.
+- Resolving a conversation completes open actions for that lead.
+- `Non pertinent` and `Ne plus contacter` are separate statuses. Both stop follow-ups; `Ne plus contacter` is a strict do-not-contact policy.
+- Course-date reminders always win over lead-relative reminders. If both conflict, cancel the lead-relative reminder.
+- Minimum delay between outbound WhatsApp follow-ups is 24h.
+- Business rules are centralized in `sales_cockpit/business_rules.py` and displayed in Admin.
 
 WhatsApp window is shown separately as a badge under the contact name:
 
@@ -87,4 +100,3 @@ If a new inbound WhatsApp message arrives on a resolved conversation, it should 
 - Use Streamlit smoke tests when UI changes are significant.
 - Keep `IMPLEMENTATION_STATUS.md` and `docs/NEXT_SESSION.md` updated after meaningful changes.
 - Use `apply_patch` for edits.
-

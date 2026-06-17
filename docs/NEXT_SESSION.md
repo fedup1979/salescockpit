@@ -14,14 +14,26 @@ The app has been iteratively reviewed by François and is currently in a good mo
 ## Important Recent Decisions
 
 - Inbox tabs are not WhatsApp API window tabs.
-- Inbox tabs are user-controlled operational states:
-  - `Ouvertes`
+- Inbox tabs are operational work queues:
+  - `À traiter`
+  - `À relancer`
+  - `En attente`
   - `Résolues`
 - WhatsApp API window state remains a separate badge:
   - `Fenêtre ouverte`
   - `Fenêtre fermée`
 - Users can mark a conversation as resolved and reopen it.
 - New inbound messages reopen resolved conversations automatically.
+- New inbound messages create or update a setter `reply` next action.
+- Passing to closer completes current open actions, moves the lead to `closing`, and creates a `closing_call` action for the closer.
+- Resolving a conversation completes open actions for that lead.
+- The old technical `tasks` table remains, but the UI should call these `actions` or `prochaines actions`.
+- Business rules are centralized in `sales_cockpit/business_rules.py` and shown in Admin.
+- `Non pertinent` and `Ne plus contacter` are separate. Both stop follow-ups, but `Ne plus contacter` means strict do-not-contact.
+- Lead-relative reminders follow `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
+- Course-date reminders win over lead-relative reminders. The losing lead-relative reminder is cancelled.
+- Minimum outbound WhatsApp follow-up delay is 24h.
+- Setter 2 is currently seeded as `setter2@essr.ch`.
 - Dropdown labels should be displayed in French while internal values remain English.
 - Private notes remain yellow and align right like team messages.
 - Reply tools live below the conversation thread.
@@ -31,7 +43,7 @@ The app has been iteratively reviewed by François and is currently in a good mo
 
 Latest known validation:
 
-- `pytest`: 6 tests passing.
+- `pytest`: 11 tests passing.
 - Streamlit smoke tests passed during the session.
 - Streamlit and FastAPI were restarted after a stale import issue.
 
@@ -71,7 +83,7 @@ Stop-Process -Id <PID> -Force
 
 ## Recommended Next Work
 
-1. Let François continue UX review on the mock UI.
+1. Let François continue UX review on the mock UI, especially the `À faire` workflow.
 2. After the UI shape stabilizes, create first Git commit.
 3. Add GitHub remote.
 4. Implement SchoolDrive read-only lead lookup.
@@ -89,4 +101,3 @@ Stop-Process -Id <PID> -Force
 - `sales_cockpit/services/notion.py`
 - `sales_cockpit/services/mock_twilio.py`
 - `tests/test_store.py`
-

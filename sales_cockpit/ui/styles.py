@@ -162,11 +162,55 @@ h1, h2, h3 {
   line-height: 1.28;
 }
 
+.sc-next-action-line {
+  color: var(--sc-text);
+  font-size: .84rem;
+  margin-top: .34rem;
+  line-height: 1.32;
+}
+
+.sc-next-action-line span {
+  color: var(--sc-accent);
+  font-weight: 650;
+}
+
 .sc-compact-label {
   color: var(--sc-muted);
   font-size: .75rem;
   text-transform: uppercase;
   letter-spacing: 0;
+}
+
+.sc-action-panel {
+  display: flex;
+  justify-content: space-between;
+  gap: .8rem;
+  align-items: flex-start;
+  border: 1px solid var(--sc-border);
+  border-radius: 8px;
+  padding: .75rem .85rem;
+  margin: .65rem 0 1rem 0;
+  background: oklch(0.99 0.004 250);
+}
+
+.sc-action-title {
+  font-weight: 680;
+  line-height: 1.3;
+  margin-top: .12rem;
+}
+
+.sc-action-badges {
+  display: flex;
+  gap: .35rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.sc-action-description {
+  margin-top: .55rem;
+  color: var(--sc-text);
+  white-space: pre-wrap;
+  line-height: 1.4;
 }
 
 .sc-link-button {

@@ -6,6 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+from sales_cockpit.business_rules import DEMO_TEMPLATE_CATALOG
 from sales_cockpit.config import get_settings
 from sales_cockpit.security import hash_password
 from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
@@ -245,6 +246,115 @@ def insert_event(
     )
 
 
+def _normalize_seeded_demo_actions(
+    conn: sqlite3.Connection,
+    now,
+    setter_id: int,
+    closer_id: int,
+) -> None:
+    rows = conn.execute(
+        """
+        SELECT
+            t.id AS task_id,
+            t.type AS task_type,
+            t.title,
+            t.status AS task_status,
+            t.outcome,
+            l.first_name,
+            l.last_name,
+            l.sales_stage,
+            l.temperature,
+            l.schooldrive_lead_id,
+            c.id AS conversation_id,
+            c.status AS conversation_status
+        FROM tasks t
+        JOIN leads l ON l.id = t.lead_id
+        LEFT JOIN conversations c ON c.id = t.conversation_id
+        WHERE l.schooldrive_lead_id LIKE 'SD-DEMO-%'
+          AND t.status IN ('open', 'in_progress')
+        """
+    ).fetchall()
+
+    for row in rows:
+        if row["conversation_status"] == "resolved":
+            conn.execute(
+                """
+                UPDATE tasks
+                SET status = 'done', outcome = 'Conversation résolue',
+                    completed_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (iso_utc(now), iso_utc(now), row["task_id"]),
+            )
+            continue
+
+        title = str(row["title"] or "")
+        is_original_seed = (
+            row["task_type"] == "call"
+            and row["outcome"] is None
+            and (
+                title.startswith("Relancer ")
+                or title.startswith("Appeler ")
+                or title.startswith("Premier appel")
+                or "rendez-vous" in title
+                or "modèle WhatsApp" in title
+            )
+        )
+        if not is_original_seed:
+            continue
+
+        full_name = f"{row['first_name']} {row['last_name']}"
+        task_id = int(row["task_id"])
+        if row["sales_stage"] in {"closing", "appointment_booked"}:
+            action_type = "closing_call"
+            action_title = f"Contacter {full_name} pour closing"
+            assignee_id = closer_id
+            due_at = now - timedelta(minutes=15 + task_id)
+            urgency = "high" if row["temperature"] != "hot" else "urgent"
+        elif task_id % 5 == 0:
+            action_type = "follow_up"
+            action_title = f"Relancer {full_name}"
+            assignee_id = setter_id
+            due_at = now + timedelta(days=1, hours=1)
+            urgency = "normal"
+        elif task_id % 4 == 0:
+            action_type = "follow_up"
+            action_title = f"Relancer {full_name}"
+            assignee_id = closer_id if row["sales_stage"] == "closing" else setter_id
+            due_at = now - timedelta(hours=2)
+            urgency = "high"
+        elif row["sales_stage"] == "new":
+            action_type = "call"
+            action_title = f"Appeler {full_name} pour qualification"
+            assignee_id = setter_id
+            due_at = now
+            urgency = "normal"
+        else:
+            action_type = "reply"
+            action_title = f"Répondre à {full_name}"
+            assignee_id = setter_id
+            due_at = now - timedelta(minutes=task_id)
+            urgency = "urgent" if row["temperature"] == "hot" else "high"
+
+        conn.execute(
+            """
+            UPDATE tasks
+            SET type = ?, title = ?, assigned_to_user_id = ?, due_at = ?,
+                urgency = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                action_type,
+                action_title,
+                assignee_id,
+                iso_utc(due_at),
+                urgency,
+                iso_utc(now),
+                row["task_id"],
+            ),
+        )
+
+
 def seed_initial_data() -> None:
     init_db()
     settings = get_settings()
@@ -256,6 +366,7 @@ def seed_initial_data() -> None:
         ("francois.dupuis@essr.ch", "François Dupuis", "admin"),
         ("tiago.jacobs@gmail.com", "Tiago Jacobs", "admin"),
         ("service.etudiants@essr.ch", "Mihary", "setter"),
+        ("setter2@essr.ch", "Setter 2", "setter"),
         ("yasmine@essr.ch", "Yasmine", "closer"),
     ]
 
@@ -517,6 +628,8 @@ def seed_initial_data() -> None:
                     (iso_utc(now), schooldrive_id),
                 )
 
+        _normalize_seeded_demo_actions(conn, now, mihary_id, yasmine_id)
+
         templates = [
             (
                 "app_followup_rdv",
@@ -546,6 +659,22 @@ def seed_initial_data() -> None:
                 {"first_name": "Sarah"},
             ),
         ]
+        for template in DEMO_TEMPLATE_CATALOG:
+            placeholders = {
+                "first_name": "Camille",
+                "course_title": "Anatomie, Physiologie, Pathologie",
+            }
+            templates.append(
+                (
+                    template["name"],
+                    f"HX_MOCK_{template['name'].upper()}",
+                    "fr",
+                    template["category"],
+                    template["body"],
+                    "approved",
+                    placeholders,
+                )
+            )
         for name, sid, lang, category, body, status, placeholders in templates:
             existing_template = conn.execute(
                 "SELECT id FROM whatsapp_templates WHERE name = ?",

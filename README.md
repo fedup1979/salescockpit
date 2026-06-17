@@ -1,6 +1,6 @@
 # Sales Cockpit
 
-Internal ESSR sales cockpit for WhatsApp conversations, call tasks, lead qualification, template management, and future AI setter readiness.
+Internal ESSR sales cockpit for WhatsApp conversations, next actions, lead qualification, template management, and future AI setter readiness.
 
 The current build starts in mock mode. It does not touch Twilio, Front.io, SchoolDrive, or Notion production flows.
 
@@ -38,6 +38,7 @@ Seeded accounts:
 - francois.dupuis@essr.ch, admin
 - tiago.jacobs@gmail.com, admin
 - service.etudiants@essr.ch, setter, Mihary
+- setter2@essr.ch, setter, Setter 2
 - yasmine@essr.ch, closer
 
 ## Current Scope
@@ -51,8 +52,10 @@ Seeded accounts:
 - Free-form send blocked when the window is closed.
 - Template send allowed only with approved templates.
 - Template creation in local draft or approved mock status.
-- Call task creation and completion.
+- Work queues: `À traiter`, `À relancer`, `En attente`, `Résolues`.
+- Next-action creation, scheduling, completion, and setter-to-closer handoff.
 - Lead qualification.
+- Formal business rules visible in Admin.
 - Manual private WhatsApp notes.
 - FastAPI endpoints for future webhooks.
 
