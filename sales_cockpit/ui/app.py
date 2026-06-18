@@ -683,7 +683,7 @@ def standard_action_assignee_options(users: list[dict], action_type: str) -> lis
 
 def standard_action_button_label(action_type: str) -> str:
     labels = {
-        "reply": "Attribuer une réponse",
+        "reply": "Répondre à un message",
         "follow_up": "Planifier une relance",
         "setting_call": "Programmer un appel setting",
         "closing_call": "Programmer un appel closing",
