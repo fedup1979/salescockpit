@@ -11,13 +11,21 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from sales_cockpit.business_rules import (
+    ACTION_STATUSES,
+    ASSIGNMENT_RULES,
+    CONTACT_STATUSES,
     DEMO_TEMPLATE_CATALOG,
     LEAD_TYPES,
+    MAIN_ACTION_TYPES,
     OPERATING_RULES,
     QUALIFICATION_STATUSES,
+    RESOLUTION_REASONS,
     SALES_ACTORS,
     SCHEDULE_RULES,
-    SEQUENCES,
+    SOURCE_TYPES,
+    SUPPORT_ACTIONS,
+    TEMPLATE_REQUEST_STATUSES,
+    WORKFLOW_TRANSITIONS,
 )
 from sales_cockpit.db import seed_initial_data
 from sales_cockpit.services.whatsapp_rules import parse_dt, utc_now
@@ -25,8 +33,9 @@ from sales_cockpit.services.schooldrive import SchoolDriveConnector
 from sales_cockpit.store import (
     add_manual_note,
     authenticate,
-    complete_task,
+    complete_action_with_workflow,
     create_next_action,
+    create_template_request,
     create_template,
     get_conversation,
     get_next_action_for_lead,
@@ -35,13 +44,17 @@ from sales_cockpit.store import (
     list_actions_for_lead,
     list_conversations,
     list_messages,
+    list_sequence_steps,
+    list_sequences,
     list_tasks,
+    list_template_requests,
     list_templates,
     list_users,
     schedule_followup,
     send_freeform_message,
     send_template_message,
     set_conversation_status,
+    update_template_request_status,
     update_lead_qualification,
 )
 from sales_cockpit.ui.styles import APP_CSS
@@ -49,13 +62,22 @@ from sales_cockpit.ui.styles import APP_CSS
 
 SALES_STAGES = ["new", "setting", "appointment_booked", "closing", "won", "lost", "not_interesting", "no_show", "blacklist"]
 LEAD_STATUSES = [item["value"] for item in QUALIFICATION_STATUSES]
+CONTACT_STATUS_VALUES = [item["value"] for item in CONTACT_STATUSES]
+RESOLUTION_REASON_VALUES = [item["value"] for item in RESOLUTION_REASONS]
 URGENCIES = ["low", "normal", "high", "urgent"]
 WORK_QUEUES = ["todo", "follow_up", "waiting", "resolved"]
 INBOX_QUEUES = ["all"] + WORK_QUEUES
 ACTION_QUEUES = ["due", "future", "completed", "all"]
-ACTION_TYPES = ["reply", "call", "follow_up", "closing_call", "other"]
+ACTION_TYPES = ["reply", "follow_up", "setting_call", "closing_call", "contact_review", "other"]
 WORK_SORTS = ["assignee_name", "lead_name", "due_at"]
-OUTCOMES = ["Reached", "No answer", "Wrong number", "Callback requested", "Appointment booked", "Not interested", "Converted", "Other"]
+ACTION_OUTCOMES = {
+    "reply": ["reply_no_appointment", "setting_booked", "not_relevant", "do_not_contact"],
+    "follow_up": ["follow_up_sent", "template_missing", "sequence_completed_no_reply"],
+    "setting_call": ["to_closing", "not_reached", "not_ready", "not_relevant", "do_not_contact"],
+    "closing_call": ["signed", "will_sign", "not_reached", "undecided", "not_relevant"],
+    "contact_review": ["maintain_do_not_contact", "lift_do_not_contact"],
+    "other": ["done"],
+}
 
 DISPLAY_LABELS = {
     "all": "Tous",
@@ -80,7 +102,12 @@ DISPLAY_LABELS = {
     "not_relevant": "Non pertinent",
     "will_sign": "Va signer",
     "signed": "A signé",
+    "contact_allowed": "Contact autorisé",
     "do_not_contact": "Ne plus contacter",
+    "duplicate": "Doublon",
+    "handled_elsewhere": "Traité ailleurs",
+    "sequence_completed_no_reply": "Séquence terminée sans réponse",
+    "error": "Erreur",
     "deal_pending": "Deal en attente",
     "deal_confirmed": "Deal confirmé",
     "dead_lead": "Lead perdu",
@@ -88,8 +115,10 @@ DISPLAY_LABELS = {
     "open": "Ouverte",
     "resolved": "Résolue",
     "in_progress": "En cours",
+    "planned": "Planifiée",
     "done": "Terminée",
     "cancelled": "Annulée",
+    "blocked": "Bloquée",
     "todo": "À traiter",
     "due": "À traiter",
     "future": "À venir",
@@ -99,6 +128,8 @@ DISPLAY_LABELS = {
     "reply": "Répondre",
     "call": "Appeler",
     "closing_call": "Appel closing",
+    "setting_call": "Appel setting",
+    "contact_review": "Revue contact",
     "other": "Autre",
     "assignee_name": "Responsable",
     "lead_name": "Prospect",
@@ -123,6 +154,21 @@ DISPLAY_LABELS = {
     "Not interested": "Pas intéressé",
     "Converted": "Converti",
     "Other": "Autre",
+    "reply_no_appointment": "Réponse envoyée sans RDV",
+    "setting_booked": "RDV setting fixé",
+    "follow_up_sent": "Relance envoyée",
+    "template_missing": "Modèle manquant",
+    "to_closing": "Passer au closing",
+    "not_reached": "Pas joint",
+    "not_ready": "Pas prêt / pas de suite claire",
+    "undecided": "Joint mais pas décidé",
+    "maintain_do_not_contact": "Maintenir Ne plus contacter",
+    "lift_do_not_contact": "Lever Ne plus contacter",
+    "done": "Terminé",
+    "to_create": "À créer",
+    "submitted": "Soumis",
+    "rejected": "Rejeté",
+    "cancelled": "Annulé",
 }
 
 HELP_TEXTS = {
@@ -130,7 +176,10 @@ HELP_TEXTS = {
         "État du parcours commercial. Il indique où se trouve le prospect dans le processus."
     ),
     "lead_status": (
-        "Qualification commerciale. Non pertinent, Ne plus contacter et A signé arrêtent les relances."
+        "Qualification commerciale. Non pertinent et A signé arrêtent les relances."
+    ),
+    "contact_status": (
+        "Statut de contact séparé. Ne plus contacter bloque les relances, mais une réponse entrante crée une revue humaine."
     ),
 }
 
@@ -394,25 +443,73 @@ def render_conversation_context(conv: dict) -> None:
 
 def render_conversation_status_button(user: dict, conv: dict) -> None:
     if conv["status"] == "resolved":
-        if st.button("Rouvrir la conversation", use_container_width=True):
-            ok, message = set_conversation_status(conv["id"], user["id"], "open")
+        with st.popover("Rouvrir", use_container_width=True):
+            users = list_users()
+            action_type = st.selectbox(
+                "Prochaine action",
+                ["reply", "follow_up", "setting_call", "closing_call"],
+                format_func=labelize,
+                key=f"reopen_action_type_{conv['id']}",
+            )
+            assignee = st.selectbox(
+                "Responsable",
+                users,
+                index=safe_user_index(users, user["id"]),
+                format_func=format_user,
+                key=f"reopen_assignee_{conv['id']}",
+            )
+            reopen_date = st.date_input("Date", value=datetime.now().date(), key=f"reopen_date_{conv['id']}")
+            reopen_time = st.time_input("Heure", value=time(9, 0), key=f"reopen_time_{conv['id']}")
+            reason = st.text_area("Raison de réouverture", height=80, key=f"reopen_reason_{conv['id']}")
+            submitted = st.button("Rouvrir la conversation", key=f"submit_reopen_{conv['id']}")
+        if submitted:
+            ok, message = set_conversation_status(
+                conv["id"],
+                user["id"],
+                "open",
+                reopen_action_type=action_type,
+                reopen_assigned_to_user_id=assignee["id"],
+                reopen_due_at=local_due_at(reopen_date, reopen_time),
+                reopen_reason=reason.strip(),
+            )
             show_result(ok, message)
             if ok:
                 st.rerun()
     else:
-        if st.button("Marquer résolue", use_container_width=True):
-            ok, message = set_conversation_status(conv["id"], user["id"], "resolved")
+        with st.popover("Marquer résolue", use_container_width=True):
+            reason = st.selectbox(
+                "Motif",
+                RESOLUTION_REASON_VALUES,
+                format_func=labelize,
+                key=f"resolve_reason_header_{conv['id']}",
+            )
+            note = st.text_area("Note", height=80, key=f"resolve_note_header_{conv['id']}")
+            submitted = st.button("Confirmer la résolution", key=f"submit_resolve_header_{conv['id']}")
+        if submitted:
+            ok, message = set_conversation_status(
+                conv["id"],
+                user["id"],
+                "resolved",
+                resolution_reason=reason,
+                resolution_note=note.strip(),
+            )
             show_result(ok, message)
             if ok:
                 st.rerun()
 
 
 def render_compact_lead_state(conv: dict) -> None:
+    contact_html = ""
+    if conv.get("contact_status") == "do_not_contact":
+        contact_html = (
+            f'<span><strong>Contact</strong> {escape_html(labelize(conv["contact_status"]))}</span>'
+        )
     st.markdown(
         f"""
         <div class="sc-compact-state">
           <span><strong>Qualification</strong> {escape_html(labelize(conv["lead_status"]))}</span>
           <span><strong>Parcours</strong> {escape_html(labelize(conv["sales_stage"]))}</span>
+          {contact_html}
         </div>
         """,
         unsafe_allow_html=True,
@@ -476,6 +573,29 @@ def render_composer(user: dict, conv: dict) -> None:
             placeholder="Mot dans le nom ou le contenu",
             key=search_key,
         )
+        with st.form(f"missing_template_request_{conv['id']}"):
+            reason = st.text_input(
+                "Demande de modèle",
+                placeholder="Ex. relance financement pour APP",
+            )
+            context = st.text_area(
+                "Contexte pour le modèle",
+                value=conv.get("last_message_body") or "",
+                height=90,
+            )
+            submitted = st.form_submit_button("Créer la demande de modèle")
+        if submitted:
+            action = get_next_action_for_lead(conv["lead_id"])
+            ok, message = create_template_request(
+                conv["id"],
+                user["id"],
+                reason,
+                context,
+                task_id=action["id"] if action else None,
+            )
+            show_result(ok, message)
+            if ok:
+                st.rerun()
         return
 
     selected = st.selectbox(
@@ -509,6 +629,31 @@ def render_composer(user: dict, conv: dict) -> None:
         if ok:
             st.rerun()
 
+    with st.expander("Aucun modèle ne convient"):
+        with st.form(f"template_request_{conv['id']}"):
+            reason = st.text_input(
+                "Modèle manquant",
+                placeholder="Ex. relance financement pour APP",
+            )
+            context = st.text_area(
+                "Contexte pour le modèle",
+                value=conv.get("last_message_body") or "",
+                height=90,
+            )
+            submitted = st.form_submit_button("Créer la demande de modèle")
+        if submitted:
+            action = get_next_action_for_lead(conv["lead_id"])
+            ok, message = create_template_request(
+                conv["id"],
+                user["id"],
+                reason,
+                context,
+                task_id=action["id"] if action else None,
+            )
+            show_result(ok, message)
+            if ok:
+                st.rerun()
+
 
 def render_qualification(user: dict, conv: dict) -> None:
     with st.form(f"qualification_{conv['lead_id']}"):
@@ -526,9 +671,22 @@ def render_qualification(user: dict, conv: dict) -> None:
             format_func=labelize,
             help=HELP_TEXTS["lead_status"],
         )
+        contact_status = st.selectbox(
+            "Statut de contact",
+            CONTACT_STATUS_VALUES,
+            index=safe_index(CONTACT_STATUS_VALUES, conv.get("contact_status")),
+            format_func=labelize,
+            help=HELP_TEXTS["contact_status"],
+        )
         submitted = st.form_submit_button("Mettre à jour")
     if submitted:
-        update_lead_qualification(conv["lead_id"], user["id"], sales_stage, lead_status)
+        update_lead_qualification(
+            conv["lead_id"],
+            user["id"],
+            sales_stage,
+            lead_status,
+            contact_status=contact_status,
+        )
         st.success("Qualification mise à jour.")
         st.rerun()
 
@@ -592,15 +750,50 @@ def render_next_action_box(user: dict, conv: dict) -> None:
             """,
             unsafe_allow_html=True,
         )
-        outcome = st.selectbox(
-            "Résultat",
-            OUTCOMES,
-            key=f"next_action_outcome_{action['id']}",
-            format_func=labelize,
-        )
-        if st.button("Terminer l’action", key=f"complete_next_action_{action['id']}"):
-            complete_task(action["id"], user["id"], outcome)
-            st.rerun()
+        outcomes = ACTION_OUTCOMES.get(action["type"], ACTION_OUTCOMES["other"])
+        with st.form(f"complete_next_action_form_{action['id']}"):
+            outcome = st.selectbox(
+                "Résultat",
+                outcomes,
+                key=f"next_action_outcome_{action['id']}",
+                format_func=labelize,
+            )
+            completion_note = st.text_area("Mini note", height=90, key=f"next_action_note_{action['id']}")
+            users_for_outcome = list_users()
+            assigned_to_user_id = None
+            if outcome in {"to_closing", "setting_booked"}:
+                assignee_label = "Closer" if outcome == "to_closing" else "Responsable de l'appel"
+                candidates = (
+                    [item for item in users_for_outcome if item["role"] == "closer"]
+                    if outcome == "to_closing"
+                    else users_for_outcome
+                )
+                assignee = st.selectbox(
+                    assignee_label,
+                    candidates,
+                    format_func=format_user,
+                    key=f"next_action_assignee_{action['id']}",
+                )
+                assigned_to_user_id = assignee["id"]
+            needs_due = outcome in {"to_closing", "setting_booked"}
+            next_due_at = None
+            if needs_due:
+                next_date = st.date_input("Date du rendez-vous", value=datetime.now().date(), key=f"next_action_date_{action['id']}")
+                next_time = st.time_input("Heure", value=time(9, 0), key=f"next_action_time_{action['id']}")
+                next_due_at = local_due_at(next_date, next_time)
+            submitted = st.form_submit_button("Terminer l'action")
+        if submitted:
+            ok, message = complete_action_with_workflow(
+                action["id"],
+                user["id"],
+                outcome,
+                note=completion_note,
+                next_due_at=next_due_at,
+                assigned_to_user_id=assigned_to_user_id,
+            )
+            show_result(ok, message)
+            if ok:
+                st.rerun()
     else:
         st.info("Aucune action ouverte pour cette conversation.")
 
@@ -629,8 +822,23 @@ def render_next_action_box(user: dict, conv: dict) -> None:
         show_result(ok, message)
         if ok:
             st.rerun()
-    if quick_cols[2].button("Résoudre", use_container_width=True):
-        ok, message = set_conversation_status(conv["id"], user["id"], "resolved")
+    with quick_cols[2].popover("Résoudre", use_container_width=True):
+        reason = st.selectbox(
+            "Motif",
+            RESOLUTION_REASON_VALUES,
+            format_func=labelize,
+            key=f"resolve_reason_action_{conv['id']}",
+        )
+        note = st.text_area("Note", height=80, key=f"resolve_note_action_{conv['id']}")
+        submitted = st.button("Confirmer", key=f"resolve_confirm_action_{conv['id']}")
+    if submitted:
+        ok, message = set_conversation_status(
+            conv["id"],
+            user["id"],
+            "resolved",
+            resolution_reason=reason,
+            resolution_note=note.strip(),
+        )
         show_result(ok, message)
         if ok:
             st.rerun()
@@ -934,7 +1142,7 @@ def render_admin(user: dict) -> None:
     if user["role"] != "admin":
         st.warning("Accès lecture seul. Les réglages sont réservés aux admins.")
 
-    tabs = st.tabs(["Utilisateurs", "Règles métier", "Séquences", "Templates", "Intégrations"])
+    tabs = st.tabs(["Utilisateurs", "Règles métier", "Workflow", "Séquences", "Templates", "Intégrations"])
     with tabs[0]:
         st.subheader("Utilisateurs")
         st.dataframe(list_users(active_only=False), hide_index=True, use_container_width=True)
@@ -944,26 +1152,75 @@ def render_admin(user: dict) -> None:
     with tabs[1]:
         st.subheader("Qualifications")
         st.dataframe(QUALIFICATION_STATUSES, hide_index=True, use_container_width=True)
+        st.subheader("Statuts de contact")
+        st.dataframe(CONTACT_STATUSES, hide_index=True, use_container_width=True)
+        st.subheader("Motifs de résolution")
+        st.dataframe(RESOLUTION_REASONS, hide_index=True, use_container_width=True)
         st.subheader("Règles opérationnelles")
         st.dataframe(OPERATING_RULES, hide_index=True, use_container_width=True)
+        st.subheader("Règles d'attribution")
+        st.dataframe(ASSIGNMENT_RULES, hide_index=True, use_container_width=True)
         st.subheader("Horaires et bascules")
         st.dataframe(SCHEDULE_RULES, hide_index=True, use_container_width=True)
+        st.subheader("Origines")
+        st.dataframe(SOURCE_TYPES, hide_index=True, use_container_width=True)
         st.subheader("Types de leads SchoolDrive")
         st.dataframe(LEAD_TYPES, hide_index=True, use_container_width=True)
 
     with tabs[2]:
+        st.subheader("Types d'actions principales")
+        st.dataframe(MAIN_ACTION_TYPES, hide_index=True, use_container_width=True)
+        st.subheader("Actions support")
+        st.dataframe(SUPPORT_ACTIONS, hide_index=True, use_container_width=True)
+        st.subheader("Statuts d'action")
+        st.dataframe(ACTION_STATUSES, hide_index=True, use_container_width=True)
+        st.subheader("Table de transitions")
+        st.caption(
+            "Cette table décrit le chaînage cible : action actuelle + événement/résultat -> prochaine action."
+        )
+        st.dataframe(WORKFLOW_TRANSITIONS, hide_index=True, use_container_width=True, height=520)
+
+    with tabs[3]:
         st.subheader("Séquences de relance")
-        st.dataframe(SEQUENCES, hide_index=True, use_container_width=True)
+        st.dataframe(list_sequences(), hide_index=True, use_container_width=True)
+        st.subheader("Étapes de séquence")
+        st.dataframe(list_sequence_steps(), hide_index=True, use_container_width=True, height=420)
         st.info(
             "V1 affiche les règles. L'automatisation des séquences sera branchée après synchronisation SchoolDrive/Twilio."
         )
 
-    with tabs[3]:
+    with tabs[4]:
         st.subheader("Templates de démo")
         st.dataframe(DEMO_TEMPLATE_CATALOG, hide_index=True, use_container_width=True)
         st.caption("Les vrais templates seront synchronisés depuis Twilio. Les noms ci-dessus servent de mapping provisoire.")
+        st.subheader("Statuts de demande de modèle")
+        st.dataframe(TEMPLATE_REQUEST_STATUSES, hide_index=True, use_container_width=True)
+        st.subheader("Demandes de modèles")
+        requests = list_template_requests()
+        if requests:
+            st.dataframe(requests, hide_index=True, use_container_width=True, height=320)
+            with st.form("update_template_request_status"):
+                request = st.selectbox(
+                    "Demande",
+                    requests,
+                    format_func=lambda item: f"#{item['id']} · {item['first_name']} {item['last_name']} · {labelize(item['status'])}",
+                )
+                status = st.selectbox(
+                    "Nouveau statut",
+                    [item["value"] for item in TEMPLATE_REQUEST_STATUSES],
+                    index=safe_index([item["value"] for item in TEMPLATE_REQUEST_STATUSES], request["status"]),
+                    format_func=labelize,
+                )
+                submitted = st.form_submit_button("Mettre à jour la demande")
+            if submitted:
+                ok, message = update_template_request_status(request["id"], user["id"], status)
+                show_result(ok, message)
+                if ok:
+                    st.rerun()
+        else:
+            st.info("Aucune demande de modèle.")
 
-    with tabs[4]:
+    with tabs[5]:
         st.subheader("Intégrations")
         st.markdown(
             """
@@ -1084,9 +1341,10 @@ def attention_sort_key(item: dict) -> tuple:
     action_type = item.get("type") or item.get("next_action_type") or ""
     action_rank = {
         "reply": 0,
-        "closing_call": 1,
-        "call": 2,
-        "follow_up": 3,
+        "contact_review": 1,
+        "closing_call": 2,
+        "setting_call": 3,
+        "follow_up": 4,
     }.get(action_type, 4)
     future_rank = 1 if due_at and due_at > utc_now() else 0
     due_rank = due_at.timestamp() if due_at else 9_999_999_999

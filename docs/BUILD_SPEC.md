@@ -28,7 +28,7 @@ Seed password for local mock mode: `ChangeMe!2026`.
 
 - `sales_cockpit/ui/app.py`: Streamlit UI.
 - `sales_cockpit/api/main.py`: FastAPI API and webhook-ready endpoints.
-- `sales_cockpit/business_rules.py`: formal sales roles, qualification statuses, sequences, schedule rules, and demo template catalog.
+- `sales_cockpit/business_rules.py`: formal sales roles, qualification statuses, action workflow, sequences, schedule rules, and demo template catalog.
 - `sales_cockpit/db.py`: SQLite schema and seed data.
 - `sales_cockpit/store.py`: app data access and business operations.
 - `sales_cockpit/services/whatsapp_rules.py`: WhatsApp 24-hour window logic.
@@ -61,6 +61,8 @@ The `tasks` table remains the technical persistence layer, but the UI must call 
 Action is the central operational unit of the system. A conversation with `open` status must always have one open next action.
 
 The detailed action model is defined in `docs/ACTION_WORKFLOW.md`.
+The exhaustive business logic is defined in `docs/BUSINESS_LOGIC.md`.
+Current implementation gaps are tracked in `docs/GAP_ANALYSIS.md`.
 
 Main V1 action types:
 
@@ -69,7 +71,7 @@ Main V1 action types:
 - `setting_call`: setting / qualification call.
 - `closing_call`: closing call.
 
-Qualification, manual notes, and template creation are support actions or proofs by default. They only become queue-visible work if they block the main action flow.
+Qualification, contact status, manual notes, and template creation are support actions or proofs by default. They only become queue-visible work if they block the main action flow.
 
 Work queues:
 
@@ -83,8 +85,12 @@ Operational rules:
 - New inbound WhatsApp message creates or updates a `reply` action assigned to the setter.
 - Setter can plan a follow-up, pass to closer, resolve, or create a manual action.
 - Passing to closer completes current open actions, moves the lead to `closing`, and creates a `closing_call` action for the closer.
-- `Non pertinent`, `Ne plus contacter`, and `A signé` stop commercial follow-ups and resolve open conversations.
-- `Non pertinent` is a commercial qualification. `Ne plus contacter` is a strict do-not-contact policy.
+- `Non pertinent` and `A signé` are commercial qualifications that stop follow-ups and resolve open conversations.
+- `Ne plus contacter` is a separate contact status and strict do-not-contact policy.
+- If a `Ne plus contacter` prospect writes again, create a `contact_review` action for Setter 1.
+- Manual resolution requires a controlled reason.
+- Manual reopening requires creating the next action.
+- Missing templates create `template_requests` linked to blocked follow-ups.
 - Lead-relative reminder sequence is `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
 - Course-date reminders always win over lead-relative reminders; the losing lead-relative action is cancelled.
 - Minimum outbound WhatsApp follow-up delay is 24h.
@@ -181,6 +187,7 @@ Dropdown labels are displayed in French. Internal values remain in English.
 
 - Users and commercial roles.
 - Qualification statuses and stop rules.
+- Workflow tab with main action types, support actions, action statuses, and transition table.
 - Operating rules, including WhatsApp window constraints and conflict policy.
 - Schedule and absence-transfer rules, currently declarative.
 - Follow-up sequences.
@@ -203,6 +210,9 @@ SQLite tables include:
 - `ai_labels`
 - `external_refs`
 - `integration_sync_runs`
+- `sequences`
+- `sequence_steps`
+- `template_requests`
 
 SQLite requirements:
 

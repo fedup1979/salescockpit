@@ -15,12 +15,15 @@ The app has been iteratively reviewed by François and is currently in a good mo
 
 - The action is now explicitly validated as the central operational unit of the system.
 - A conversation with `open` status must always have one open next action.
-- The validated workflow model is documented in `docs/ACTION_WORKFLOW.md`; read it before changing `Tâches`, actions, follow-ups, calls, templates, qualification, or automation.
+- The exhaustive validated business logic is now in `docs/BUSINESS_LOGIC.md`.
+- The implementation gap analysis is now in `docs/GAP_ANALYSIS.md`.
+- The validated workflow model is documented in `docs/ACTION_WORKFLOW.md` and structured in `sales_cockpit/business_rules.py`; read it before changing `Tâches`, actions, follow-ups, calls, templates, qualification, or automation.
+- Admin now includes a `Workflow` tab showing main action types, support actions, action statuses, and the transition table.
 - The main V1 action chain is `reply`, `follow_up`, `setting_call`, `closing_call`.
 - Qualification, manual notes, and template creation are support actions/proofs by default, not main workflow actions.
 - `setting_call` is the preferred internal term over generic `call`; UI may still show `Appel` or `Appel de setting`.
 - Persisted action statuses should be `planned`, `open`, `in_progress`, `done`, `cancelled`, `blocked`; `due` should be calculated from `due_at`, not stored as a status.
-- The next major design task is to implement the transition table: current action + event/outcome -> next action + owner + due date + support obligations.
+- The transition table is partially implemented in the local mock system: resolution/reopen guards, contact review, template requests, outbound message chaining, and call outcome chaining are now active.
 - Inbox tabs are not WhatsApp API window tabs.
 - Inbox tabs are operational work queues:
   - `À traiter`
@@ -30,7 +33,8 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - WhatsApp API window state remains a separate badge:
   - `Fenêtre ouverte`
   - `Fenêtre fermée`
-- Users can mark a conversation as resolved and reopen it.
+- Users can mark a conversation as resolved only with a controlled reason.
+- Users can reopen a conversation only by creating the next action.
 - New inbound messages reopen resolved conversations automatically.
 - New inbound messages create or update a setter `reply` next action.
 - Passing to closer completes current open actions, moves the lead to `closing`, and creates a `closing_call` action for the closer.
@@ -41,7 +45,12 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - `sales_stage` is displayed as `Parcours`.
 - Private notes are always included in the future learning base; there is no checkbox in the UI.
 - The global `Tâches` view filters by individual responsible people, not only by role.
-- `Non pertinent` and `Ne plus contacter` are separate. Both stop follow-ups, but `Ne plus contacter` means strict do-not-contact.
+- `Non pertinent` and `Ne plus contacter` are separate. `Non pertinent` is commercial qualification. `Ne plus contacter` is a separate contact status.
+- If a `Ne plus contacter` prospect writes again, create a `contact_review` action for Setter 1. Do not create automatic follow-ups.
+- Missing templates create `template_requests` linked to the blocked follow-up action.
+- Follow-up sequences and sequence steps are stored structurally in SQLite and displayed in Admin.
+- Outbound WhatsApp messages close the active `reply` or `follow_up` action and create the next follow-up when applicable.
+- Setting and closing calls can be completed with business outcomes that create the next action.
 - Lead-relative reminders follow `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
 - Course-date reminders win over lead-relative reminders. The losing lead-relative reminder is cancelled.
 - Minimum outbound WhatsApp follow-up delay is 24h.
@@ -67,7 +76,7 @@ The app has been iteratively reviewed by François and is currently in a good mo
 
 Latest known validation:
 
-- `pytest`: 11 tests passing.
+- `pytest`: 19 tests passing.
 - Streamlit smoke tests passed during the session.
 - Streamlit and FastAPI were restarted after a stale import issue.
 

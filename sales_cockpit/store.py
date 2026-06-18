@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from typing import Any
 
-from sales_cockpit.business_rules import STOP_FOLLOWUP_STATUSES
+from sales_cockpit.business_rules import (
+    RESOLUTION_REASONS,
+    STOP_CONTACT_STATUSES,
+    STOP_QUALIFICATION_STATUSES,
+)
 from sales_cockpit.db import connect, init_db, insert_event, row_to_dict, rows_to_dicts
 from sales_cockpit.security import verify_password
 from sales_cockpit.services.mock_twilio import MockTwilioClient
@@ -36,6 +41,46 @@ def list_users(active_only: bool = True) -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(query).fetchall()
     return rows_to_dicts(rows)
+
+
+def followups_are_blocked(record: dict[str, Any]) -> bool:
+    return (
+        record.get("lead_status") in STOP_QUALIFICATION_STATUSES
+        or record.get("contact_status") in STOP_CONTACT_STATUSES
+    )
+
+
+def resolution_reason_requires_note(reason: str | None) -> bool:
+    return any(
+        item["value"] == reason and item["requires_note"]
+        for item in RESOLUTION_REASONS
+    )
+
+
+def setter2_user_id(conn: Any) -> int | None:
+    row = conn.execute(
+        """
+        SELECT id FROM users
+        WHERE lower(email) = 'setter2@essr.ch' AND active = 1
+        LIMIT 1
+        """
+    ).fetchone()
+    if row:
+        return int(row["id"])
+    return _default_active_user_id(conn, "setter")
+
+
+def default_closer_user_id(conn: Any) -> int | None:
+    row = conn.execute(
+        """
+        SELECT id FROM users
+        WHERE lower(email) = 'yasmine@essr.ch' AND active = 1
+        LIMIT 1
+        """
+    ).fetchone()
+    if row:
+        return int(row["id"])
+    return _default_active_user_id(conn, "closer")
 
 
 def list_conversations(
@@ -80,7 +125,9 @@ def list_conversations(
             l.course_category_short_title,
             l.course_title,
             l.lead_type,
+            l.acquisition_type,
             l.lead_status,
+            l.contact_status,
             l.sales_stage,
             l.temperature,
             setter.full_name AS setter_name,
@@ -103,7 +150,7 @@ def list_conversations(
             next_assignee.role AS next_action_assigned_to_role,
             (
                 SELECT COUNT(*) FROM tasks t
-                WHERE t.lead_id = l.id AND t.status IN ('open', 'in_progress')
+                WHERE t.lead_id = l.id AND t.status IN ('open', 'in_progress', 'planned', 'blocked')
             ) AS open_tasks
         FROM conversations c
         JOIN leads l ON l.id = c.lead_id
@@ -111,7 +158,7 @@ def list_conversations(
         LEFT JOIN users closer ON closer.id = l.closer_user_id
         LEFT JOIN tasks next_task ON next_task.id = (
             SELECT t.id FROM tasks t
-            WHERE t.lead_id = l.id AND t.status IN ('open', 'in_progress')
+            WHERE t.lead_id = l.id AND t.status IN ('open', 'in_progress', 'planned', 'blocked')
             ORDER BY
                 CASE WHEN t.due_at IS NULL THEN 1 ELSE 0 END,
                 datetime(t.due_at) ASC,
@@ -151,7 +198,7 @@ def list_conversations(
 
 
 def classify_work_queue(conv: dict[str, Any]) -> str:
-    if conv.get("lead_status") in STOP_FOLLOWUP_STATUSES:
+    if followups_are_blocked(conv) and conv.get("next_action_type") != "contact_review":
         return "resolved"
     if conv.get("conversation_status") == "resolved":
         return "resolved"
@@ -202,7 +249,9 @@ def get_conversation(conversation_id: int) -> dict[str, Any] | None:
                 l.course_category_short_title,
                 l.course_title,
                 l.lead_type,
+                l.acquisition_type,
                 l.lead_status,
+                l.contact_status,
                 l.sales_stage,
                 l.temperature,
                 l.setter_user_id,
@@ -238,7 +287,7 @@ def get_next_action_for_lead(lead_id: int) -> dict[str, Any] | None:
                 u.role AS assigned_to_role
             FROM tasks t
             LEFT JOIN users u ON u.id = t.assigned_to_user_id
-            WHERE t.lead_id = ? AND t.status IN ('open', 'in_progress')
+            WHERE t.lead_id = ? AND t.status IN ('open', 'in_progress', 'planned', 'blocked')
             ORDER BY
                 CASE WHEN t.due_at IS NULL THEN 1 ELSE 0 END,
                 datetime(t.due_at) ASC,
@@ -287,6 +336,13 @@ def create_next_action(
     urgency: str = "normal",
     due_at: str | None = None,
     description: str | None = None,
+    trigger_reason: str | None = None,
+    sequence_code: str | None = None,
+    sequence_step_index: int | None = None,
+    previous_action_id: int | None = None,
+    status: str = "open",
+    blocked_reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> int:
     with connect() as conn:
         action_id = _insert_next_action(
@@ -300,6 +356,13 @@ def create_next_action(
             urgency=urgency,
             due_at=due_at or iso_utc(),
             description=description,
+            trigger_reason=trigger_reason,
+            sequence_code=sequence_code,
+            sequence_step_index=sequence_step_index,
+            previous_action_id=previous_action_id,
+            status=status,
+            blocked_reason=blocked_reason,
+            metadata=metadata,
         )
         insert_event(
             conn,
@@ -313,6 +376,9 @@ def create_next_action(
                 "assigned_to_user_id": assigned_to_user_id,
                 "due_at": due_at,
                 "urgency": urgency,
+                "trigger_reason": trigger_reason,
+                "sequence_code": sequence_code,
+                "sequence_step_index": sequence_step_index,
             },
         )
     return action_id
@@ -329,7 +395,7 @@ def schedule_followup(
     conv = get_conversation(conversation_id)
     if not conv:
         return False, "Conversation introuvable."
-    if conv["lead_status"] in STOP_FOLLOWUP_STATUSES:
+    if followups_are_blocked(conv):
         return False, "Ce statut bloque les relances commerciales."
 
     full_name = f"{conv['first_name']} {conv['last_name']}"
@@ -352,6 +418,7 @@ def schedule_followup(
             urgency=urgency,
             due_at=due_at,
             description=notes,
+            trigger_reason="manual_followup_scheduled",
         )
         conn.execute(
             "UPDATE conversations SET status = 'open', updated_at = ? WHERE id = ?",
@@ -432,6 +499,7 @@ def handoff_to_closer(
             urgency="high",
             due_at=now,
             description=description,
+            trigger_reason="handoff_to_closer",
         )
         insert_event(
             conn,
@@ -456,7 +524,15 @@ def handoff_to_closer(
 
 
 def set_conversation_status(
-    conversation_id: int, user_id: int, status: str
+    conversation_id: int,
+    user_id: int,
+    status: str,
+    resolution_reason: str | None = None,
+    resolution_note: str | None = None,
+    reopen_action_type: str | None = None,
+    reopen_assigned_to_user_id: int | None = None,
+    reopen_due_at: str | None = None,
+    reopen_reason: str | None = None,
 ) -> tuple[bool, str]:
     if status not in {"open", "resolved"}:
         return False, "Statut de conversation invalide."
@@ -467,18 +543,97 @@ def set_conversation_status(
     if previous_status == status:
         return True, "La conversation a déjà ce statut."
 
+    valid_resolution_reasons = {item["value"] for item in RESOLUTION_REASONS}
+    if status == "resolved":
+        if not resolution_reason or resolution_reason not in valid_resolution_reasons:
+            return False, "Choisis un motif de résolution."
+        if resolution_reason_requires_note(resolution_reason) and not (resolution_note or "").strip():
+            return False, "Une note est obligatoire pour ce motif de résolution."
+    if status == "open" and previous_status == "resolved" and not reopen_action_type:
+        return False, "Choisis une prochaine action pour rouvrir la conversation."
+
     now = iso_utc()
+    created_action_id = None
     with connect() as conn:
-        conn.execute(
-            "UPDATE conversations SET status = ?, updated_at = ? WHERE id = ?",
-            (status, now, conversation_id),
-        )
         if status == "resolved":
+            conn.execute(
+                """
+                UPDATE conversations
+                SET status = 'resolved',
+                    resolution_reason = ?,
+                    resolution_note = ?,
+                    resolved_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    resolution_reason,
+                    (resolution_note or "").strip() or None,
+                    now,
+                    now,
+                    conversation_id,
+                ),
+            )
+            if resolution_reason == "do_not_contact":
+                conn.execute(
+                    """
+                    UPDATE leads
+                    SET contact_status = 'do_not_contact', updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, conv["lead_id"]),
+                )
+            elif resolution_reason in {"not_relevant", "signed"}:
+                conn.execute(
+                    """
+                    UPDATE leads
+                    SET lead_status = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (resolution_reason, now, conv["lead_id"]),
+                )
             _complete_open_actions_for_lead(
                 conn,
                 conv["lead_id"],
                 user_id,
-                outcome="Conversation résolue",
+                outcome=f"Conversation résolue : {resolution_reason}",
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE conversations
+                SET status = 'open',
+                    resolution_reason = NULL,
+                    resolution_note = NULL,
+                    reopened_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now, now, conversation_id),
+            )
+            full_name = f"{conv['first_name']} {conv['last_name']}"
+            action_type = reopen_action_type or "reply"
+            assigned_to_user_id = reopen_assigned_to_user_id or user_id
+            action_labels = {
+                "reply": "Répondre à",
+                "follow_up": "Relancer",
+                "setting_call": "Appeler",
+                "closing_call": "Contacter pour closing",
+            }
+            prefix = action_labels.get(action_type, "Traiter")
+            created_action_id = _insert_next_action(
+                conn,
+                lead_id=conv["lead_id"],
+                conversation_id=conversation_id,
+                action_type=action_type,
+                title=f"{prefix} {full_name}",
+                assigned_to_user_id=assigned_to_user_id,
+                created_by_user_id=user_id,
+                urgency="normal" if reopen_due_at else "high",
+                due_at=reopen_due_at or now,
+                description=(reopen_reason or "").strip() or "Conversation rouverte.",
+                trigger_reason="conversation_reopened",
+                metadata={"reopen_reason": reopen_reason},
             )
         insert_event(
             conn,
@@ -486,8 +641,17 @@ def set_conversation_status(
             "conversation_status_changed",
             user_id=user_id,
             previous={"status": previous_status},
-            new={"status": status},
-            metadata={"conversation_id": conversation_id},
+            new={
+                "status": status,
+                "resolution_reason": resolution_reason,
+                "reopen_action_type": reopen_action_type,
+            },
+            metadata={
+                "conversation_id": conversation_id,
+                "resolution_note": resolution_note,
+                "reopen_reason": reopen_reason,
+                "created_action_id": created_action_id,
+            },
         )
 
     label = "rouverte" if status == "open" else "marquée comme résolue"
@@ -505,13 +669,21 @@ def _insert_next_action(
     urgency: str,
     due_at: str,
     description: str | None = None,
+    trigger_reason: str | None = None,
+    sequence_code: str | None = None,
+    sequence_step_index: int | None = None,
+    previous_action_id: int | None = None,
+    status: str = "open",
+    blocked_reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> int:
     cursor = conn.execute(
         """
         INSERT INTO tasks (
             lead_id, conversation_id, type, title, description, assigned_to_user_id,
-            created_by_user_id, due_at, urgency, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+            created_by_user_id, due_at, urgency, status, trigger_reason, sequence_code,
+            sequence_step_index, previous_action_id, blocked_reason, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             lead_id,
@@ -523,6 +695,13 @@ def _insert_next_action(
             created_by_user_id,
             due_at,
             urgency,
+            status,
+            trigger_reason,
+            sequence_code,
+            sequence_step_index,
+            previous_action_id,
+            blocked_reason,
+            json.dumps(metadata or {}, ensure_ascii=False),
         ),
     )
     return int(cursor.lastrowid)
@@ -545,7 +724,7 @@ def _complete_open_actions_for_lead(
     rows = conn.execute(
         f"""
         SELECT id FROM tasks
-        WHERE lead_id = ? AND status IN ('open', 'in_progress'){exclusion}
+        WHERE lead_id = ? AND status IN ('open', 'in_progress', 'planned', 'blocked'){exclusion}
         """,
         params,
     ).fetchall()
@@ -573,6 +752,178 @@ def _complete_open_actions_for_lead(
     )
 
 
+def _first_active_action_for_lead(
+    conn: Any,
+    lead_id: int,
+    action_types: tuple[str, ...] | None = None,
+) -> dict[str, Any] | None:
+    filters = ["lead_id = ?", "status IN ('open', 'in_progress', 'planned', 'blocked')"]
+    params: list[Any] = [lead_id]
+    if action_types:
+        placeholders = ", ".join("?" for _ in action_types)
+        filters.append(f"type IN ({placeholders})")
+        params.extend(action_types)
+    row = conn.execute(
+        f"""
+        SELECT *
+        FROM tasks
+        WHERE {' AND '.join(filters)}
+        ORDER BY
+            CASE type
+                WHEN 'reply' THEN 0
+                WHEN 'follow_up' THEN 1
+                WHEN 'setting_call' THEN 2
+                WHEN 'closing_call' THEN 3
+                ELSE 4
+            END,
+            datetime(coalesce(due_at, created_at)) ASC,
+            id ASC
+        LIMIT 1
+        """,
+        params,
+    ).fetchone()
+    return row_to_dict(row)
+
+
+def _due_after(base_iso: str, delay: str) -> str:
+    base = parse_dt(base_iso) or utc_now()
+    normalized = delay.strip().lower()
+    if normalized.startswith("+72h"):
+        return iso_utc(base + timedelta(hours=72))
+    if normalized.startswith("+24h"):
+        return iso_utc(base + timedelta(hours=24))
+    if normalized.startswith("+2h"):
+        return iso_utc(base + timedelta(hours=2))
+    if normalized.startswith("+7j"):
+        return iso_utc(base + timedelta(days=7))
+    if normalized.startswith("+30j"):
+        return iso_utc(base + timedelta(days=30))
+    return iso_utc(base)
+
+
+def _next_sequence_step(
+    conn: Any,
+    sequence_code: str | None,
+    current_step_index: int | None,
+) -> dict[str, Any] | None:
+    if not sequence_code:
+        return None
+    next_index = (current_step_index or 0) + 1
+    return row_to_dict(
+        conn.execute(
+            """
+            SELECT *
+            FROM sequence_steps
+            WHERE sequence_code = ? AND step_index = ? AND active = 1
+            """,
+            (sequence_code, next_index),
+        ).fetchone()
+    )
+
+
+def _close_outbound_action_and_chain(
+    conn: Any,
+    conv: dict[str, Any],
+    user_id: int,
+    message_id: int,
+    sent_at: str,
+) -> None:
+    action = _first_active_action_for_lead(
+        conn,
+        conv["lead_id"],
+        action_types=("reply", "follow_up"),
+    )
+    if not action:
+        return
+
+    conn.execute(
+        """
+        UPDATE tasks
+        SET status = 'done',
+            outcome = 'Message WhatsApp envoyé',
+            proof_message_id = ?,
+            completed_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (message_id, sent_at, sent_at, action["id"]),
+    )
+    insert_event(
+        conn,
+        conv["lead_id"],
+        "action_completed_by_outbound_message",
+        user_id=user_id,
+        previous={"task_id": action["id"], "type": action["type"]},
+        new={"status": "done", "proof_message_id": message_id},
+    )
+
+    full_name = f"{conv['first_name']} {conv['last_name']}"
+    if action["type"] == "reply":
+        assignee_id = setter2_user_id(conn) or user_id
+        next_action_id = _insert_next_action(
+            conn,
+            lead_id=conv["lead_id"],
+            conversation_id=conv["id"],
+            action_type="follow_up",
+            title=f"Relancer {full_name}",
+            assigned_to_user_id=assignee_id,
+            created_by_user_id=user_id,
+            urgency="normal",
+            due_at=_due_after(sent_at, "+72h"),
+            trigger_reason="reply_sent_no_setting_booked",
+            sequence_code="setter_no_next_step",
+            sequence_step_index=1,
+            previous_action_id=action["id"],
+        )
+        conn.execute("UPDATE tasks SET next_action_id = ? WHERE id = ?", (next_action_id, action["id"]))
+        return
+
+    if action["type"] == "follow_up":
+        next_step = _next_sequence_step(
+            conn,
+            action.get("sequence_code"),
+            action.get("sequence_step_index"),
+        )
+        if not next_step:
+            conn.execute(
+                """
+                UPDATE conversations
+                SET status = 'resolved',
+                    resolution_reason = 'sequence_completed_no_reply',
+                    resolved_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (sent_at, sent_at, conv["id"]),
+            )
+            insert_event(
+                conn,
+                conv["lead_id"],
+                "conversation_resolved_by_sequence_completion",
+                user_id=user_id,
+                metadata={"completed_action_id": action["id"]},
+            )
+            return
+
+        assignee_id = setter2_user_id(conn) or user_id
+        next_action_id = _insert_next_action(
+            conn,
+            lead_id=conv["lead_id"],
+            conversation_id=conv["id"],
+            action_type="follow_up",
+            title=f"Relancer {full_name}",
+            assigned_to_user_id=assignee_id,
+            created_by_user_id=user_id,
+            urgency="normal",
+            due_at=_due_after(sent_at, next_step["delay"]),
+            trigger_reason="follow_up_sequence_continues",
+            sequence_code=next_step["sequence_code"],
+            sequence_step_index=next_step["step_index"],
+            previous_action_id=action["id"],
+        )
+        conn.execute("UPDATE tasks SET next_action_id = ? WHERE id = ?", (next_action_id, action["id"]))
+
+
 def _default_active_user_id(conn: Any, role: str) -> int | None:
     row = conn.execute(
         "SELECT id FROM users WHERE role = ? AND active = 1 ORDER BY id LIMIT 1",
@@ -594,7 +945,7 @@ def _upsert_reply_action_for_inbound(
     now = iso_utc()
     lead = row_to_dict(
         conn.execute(
-            "SELECT first_name, last_name, setter_user_id FROM leads WHERE id = ?",
+            "SELECT first_name, last_name, setter_user_id, contact_status FROM leads WHERE id = ?",
             (lead_id,),
         ).fetchone()
     )
@@ -614,15 +965,71 @@ def _upsert_reply_action_for_inbound(
         lead_id,
         user_id=None,
         outcome="Nouveau message reçu",
-        excluded_types=("reply",),
+        excluded_types=(
+            ("contact_review",)
+            if lead.get("contact_status") in STOP_CONTACT_STATUSES
+            else ("reply",)
+        ),
     )
+
+    if lead.get("contact_status") in STOP_CONTACT_STATUSES:
+        title = f"Revoir le statut de contact de {lead['first_name']} {lead['last_name']}"
+        existing_review = conn.execute(
+            """
+            SELECT id FROM tasks
+            WHERE lead_id = ? AND conversation_id = ? AND type = 'contact_review'
+              AND status IN ('open', 'in_progress', 'planned', 'blocked')
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (lead_id, conversation_id),
+        ).fetchone()
+        if existing_review:
+            conn.execute(
+                """
+                UPDATE tasks
+                SET title = ?, assigned_to_user_id = ?, due_at = ?,
+                    urgency = 'urgent', updated_at = ?
+                WHERE id = ?
+                """,
+                (title, setter_id, now, now, existing_review["id"]),
+            )
+            return
+
+        action_id = _insert_next_action(
+            conn,
+            lead_id=lead_id,
+            conversation_id=conversation_id,
+            action_type="contact_review",
+            title=title,
+            assigned_to_user_id=setter_id,
+            created_by_user_id=None,
+            urgency="urgent",
+            due_at=now,
+            description=(
+                "Le prospect est marqué Ne plus contacter mais vient d'écrire. "
+                "Lire le message et décider s'il faut maintenir ou lever le blocage."
+            ),
+            trigger_reason="do_not_contact_prospect_replied",
+        )
+        insert_event(
+            conn,
+            lead_id,
+            "contact_review_created_from_inbound",
+            new={
+                "task_id": action_id,
+                "assigned_to_user_id": setter_id,
+                "conversation_id": conversation_id,
+            },
+        )
+        return
 
     title = f"Répondre à {lead['first_name']} {lead['last_name']}"
     existing = conn.execute(
         """
         SELECT id FROM tasks
         WHERE lead_id = ? AND conversation_id = ? AND type = 'reply'
-          AND status IN ('open', 'in_progress')
+          AND status IN ('open', 'in_progress', 'planned', 'blocked')
         ORDER BY id DESC
         LIMIT 1
         """,
@@ -747,44 +1154,277 @@ def create_template(
     return int(template_id)
 
 
+def list_sequences() -> list[dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM sequences
+            WHERE active = 1
+            ORDER BY code
+            """
+        ).fetchall()
+    return rows_to_dicts(rows)
+
+
+def list_sequence_steps(sequence_code: str | None = None) -> list[dict[str, Any]]:
+    filters = ["active = 1"]
+    params: list[Any] = []
+    if sequence_code:
+        filters.append("sequence_code = ?")
+        params.append(sequence_code)
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM sequence_steps
+            WHERE {' AND '.join(filters)}
+            ORDER BY sequence_code, step_index
+            """,
+            params,
+        ).fetchall()
+    return rows_to_dicts(rows)
+
+
+def list_template_requests(status: str = "all") -> list[dict[str, Any]]:
+    filters = []
+    params: list[Any] = []
+    if status != "all":
+        filters.append("tr.status = ?")
+        params.append(status)
+    where = f"WHERE {' AND '.join(filters)}" if filters else ""
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT
+                tr.*,
+                l.first_name,
+                l.last_name,
+                l.course_title,
+                l.course_category_short_title,
+                t.title AS action_title,
+                u.full_name AS requested_by_name,
+                wt.name AS template_name
+            FROM template_requests tr
+            JOIN leads l ON l.id = tr.lead_id
+            LEFT JOIN tasks t ON t.id = tr.task_id
+            LEFT JOIN users u ON u.id = tr.requested_by_user_id
+            LEFT JOIN whatsapp_templates wt ON wt.id = tr.template_id
+            {where}
+            ORDER BY
+                CASE tr.status
+                    WHEN 'to_create' THEN 0
+                    WHEN 'submitted' THEN 1
+                    WHEN 'approved' THEN 2
+                    WHEN 'rejected' THEN 3
+                    ELSE 4
+                END,
+                datetime(tr.created_at) DESC
+            """,
+            params,
+        ).fetchall()
+    return rows_to_dicts(rows)
+
+
+def create_template_request(
+    conversation_id: int,
+    user_id: int,
+    reason: str,
+    context: str = "",
+    task_id: int | None = None,
+    sequence_code: str | None = None,
+    sequence_step_index: int | None = None,
+) -> tuple[bool, str]:
+    conv = get_conversation(conversation_id)
+    if not conv:
+        return False, "Conversation introuvable."
+    if not reason.strip():
+        return False, "Explique pourquoi le modèle manque."
+
+    now = iso_utc()
+    with connect() as conn:
+        action = None
+        if task_id is None:
+            action = row_to_dict(
+                conn.execute(
+                    """
+                    SELECT *
+                    FROM tasks
+                    WHERE lead_id = ?
+                      AND status IN ('open', 'in_progress', 'planned', 'blocked')
+                    ORDER BY
+                        CASE WHEN type = 'follow_up' THEN 0 ELSE 1 END,
+                        datetime(coalesce(due_at, created_at)) ASC,
+                        id ASC
+                    LIMIT 1
+                    """,
+                    (conv["lead_id"],),
+                ).fetchone()
+            )
+            task_id = action["id"] if action else None
+        else:
+            action = row_to_dict(
+                conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            )
+
+        cursor = conn.execute(
+            """
+            INSERT INTO template_requests (
+                lead_id, conversation_id, task_id, sequence_code, sequence_step_index,
+                course_id, requested_by_user_id, status, reason, context, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'to_create', ?, ?, ?, ?)
+            """,
+            (
+                conv["lead_id"],
+                conversation_id,
+                task_id,
+                sequence_code or (action or {}).get("sequence_code"),
+                sequence_step_index or (action or {}).get("sequence_step_index"),
+                conv.get("course_id"),
+                user_id,
+                reason.strip(),
+                context.strip() or None,
+                now,
+                now,
+            ),
+        )
+        request_id = int(cursor.lastrowid)
+        if task_id:
+            conn.execute(
+                """
+                UPDATE tasks
+                SET status = 'blocked',
+                    blocked_reason = 'template_missing',
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now, task_id),
+            )
+        insert_event(
+            conn,
+            conv["lead_id"],
+            "template_request_created",
+            user_id=user_id,
+            new={
+                "template_request_id": request_id,
+                "task_id": task_id,
+                "sequence_code": sequence_code,
+                "sequence_step_index": sequence_step_index,
+                "reason": reason,
+            },
+        )
+    return True, "Demande de modèle créée et relance bloquée."
+
+
+def update_template_request_status(
+    request_id: int,
+    user_id: int,
+    status: str,
+    template_id: int | None = None,
+) -> tuple[bool, str]:
+    allowed_statuses = {"to_create", "submitted", "approved", "rejected", "cancelled"}
+    if status not in allowed_statuses:
+        return False, "Statut de demande invalide."
+    now = iso_utc()
+    with connect() as conn:
+        request = row_to_dict(
+            conn.execute("SELECT * FROM template_requests WHERE id = ?", (request_id,)).fetchone()
+        )
+        if not request:
+            return False, "Demande de modèle introuvable."
+        conn.execute(
+            """
+            UPDATE template_requests
+            SET status = ?, template_id = coalesce(?, template_id),
+                updated_at = ?, resolved_at = CASE WHEN ? IN ('approved', 'rejected', 'cancelled') THEN ? ELSE resolved_at END
+            WHERE id = ?
+            """,
+            (status, template_id, now, status, now, request_id),
+        )
+        if status == "approved" and request.get("task_id"):
+            conn.execute(
+                """
+                UPDATE tasks
+                SET status = 'open',
+                    blocked_reason = NULL,
+                    updated_at = ?
+                WHERE id = ? AND status = 'blocked'
+                """,
+                (now, request["task_id"]),
+            )
+        insert_event(
+            conn,
+            request["lead_id"],
+            "template_request_status_updated",
+            user_id=user_id,
+            previous={"status": request["status"], "template_id": request.get("template_id")},
+            new={"status": status, "template_id": template_id},
+        )
+    return True, "Demande de modèle mise à jour."
+
+
 def update_lead_qualification(
     lead_id: int,
     user_id: int,
     sales_stage: str,
     lead_status: str,
     temperature: str | None = None,
+    contact_status: str | None = None,
 ) -> None:
     now = iso_utc()
+    if lead_status == "do_not_contact":
+        contact_status = "do_not_contact"
+        lead_status = "neutral"
     with connect() as conn:
         previous = row_to_dict(
             conn.execute(
-                "SELECT sales_stage, temperature, lead_status FROM leads WHERE id = ?",
+                "SELECT sales_stage, temperature, lead_status, contact_status FROM leads WHERE id = ?",
                 (lead_id,),
             ).fetchone()
         )
         effective_temperature = temperature or previous["temperature"]
+        effective_contact_status = contact_status or previous.get("contact_status") or "contact_allowed"
         conn.execute(
             """
             UPDATE leads
-            SET sales_stage = ?, temperature = ?, lead_status = ?, updated_at = ?
+            SET sales_stage = ?, temperature = ?, lead_status = ?,
+                contact_status = ?, updated_at = ?
             WHERE id = ?
             """,
-            (sales_stage, effective_temperature, lead_status, now, lead_id),
+            (
+                sales_stage,
+                effective_temperature,
+                lead_status,
+                effective_contact_status,
+                now,
+                lead_id,
+            ),
         )
-        if lead_status in STOP_FOLLOWUP_STATUSES:
+        if (
+            lead_status in STOP_QUALIFICATION_STATUSES
+            or effective_contact_status in STOP_CONTACT_STATUSES
+        ):
+            resolution_reason = (
+                "do_not_contact"
+                if effective_contact_status in STOP_CONTACT_STATUSES
+                else lead_status
+            )
             _complete_open_actions_for_lead(
                 conn,
                 lead_id,
                 user_id,
-                outcome=f"Statut {lead_status}",
+                outcome=f"Statut terminal : {resolution_reason}",
             )
             conn.execute(
                 """
                 UPDATE conversations
-                SET status = 'resolved', updated_at = ?
+                SET status = 'resolved',
+                    resolution_reason = ?,
+                    resolved_at = ?,
+                    updated_at = ?
                 WHERE lead_id = ?
                 """,
-                (now, lead_id),
+                (resolution_reason, now, now, lead_id),
             )
         insert_event(
             conn,
@@ -796,6 +1436,7 @@ def update_lead_qualification(
                 "sales_stage": sales_stage,
                 "temperature": effective_temperature,
                 "lead_status": lead_status,
+                "contact_status": effective_contact_status,
             },
         )
 
@@ -811,7 +1452,7 @@ def send_freeform_message(conversation_id: int, user_id: int, body: str) -> tupl
     result = MockTwilioClient().send_freeform(conv["recipient_phone_e164"], body)
     now = iso_utc()
     with connect() as conn:
-        conn.execute(
+        cursor = conn.execute(
             """
             INSERT INTO messages (
                 conversation_id, lead_id, direction, channel, body, sender_user_id,
@@ -831,10 +1472,12 @@ def send_freeform_message(conversation_id: int, user_id: int, body: str) -> tupl
                 now,
             ),
         )
+        message_id = int(cursor.lastrowid)
         conn.execute(
             "UPDATE conversations SET last_outbound_at = ?, updated_at = ? WHERE id = ?",
             (now, now, conversation_id),
         )
+        _close_outbound_action_and_chain(conn, conv, user_id, message_id, now)
         insert_event(
             conn,
             conv["lead_id"],
@@ -875,7 +1518,7 @@ def send_template_message(
     )
     now = iso_utc()
     with connect() as conn:
-        conn.execute(
+        cursor = conn.execute(
             """
             INSERT INTO messages (
                 conversation_id, lead_id, direction, channel, body, sender_user_id,
@@ -897,10 +1540,12 @@ def send_template_message(
                 now,
             ),
         )
+        message_id = int(cursor.lastrowid)
         conn.execute(
             "UPDATE conversations SET last_outbound_at = ?, updated_at = ? WHERE id = ?",
             (now, now, conversation_id),
         )
+        _close_outbound_action_and_chain(conn, conv, user_id, message_id, now)
         insert_event(
             conn,
             conv["lead_id"],
@@ -1000,8 +1645,10 @@ def record_inbound_message(
                 """
                 INSERT INTO leads (
                     first_name, last_name, phone_e164, phone_raw, source,
-                    lead_status, sales_stage, temperature, setter_user_id
-                ) VALUES ('WhatsApp', 'Unknown', ?, ?, 'twilio_webhook_mock', 'new', 'new', 'warm', ?)
+                    acquisition_type, lead_status, contact_status, sales_stage,
+                    temperature, setter_user_id
+                ) VALUES ('WhatsApp', 'Unknown', ?, ?, 'twilio_webhook_mock',
+                    'unknown', 'neutral', 'contact_allowed', 'new', 'warm', ?)
                 """,
                 (from_phone, from_phone, setter_user_id),
             )
@@ -1065,7 +1712,9 @@ def list_tasks(status: str = "open") -> list[dict[str, Any]]:
                 l.course_category_short_title,
                 l.course_title,
                 l.lead_type,
+                l.acquisition_type,
                 l.lead_status,
+                l.contact_status,
                 l.sales_stage,
                 u.full_name AS assigned_to_name,
                 u.role AS assigned_to_role,
@@ -1110,7 +1759,7 @@ def create_call_task(
             INSERT INTO tasks (
                 lead_id, conversation_id, type, title, assigned_to_user_id,
                 created_by_user_id, due_at, urgency, status
-            ) VALUES (?, ?, 'call', ?, ?, ?, ?, ?, 'open')
+            ) VALUES (?, ?, 'setting_call', ?, ?, ?, ?, ?, 'open')
             """,
             (
                 lead_id,
@@ -1153,3 +1802,421 @@ def complete_task(task_id: int, user_id: int, outcome: str) -> None:
             previous=task,
             new={"status": "done", "outcome": outcome},
         )
+
+
+def complete_action_with_workflow(
+    task_id: int,
+    user_id: int,
+    outcome: str,
+    note: str = "",
+    next_due_at: str | None = None,
+    assigned_to_user_id: int | None = None,
+) -> tuple[bool, str]:
+    now = iso_utc()
+    note = note.strip()
+    with connect() as conn:
+        task = row_to_dict(
+            conn.execute(
+                """
+                SELECT
+                    t.*,
+                    l.first_name,
+                    l.last_name,
+                    l.lead_status,
+                    l.contact_status,
+                    l.sales_stage,
+                    c.id AS conversation_id
+                FROM tasks t
+                JOIN leads l ON l.id = t.lead_id
+                LEFT JOIN conversations c ON c.id = t.conversation_id
+                WHERE t.id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+        )
+        if not task:
+            return False, "Action introuvable."
+        if task["type"] in {"setting_call", "closing_call"} and not note:
+            return False, "Une mini note est obligatoire après un appel."
+        if outcome == "template_missing":
+            if not note:
+                return False, "Explique quel modèle manque."
+            cursor = conn.execute(
+                """
+                INSERT INTO template_requests (
+                    lead_id, conversation_id, task_id, sequence_code, sequence_step_index,
+                    course_id, requested_by_user_id, status, reason, context, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, NULL, ?, 'to_create', ?, ?, ?, ?)
+                """,
+                (
+                    task["lead_id"],
+                    task.get("conversation_id"),
+                    task_id,
+                    task.get("sequence_code"),
+                    task.get("sequence_step_index"),
+                    user_id,
+                    "Modèle manquant pour l'action",
+                    note,
+                    now,
+                    now,
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE tasks
+                SET status = 'blocked',
+                    blocked_reason = 'template_missing',
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now, task_id),
+            )
+            insert_event(
+                conn,
+                task["lead_id"],
+                "template_request_created",
+                user_id=user_id,
+                new={"template_request_id": int(cursor.lastrowid), "task_id": task_id},
+            )
+            return True, "Action bloquée en attente d'un nouveau modèle."
+
+        conn.execute(
+            """
+            UPDATE tasks
+            SET status = 'done',
+                outcome = ?,
+                completed_at = ?,
+                updated_at = ?,
+                metadata_json = ?
+            WHERE id = ?
+            """,
+            (
+                outcome,
+                now,
+                now,
+                json.dumps({"completion_note": note}, ensure_ascii=False),
+                task_id,
+            ),
+        )
+        insert_event(
+            conn,
+            task["lead_id"],
+            "action_completed_with_workflow",
+            user_id=user_id,
+            previous={"task_id": task_id, "type": task["type"]},
+            new={"outcome": outcome, "note": note},
+        )
+
+        full_name = f"{task['first_name']} {task['last_name']}"
+        conversation_id = task.get("conversation_id")
+
+        def create_followup(
+            sequence_code: str,
+            due_at: str,
+            step_index: int = 1,
+            trigger_reason: str = "workflow_outcome",
+        ) -> int | None:
+            assignee_id = setter2_user_id(conn) or assigned_to_user_id or user_id
+            if not conversation_id:
+                return None
+            return _insert_next_action(
+                conn,
+                lead_id=task["lead_id"],
+                conversation_id=conversation_id,
+                action_type="follow_up",
+                title=f"Relancer {full_name}",
+                assigned_to_user_id=assignee_id,
+                created_by_user_id=user_id,
+                urgency="normal",
+                due_at=due_at,
+                description=note or None,
+                trigger_reason=trigger_reason,
+                sequence_code=sequence_code,
+                sequence_step_index=step_index,
+                previous_action_id=task_id,
+            )
+
+        def resolve(reason: str) -> None:
+            if reason == "do_not_contact":
+                conn.execute(
+                    "UPDATE leads SET contact_status = 'do_not_contact', updated_at = ? WHERE id = ?",
+                    (now, task["lead_id"]),
+                )
+            elif reason in {"not_relevant", "signed"}:
+                conn.execute(
+                    "UPDATE leads SET lead_status = ?, updated_at = ? WHERE id = ?",
+                    (reason, now, task["lead_id"]),
+                )
+            _complete_open_actions_for_lead(
+                conn,
+                task["lead_id"],
+                user_id,
+                outcome=f"Statut terminal : {reason}",
+            )
+            conn.execute(
+                """
+                UPDATE conversations
+                SET status = 'resolved',
+                    resolution_reason = ?,
+                    resolution_note = ?,
+                    resolved_at = ?,
+                    updated_at = ?
+                WHERE lead_id = ?
+                """,
+                (reason, note or None, now, now, task["lead_id"]),
+            )
+
+        next_action_id = None
+        if task["type"] == "reply":
+            if outcome == "reply_no_appointment":
+                next_action_id = create_followup(
+                    "setter_no_next_step",
+                    _due_after(now, "+72h"),
+                    trigger_reason="reply_sent_no_setting_booked",
+                )
+            elif outcome == "setting_booked":
+                if not conversation_id:
+                    return False, "Conversation introuvable pour créer l'appel."
+                assignee_id = assigned_to_user_id or task.get("assigned_to_user_id") or user_id
+                next_action_id = _insert_next_action(
+                    conn,
+                    lead_id=task["lead_id"],
+                    conversation_id=conversation_id,
+                    action_type="setting_call",
+                    title=f"Appeler {full_name} pour setting",
+                    assigned_to_user_id=assignee_id,
+                    created_by_user_id=user_id,
+                    urgency="high",
+                    due_at=next_due_at or now,
+                    description=note or None,
+                    trigger_reason="setting_appointment_booked",
+                    previous_action_id=task_id,
+                )
+            elif outcome in {"not_relevant", "do_not_contact"}:
+                resolve(outcome)
+
+        elif task["type"] == "setting_call":
+            if outcome == "to_closing":
+                closer_id = assigned_to_user_id or default_closer_user_id(conn)
+                if not closer_id or not conversation_id:
+                    return False, "Closer ou conversation introuvable."
+                conn.execute(
+                    """
+                    UPDATE leads
+                    SET closer_user_id = ?, sales_stage = 'closing', updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (closer_id, now, task["lead_id"]),
+                )
+                next_action_id = _insert_next_action(
+                    conn,
+                    lead_id=task["lead_id"],
+                    conversation_id=conversation_id,
+                    action_type="closing_call",
+                    title=f"Contacter {full_name} pour closing",
+                    assigned_to_user_id=closer_id,
+                    created_by_user_id=user_id,
+                    urgency="high",
+                    due_at=next_due_at or now,
+                    description=note,
+                    trigger_reason="setting_call_to_closing",
+                    previous_action_id=task_id,
+                )
+            elif outcome == "not_reached":
+                count = _count_completed_outcomes(conn, task["lead_id"], "setting_call", "not_reached")
+                if count <= 1 and conversation_id:
+                    next_action_id = _insert_next_action(
+                        conn,
+                        lead_id=task["lead_id"],
+                        conversation_id=conversation_id,
+                        action_type="setting_call",
+                        title=f"Rappeler {full_name} pour setting",
+                        assigned_to_user_id=task["assigned_to_user_id"] or user_id,
+                        created_by_user_id=user_id,
+                        urgency="high",
+                        due_at=_due_after(now, "+2h"),
+                        description=note,
+                        trigger_reason="setting_call_not_reached",
+                        sequence_code="setting_call_not_reached",
+                        sequence_step_index=1,
+                        previous_action_id=task_id,
+                    )
+                elif count <= 2 and conversation_id:
+                    next_action_id = _insert_next_action(
+                        conn,
+                        lead_id=task["lead_id"],
+                        conversation_id=conversation_id,
+                        action_type="setting_call",
+                        title=f"Rappeler {full_name} pour setting",
+                        assigned_to_user_id=task["assigned_to_user_id"] or user_id,
+                        created_by_user_id=user_id,
+                        urgency="high",
+                        due_at=_due_after(now, "+24h"),
+                        description=note,
+                        trigger_reason="setting_call_not_reached",
+                        sequence_code="setting_call_not_reached",
+                        sequence_step_index=2,
+                        previous_action_id=task_id,
+                    )
+                else:
+                    next_action_id = create_followup(
+                        "setting_call_not_reached",
+                        _due_after(now, "+72h"),
+                        step_index=3,
+                        trigger_reason="setting_call_not_reached_retries_exhausted",
+                    )
+            elif outcome == "not_ready":
+                next_action_id = create_followup(
+                    "setter_no_next_step",
+                    _due_after(now, "+72h"),
+                    trigger_reason="setting_call_no_next_step",
+                )
+            elif outcome in {"not_relevant", "do_not_contact"}:
+                resolve(outcome)
+
+        elif task["type"] == "closing_call":
+            if outcome == "signed":
+                resolve("signed")
+            elif outcome == "will_sign":
+                conn.execute(
+                    "UPDATE leads SET lead_status = 'will_sign', updated_at = ? WHERE id = ?",
+                    (now, task["lead_id"]),
+                )
+                next_action_id = create_followup(
+                    "closer_will_sign",
+                    _due_after(now, "+72h"),
+                    trigger_reason="closing_call_will_sign",
+                )
+            elif outcome == "not_reached":
+                count = _count_completed_outcomes(conn, task["lead_id"], "closing_call", "not_reached")
+                if count <= 1 and conversation_id:
+                    next_action_id = _insert_next_action(
+                        conn,
+                        lead_id=task["lead_id"],
+                        conversation_id=conversation_id,
+                        action_type="closing_call",
+                        title=f"Rappeler {full_name} pour closing",
+                        assigned_to_user_id=task["assigned_to_user_id"] or user_id,
+                        created_by_user_id=user_id,
+                        urgency="high",
+                        due_at=_due_after(now, "+2h"),
+                        description=note,
+                        trigger_reason="closing_call_not_reached",
+                        sequence_code="closing_call_not_reached",
+                        sequence_step_index=1,
+                        previous_action_id=task_id,
+                    )
+                elif count <= 2 and conversation_id:
+                    next_action_id = _insert_next_action(
+                        conn,
+                        lead_id=task["lead_id"],
+                        conversation_id=conversation_id,
+                        action_type="closing_call",
+                        title=f"Rappeler {full_name} pour closing",
+                        assigned_to_user_id=task["assigned_to_user_id"] or user_id,
+                        created_by_user_id=user_id,
+                        urgency="high",
+                        due_at=_due_after(now, "+24h"),
+                        description=note,
+                        trigger_reason="closing_call_not_reached",
+                        sequence_code="closing_call_not_reached",
+                        sequence_step_index=2,
+                        previous_action_id=task_id,
+                    )
+                else:
+                    next_action_id = create_followup(
+                        "closing_call_not_reached",
+                        _due_after(now, "+72h"),
+                        step_index=3,
+                        trigger_reason="closing_call_not_reached_retries_exhausted",
+                    )
+            elif outcome == "undecided":
+                next_action_id = create_followup(
+                    "post_call_undecided",
+                    _due_after(now, "+72h"),
+                    trigger_reason="closing_call_undecided",
+                )
+            elif outcome == "not_relevant":
+                resolve("not_relevant")
+
+        elif task["type"] == "follow_up":
+            if outcome == "sequence_completed_no_reply":
+                resolve("sequence_completed_no_reply")
+            elif outcome == "follow_up_sent":
+                next_step = _next_sequence_step(
+                    conn,
+                    task.get("sequence_code"),
+                    task.get("sequence_step_index"),
+                )
+                if next_step:
+                    next_action_id = create_followup(
+                        next_step["sequence_code"],
+                        _due_after(now, next_step["delay"]),
+                        step_index=next_step["step_index"],
+                        trigger_reason="follow_up_sequence_continues",
+                    )
+                else:
+                    resolve("sequence_completed_no_reply")
+
+        elif task["type"] == "contact_review":
+            if outcome == "maintain_do_not_contact":
+                resolve("do_not_contact")
+            elif outcome == "lift_do_not_contact":
+                conn.execute(
+                    """
+                    UPDATE leads
+                    SET contact_status = 'contact_allowed', updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, task["lead_id"]),
+                )
+                if conversation_id:
+                    next_action_id = _insert_next_action(
+                        conn,
+                        lead_id=task["lead_id"],
+                        conversation_id=conversation_id,
+                        action_type="reply",
+                        title=f"Répondre à {full_name}",
+                        assigned_to_user_id=task["assigned_to_user_id"] or user_id,
+                        created_by_user_id=user_id,
+                        urgency="urgent",
+                        due_at=now,
+                        description=note,
+                        trigger_reason="do_not_contact_lifted_after_inbound",
+                        previous_action_id=task_id,
+                    )
+
+        if next_action_id:
+            conn.execute(
+                "UPDATE tasks SET next_action_id = ? WHERE id = ?",
+                (next_action_id, task_id),
+            )
+            insert_event(
+                conn,
+                task["lead_id"],
+                "next_action_created_by_workflow",
+                user_id=user_id,
+                previous={"task_id": task_id, "outcome": outcome},
+                new={"task_id": next_action_id},
+            )
+    return True, "Action terminée et suite créée selon la règle métier."
+
+
+def _count_completed_outcomes(
+    conn: Any,
+    lead_id: int,
+    action_type: str,
+    outcome: str,
+) -> int:
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM tasks
+        WHERE lead_id = ?
+          AND type = ?
+          AND outcome = ?
+          AND status = 'done'
+        """,
+        (lead_id, action_type, outcome),
+    ).fetchone()
+    return int(row["count"] if row else 0)

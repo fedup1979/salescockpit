@@ -15,8 +15,10 @@ At the start of any new Codex session in this repo, read these files before edit
 3. `docs/NEXT_SESSION.md`
 4. `docs/BUILD_SPEC.md`
 5. `docs/ACTION_WORKFLOW.md`
-6. `PRODUCT.md`
-7. `DESIGN.md`
+6. `docs/BUSINESS_LOGIC.md`
+7. `docs/GAP_ANALYSIS.md`
+8. `PRODUCT.md`
+9. `DESIGN.md`
 
 The original longer PRD currently also exists at:
 
@@ -62,7 +64,7 @@ There are two different concepts. Do not merge them:
 - WhatsApp window state: technical 24-hour API window, `open` or `closed`. This drives whether free-form messages are allowed.
 - Next action: operational work item stored in the `tasks` table but displayed as `prochaine action` / `Tâches`, not as an abstract task list.
 - Action is the central operational unit of the system. A conversation with `open` status must always have one open next action.
-- The source of truth for action types, statuses, support actions, proofs, outcomes, triggers, and workflow transitions is `docs/ACTION_WORKFLOW.md`.
+- The source of truth for action types, statuses, support actions, proofs, outcomes, triggers, workflow transitions, sequences, and template requests is `docs/BUSINESS_LOGIC.md`, `docs/ACTION_WORKFLOW.md`, and structured constants in `sales_cockpit/business_rules.py`.
 - `Tâches` is the default work page. It uses a split screen: assigned actions/persons on the left, selected prospect detail on the right.
 - `Tâches` defaults to the connected user's own queue. The user can switch to another person's queue or `Tous`; that choice must persist when navigating away and back during the same session.
 
@@ -80,7 +82,11 @@ Operational rule:
 - `Tâches` and Inbox auto-refresh every 10 seconds while visible, so Twilio webhook updates should appear without manual navigation.
 - Passing to closer completes current open actions, moves the lead to `closing`, and creates a `closing_call` action for the closer.
 - Resolving a conversation completes open actions for that lead.
-- `Non pertinent` and `Ne plus contacter` are separate statuses. Both stop follow-ups; `Ne plus contacter` is a strict do-not-contact policy.
+- `Non pertinent` and `Ne plus contacter` are separate concepts. `Non pertinent` is a commercial qualification. `Ne plus contacter` is `contact_status = do_not_contact`.
+- If a `do_not_contact` prospect writes inbound, do not ignore it and do not create automatic follow-ups. Create a `contact_review` action for Setter 1.
+- Resolving a conversation requires a controlled reason. Some reasons require a note.
+- Reopening a resolved conversation requires creating the next action immediately.
+- Missing WhatsApp templates are tracked as `template_requests` linked to the blocked follow-up action.
 - Course-date reminders always win over lead-relative reminders. If both conflict, cancel the lead-relative reminder.
 - Minimum delay between outbound WhatsApp follow-ups is 24h.
 - Business rules are centralized in `sales_cockpit/business_rules.py` and displayed in Admin.

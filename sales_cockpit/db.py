@@ -6,7 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from sales_cockpit.business_rules import DEMO_TEMPLATE_CATALOG
+from sales_cockpit.business_rules import DEMO_TEMPLATE_CATALOG, SEQUENCE_STEPS, SEQUENCES
 from sales_cockpit.config import get_settings
 from sales_cockpit.security import hash_password
 from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
@@ -37,7 +37,9 @@ CREATE TABLE IF NOT EXISTS leads (
     course_category_short_title TEXT,
     lead_type TEXT NOT NULL DEFAULT 'lead',
     source TEXT NOT NULL DEFAULT 'mock',
+    acquisition_type TEXT NOT NULL DEFAULT 'unknown',
     lead_status TEXT NOT NULL DEFAULT 'new',
+    contact_status TEXT NOT NULL DEFAULT 'contact_allowed',
     sales_stage TEXT NOT NULL DEFAULT 'new',
     temperature TEXT NOT NULL DEFAULT 'warm',
     owner_user_id INTEGER REFERENCES users(id),
@@ -59,6 +61,10 @@ CREATE TABLE IF NOT EXISTS conversations (
     last_inbound_at TEXT,
     last_outbound_at TEXT,
     status TEXT NOT NULL DEFAULT 'open',
+    resolution_reason TEXT,
+    resolution_note TEXT,
+    resolved_at TEXT,
+    reopened_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -125,7 +131,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
     conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
-    type TEXT NOT NULL DEFAULT 'call',
+    type TEXT NOT NULL DEFAULT 'setting_call',
     title TEXT NOT NULL,
     description TEXT,
     assigned_to_user_id INTEGER REFERENCES users(id),
@@ -134,9 +140,65 @@ CREATE TABLE IF NOT EXISTS tasks (
     urgency TEXT NOT NULL DEFAULT 'normal',
     status TEXT NOT NULL DEFAULT 'open',
     outcome TEXT,
+    trigger_reason TEXT,
+    sequence_code TEXT,
+    sequence_step_index INTEGER,
+    expected_proof_type TEXT,
+    proof_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+    proof_event_id INTEGER REFERENCES lead_events(id) ON DELETE SET NULL,
+    previous_action_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+    next_action_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+    cancelled_reason TEXT,
+    blocked_reason TEXT,
+    metadata_json TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS sequences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL,
+    timeline TEXT NOT NULL,
+    trigger TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    stop_when TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sequence_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sequence_id INTEGER NOT NULL REFERENCES sequences(id) ON DELETE CASCADE,
+    sequence_code TEXT NOT NULL,
+    step_index INTEGER NOT NULL,
+    delay TEXT NOT NULL,
+    template_name TEXT,
+    meaning TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(sequence_code, step_index)
+);
+
+CREATE TABLE IF NOT EXISTS template_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE CASCADE,
+    task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+    sequence_code TEXT,
+    sequence_step_index INTEGER,
+    course_id TEXT,
+    requested_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    template_id INTEGER REFERENCES whatsapp_templates(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'to_create',
+    reason TEXT NOT NULL,
+    context TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS lead_events (
@@ -214,17 +276,43 @@ def init_db() -> None:
 
 
 def ensure_schema_columns(conn: sqlite3.Connection) -> None:
-    columns = {
-        row["name"]
-        for row in conn.execute("PRAGMA table_info(leads)").fetchall()
-    }
-    migrations = [
-        ("course_category_short_title", "TEXT"),
-        ("lead_type", "TEXT NOT NULL DEFAULT 'lead'"),
-    ]
-    for column_name, definition in migrations:
-        if column_name not in columns:
-            conn.execute(f"ALTER TABLE leads ADD COLUMN {column_name} {definition}")
+    add_missing_columns(
+        conn,
+        "leads",
+        [
+            ("course_category_short_title", "TEXT"),
+            ("lead_type", "TEXT NOT NULL DEFAULT 'lead'"),
+            ("acquisition_type", "TEXT NOT NULL DEFAULT 'unknown'"),
+            ("contact_status", "TEXT NOT NULL DEFAULT 'contact_allowed'"),
+        ],
+    )
+    add_missing_columns(
+        conn,
+        "conversations",
+        [
+            ("resolution_reason", "TEXT"),
+            ("resolution_note", "TEXT"),
+            ("resolved_at", "TEXT"),
+            ("reopened_at", "TEXT"),
+        ],
+    )
+    add_missing_columns(
+        conn,
+        "tasks",
+        [
+            ("trigger_reason", "TEXT"),
+            ("sequence_code", "TEXT"),
+            ("sequence_step_index", "INTEGER"),
+            ("expected_proof_type", "TEXT"),
+            ("proof_message_id", "INTEGER"),
+            ("proof_event_id", "INTEGER"),
+            ("previous_action_id", "INTEGER"),
+            ("next_action_id", "INTEGER"),
+            ("cancelled_reason", "TEXT"),
+            ("blocked_reason", "TEXT"),
+            ("metadata_json", "TEXT"),
+        ],
+    )
 
     conn.execute(
         """
@@ -241,6 +329,62 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
           AND course_id IS NOT NULL
         """
     )
+    conn.execute(
+        """
+        UPDATE leads
+        SET contact_status = 'do_not_contact',
+            lead_status = 'neutral'
+        WHERE lead_status = 'do_not_contact'
+        """
+    )
+    conn.execute(
+        """
+        UPDATE leads
+        SET contact_status = 'contact_allowed'
+        WHERE contact_status IS NULL OR trim(contact_status) = ''
+        """
+    )
+    conn.execute(
+        """
+        UPDATE leads
+        SET acquisition_type = CASE
+            WHEN acquisition_type IS NOT NULL AND trim(acquisition_type) != '' THEN acquisition_type
+            WHEN lead_type = 'presubscription' THEN 'organic'
+            WHEN lead_type = 'lead' THEN 'paid_ads'
+            ELSE 'unknown'
+        END
+        """
+    )
+    conn.execute(
+        """
+        UPDATE leads
+        SET lead_status = 'neutral'
+        WHERE lead_status IS NULL
+           OR trim(lead_status) = ''
+           OR lead_status IN ('new', 'lead', 'prospect')
+        """
+    )
+    conn.execute(
+        """
+        UPDATE tasks
+        SET type = 'setting_call'
+        WHERE type = 'call'
+        """
+    )
+
+
+def add_missing_columns(
+    conn: sqlite3.Connection,
+    table_name: str,
+    migrations: list[tuple[str, str]],
+) -> None:
+    columns = {
+        row["name"]
+        for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+    for column_name, definition in migrations:
+        if column_name not in columns:
+            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -357,7 +501,7 @@ def _normalize_seeded_demo_actions(
             due_at = now - timedelta(hours=2)
             urgency = "high"
         elif row["sales_stage"] == "new":
-            action_type = "call"
+            action_type = "setting_call"
             action_title = f"Appeler {full_name} pour qualification"
             assignee_id = setter_id
             due_at = now
@@ -435,7 +579,7 @@ def _ensure_demo_task_for_each_user(conn: sqlite3.Connection, now) -> None:
             INSERT INTO tasks (
                 lead_id, conversation_id, type, title, description,
                 assigned_to_user_id, created_by_user_id, due_at, urgency, status
-            ) VALUES (?, ?, 'call', ?, ?, ?, ?, ?, 'normal', 'open')
+            ) VALUES (?, ?, 'setting_call', ?, ?, ?, ?, ?, 'normal', 'open')
             """,
             (
                 target["lead_id"],
@@ -542,6 +686,97 @@ def _ensure_demo_waiting_reply_signal(conn: sqlite3.Connection, now, setter_id: 
     )
 
 
+def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
+    current_time = iso_utc(now)
+    for sequence in SEQUENCES:
+        conn.execute(
+            """
+            INSERT INTO sequences (
+                code, label, timeline, trigger, owner, stop_when, active, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+            ON CONFLICT(code) DO UPDATE SET
+                label = excluded.label,
+                timeline = excluded.timeline,
+                trigger = excluded.trigger,
+                owner = excluded.owner,
+                stop_when = excluded.stop_when,
+                active = 1,
+                updated_at = excluded.updated_at
+            """,
+            (
+                sequence["code"],
+                sequence["label"],
+                sequence["timeline"],
+                sequence["trigger"],
+                sequence["owner"],
+                sequence["stop_when"],
+                current_time,
+            ),
+        )
+
+    sequence_ids = {
+        row["code"]: row["id"]
+        for row in conn.execute("SELECT id, code FROM sequences").fetchall()
+    }
+    for step in SEQUENCE_STEPS:
+        sequence_id = sequence_ids.get(step["sequence_code"])
+        if not sequence_id:
+            continue
+        conn.execute(
+            """
+            INSERT INTO sequence_steps (
+                sequence_id, sequence_code, step_index, delay, template_name,
+                meaning, active, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+            ON CONFLICT(sequence_code, step_index) DO UPDATE SET
+                sequence_id = excluded.sequence_id,
+                delay = excluded.delay,
+                template_name = excluded.template_name,
+                meaning = excluded.meaning,
+                active = 1,
+                updated_at = excluded.updated_at
+            """,
+            (
+                sequence_id,
+                step["sequence_code"],
+                step["step_index"],
+                step["delay"],
+                step.get("template_name") or None,
+                step["meaning"],
+                current_time,
+            ),
+        )
+
+
+def _normalize_lead_business_fields(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        UPDATE leads
+        SET contact_status = CASE
+                WHEN lead_status = 'do_not_contact' THEN 'do_not_contact'
+                WHEN contact_status IS NULL OR trim(contact_status) = '' THEN 'contact_allowed'
+                ELSE contact_status
+            END,
+            lead_status = CASE
+                WHEN lead_status IN ('new', 'lead', 'prospect', 'do_not_contact')
+                    OR lead_status IS NULL
+                    OR trim(lead_status) = ''
+                THEN 'neutral'
+                ELSE lead_status
+            END,
+            acquisition_type = CASE
+                WHEN acquisition_type IS NOT NULL
+                     AND trim(acquisition_type) != ''
+                     AND acquisition_type != 'unknown'
+                THEN acquisition_type
+                WHEN lead_type = 'presubscription' THEN 'organic'
+                WHEN lead_type = 'lead' THEN 'paid_ads'
+                ELSE 'unknown'
+            END
+        """
+    )
+
+
 def seed_initial_data() -> None:
     init_db()
     settings = get_settings()
@@ -558,6 +793,7 @@ def seed_initial_data() -> None:
     ]
 
     with connect() as conn:
+        _seed_business_rule_tables(conn, now)
         for email, full_name, role in users:
             existing = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
             if existing:
@@ -589,7 +825,8 @@ def seed_initial_data() -> None:
                 "course_category_short_title": "APP",
                 "course_title": "Anatomie, Physiologie, Pathologie",
                 "lead_type": "lead",
-                "lead_status": "lead",
+                "lead_status": "neutral",
+                "contact_status": "contact_allowed",
                 "sales_stage": "setting",
                 "temperature": "hot",
                 "setter_user_id": mihary_id,
@@ -612,7 +849,8 @@ def seed_initial_data() -> None:
                 "course_category_short_title": "FSM",
                 "course_title": "FSM GE P26",
                 "lead_type": "presubscription",
-                "lead_status": "prospect",
+                "lead_status": "neutral",
+                "contact_status": "contact_allowed",
                 "sales_stage": "closing",
                 "temperature": "warm",
                 "setter_user_id": mihary_id,
@@ -635,7 +873,8 @@ def seed_initial_data() -> None:
                 "course_category_short_title": "AS",
                 "course_title": "AS GE E26 PM",
                 "lead_type": "presubscription",
-                "lead_status": "new",
+                "lead_status": "neutral",
+                "contact_status": "contact_allowed",
                 "sales_stage": "new",
                 "temperature": "cold",
                 "setter_user_id": mihary_id,
@@ -692,7 +931,8 @@ def seed_initial_data() -> None:
                     "course_category_short_title": course_id,
                     "course_title": stored_course_title,
                     "lead_type": lead_type,
-                    "lead_status": "prospect" if stage == "closing" else "lead",
+                    "lead_status": "neutral",
+                    "contact_status": "contact_allowed",
                     "sales_stage": stage,
                     "temperature": temperature,
                     "setter_user_id": setter_id,
@@ -720,13 +960,16 @@ def seed_initial_data() -> None:
                 conn.execute(
                     """
                     UPDATE leads
-                    SET course_category_short_title = ?, course_title = ?, lead_type = ?, updated_at = ?
+                    SET course_category_short_title = ?, course_title = ?, lead_type = ?,
+                        acquisition_type = ?, contact_status = coalesce(contact_status, 'contact_allowed'),
+                        updated_at = ?
                     WHERE id = ?
                     """,
                     (
                         lead["course_category_short_title"],
                         lead["course_title"],
                         lead["lead_type"],
+                        "organic" if lead["lead_type"] == "presubscription" else "paid_ads",
                         iso_utc(now),
                         existing["id"],
                     ),
@@ -737,10 +980,10 @@ def seed_initial_data() -> None:
                 """
                 INSERT INTO leads (
                     schooldrive_lead_id, first_name, last_name, email, phone_e164, phone_raw,
-                    course_id, course_category_short_title, course_title, lead_type,
-                    lead_status, sales_stage, temperature,
+                    course_id, course_category_short_title, course_title, lead_type, acquisition_type,
+                    lead_status, contact_status, sales_stage, temperature,
                     setter_user_id, closer_user_id, last_schooldrive_sync_at, last_notion_sync_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     lead["schooldrive_lead_id"],
@@ -753,7 +996,9 @@ def seed_initial_data() -> None:
                     lead["course_category_short_title"],
                     lead["course_title"],
                     lead["lead_type"],
+                    "organic" if lead["lead_type"] == "presubscription" else "paid_ads",
                     lead["lead_status"],
+                    lead["contact_status"],
                     lead["sales_stage"],
                     lead["temperature"],
                     lead["setter_user_id"],
@@ -812,7 +1057,7 @@ def seed_initial_data() -> None:
                 INSERT INTO tasks (
                     lead_id, conversation_id, type, title, assigned_to_user_id, created_by_user_id,
                     due_at, urgency, status
-                ) VALUES (?, ?, 'call', ?, ?, ?, ?, ?, 'open')
+                ) VALUES (?, ?, 'setting_call', ?, ?, ?, ?, ?, 'open')
                 """,
                 (
                     lead_id,
@@ -834,14 +1079,18 @@ def seed_initial_data() -> None:
                 conn.execute(
                     """
                     UPDATE conversations
-                    SET status = 'resolved', updated_at = ?
+                    SET status = 'resolved',
+                        resolution_reason = 'sequence_completed_no_reply',
+                        resolved_at = ?,
+                        updated_at = ?
                     WHERE lead_id = (
                         SELECT id FROM leads WHERE schooldrive_lead_id = ?
                     )
                     """,
-                    (iso_utc(now), schooldrive_id),
+                    (iso_utc(now), iso_utc(now), schooldrive_id),
                 )
 
+        _normalize_lead_business_fields(conn)
         _normalize_seeded_demo_actions(conn, now, mihary_id, yasmine_id)
         _ensure_demo_task_for_each_user(conn, now)
         _ensure_demo_waiting_reply_signal(conn, now, mihary_id)
@@ -927,3 +1176,4 @@ def seed_initial_data() -> None:
                     """,
                     (template_id, key, key, example),
                 )
+        _normalize_lead_business_fields(conn)

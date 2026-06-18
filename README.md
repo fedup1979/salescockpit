@@ -49,8 +49,14 @@ Seeded accounts:
 - WhatsApp 24-hour window enforcement.
 - Operational conversation state: open / resolved.
 - User actions to mark conversations resolved or reopen them.
+- Resolution with mandatory reason.
+- Reopening with mandatory next action.
+- Separate commercial qualification and contact status.
+- Do-not-contact inbound review assigned to Setter 1.
 - Free-form send blocked when the window is closed.
 - Template send allowed only with approved templates.
+- Template requests linked to blocked follow-up actions.
+- Structured follow-up sequences and sequence steps.
 - Template creation in local draft or approved mock status.
 - Work queues: `À traiter`, `À relancer`, `En attente`, `Résolues`.
 - Next-action creation, scheduling, completion, and setter-to-closer handoff.
@@ -72,6 +78,8 @@ Before continuing work, read:
 - `docs/NEXT_SESSION.md`
 - `docs/BUILD_SPEC.md`
 - `docs/ACTION_WORKFLOW.md`
+- `docs/BUSINESS_LOGIC.md`
+- `docs/GAP_ANALYSIS.md`
 - `PRODUCT.md`
 - `DESIGN.md`
 

@@ -41,18 +41,28 @@ V1 local mock build is runnable.
 - Mock seed ensures at least one open task for each active user for visual queue checks.
 - Inbound unanswered prospects are highlighted with a restrained hot signal and sorted above ordinary due actions.
 - `Tâches` and Inbox auto-refresh every 10 seconds while visible.
-- Action workflow decisions documented in `docs/ACTION_WORKFLOW.md`: action as operational unit, main vs support actions, statuses, proofs, outcomes, triggers, and transition table.
+- Action workflow decisions documented in `docs/ACTION_WORKFLOW.md` and structured in `sales_cockpit/business_rules.py`: action as operational unit, main vs support actions, statuses, proofs, outcomes, triggers, and transition table.
+- Admin `Workflow` tab displays main action types, support actions, action statuses, and the transition table.
+- Exhaustive business logic documented in `docs/BUSINESS_LOGIC.md`.
+- Gap analysis documented in `docs/GAP_ANALYSIS.md`.
+- Commercial qualification and contact status are separated in the data model.
+- Manual resolution now requires a controlled reason, with note required for sensitive reasons.
+- Manual reopening now requires creating the next action.
+- Inbound message from a `Ne plus contacter` prospect creates a `contact_review` action for Setter 1.
+- Follow-up sequences and sequence steps are stored structurally in SQLite and visible in Admin.
+- Missing templates create `template_requests` linked to the blocked action.
+- Outbound WhatsApp messages close the active `reply` or `follow_up` action and create the next follow-up when applicable.
+- Setting/closing calls can be completed with business outcomes that create the next action.
+- Added tests for resolution/reopen guards, do-not-contact inbound review, template requests, reply-to-follow-up chaining, and call retry chaining.
 
 ## Next Checkpoints
 
-1. Manual review of local mock UI by François, especially the `Tâches` / next-action workflow.
-2. Implement the validated action workflow model from `docs/ACTION_WORKFLOW.md`.
-3. Improve UX based on first review.
-4. Create first Git commit after François approves the current checkpoint.
-5. Add read-only connectors for SchoolDrive and Notion.
-6. Add Twilio sandbox integration.
-7. Prepare GitHub repo and DigitalOcean staging.
-8. Define backup policy for SQLite and attachments.
+1. Manual review of local mock UI by François, especially action outcomes, resolution/reopen popovers, template requests, and Admin rules.
+2. Improve UX based on review.
+3. Add read-only connectors for SchoolDrive and Notion.
+4. Add Twilio sandbox integration.
+5. Prepare GitHub repo and DigitalOcean staging.
+6. Define backup policy for SQLite and attachments.
 
 ## Integration Policy
 

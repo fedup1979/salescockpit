@@ -2,7 +2,12 @@
 
 Ce document formalise la logique métier validée avec François autour des actions commerciales.
 
+Pour la logique exhaustive validée, lire aussi `docs/BUSINESS_LOGIC.md`.
+Pour l'état d'implémentation et les écarts restants, lire `docs/GAP_ANALYSIS.md`.
+
 Il doit devenir la référence de travail pour toute évolution de `Tâches`, Inbox, automatisation Setter 2, Twilio, SchoolDrive, Notion et futur setter IA.
+
+La version structurée de cette logique existe dans `sales_cockpit/business_rules.py` via `MAIN_ACTION_TYPES`, `SUPPORT_ACTIONS`, `ACTION_STATUSES` et `WORKFLOW_TRANSITIONS`. Elle est affichée dans l'onglet Admin > Workflow.
 
 ## Décisions Validées
 
@@ -147,7 +152,7 @@ Les champs actuels de `tasks` couvrent une partie du besoin. Le modèle cible de
 - Un statut stop (`not_relevant`, `do_not_contact`, `signed`) clôt les actions ouvertes et résout la conversation.
 - `do_not_contact` est strict : aucune relance ne doit être créée ensuite.
 - Les relances liées aux dates de cours gagnent sur les relances relatives au lead.
-- Une action bloquée par template manquant doit créer une action support `template_creation`, pas disparaître.
+- Une action bloquée par template manquant doit créer une `template_request`, pas disparaître.
 - Une conversation ouverte sans action ouverte est une anomalie.
 
 ## Table De Transitions V1
@@ -164,11 +169,11 @@ Cette table décrit le chaînage cible. Elle doit rester lisible par l'équipe m
 | Réponse envoyée avec disqualification claire | `outbound_message_sent` | Prospect non pertinent ou stop | `reply` | Aucune | Personne | Aucun | Résolue | Qualification | Stopper relances |
 | Relance due | `follow_up_due` | Fenêtre WhatsApp ouverte | `follow_up` | À déterminer après envoi | Setter 2 | Maintenant | Ouverte | Message libre ou template selon choix | Respecter délai minimum |
 | Relance due | `follow_up_due` | Fenêtre WhatsApp fermée + template disponible | `follow_up` | À déterminer après envoi | Setter 2 | Maintenant | Ouverte | Template approuvé | Respecter délai minimum |
-| Relance due | `follow_up_due` | Aucun template adapté | `follow_up` | `follow_up` bloquée | Setter 2 | Maintenant | Ouverte | `template_creation` | Action principale passe `blocked` |
-| Template créé | `template_created` | Template en attente Meta/Twilio | `template_creation` support | `follow_up` reste bloquée | Setter 2 | Dès approbation | Ouverte | Template soumis | Surveiller statut template |
-| Template approuvé | `template_approved` | Relance bloquée par ce template | `template_creation` support | `follow_up` | Setter 2 | Maintenant | Ouverte | Template approuvé | Débloquer action |
+| Relance due | `follow_up_due` | Aucun template adapté | `follow_up` | `follow_up` bloquée | Setter 2 | Maintenant | Ouverte | `template_request` | Action principale passe `blocked` |
+| Template demandé | `template_request_created` | Template à créer ou soumettre | `template_request` support | `follow_up` reste bloquée | Setter 2 | Dès approbation | Ouverte | Template demandé | Surveiller statut template |
+| Template approuvé | `template_approved` | Relance bloquée par ce template | `template_request` support | `follow_up` | Setter 2 | Maintenant | Ouverte | Template approuvé | Débloquer action |
 | Relance envoyée | `outbound_template_sent` ou `outbound_message_sent` | Action active = `follow_up` | `follow_up` | `follow_up` suivant si séquence non terminée | Setter 2 | +72h, +7j ou +30j | Ouverte | Message sortant | Incrémenter séquence |
-| Relance envoyée | `outbound_template_sent` | Dernière relance de séquence | `follow_up` | Aucune | Personne | Aucun | Résolue ou ouverte sans action selon décision métier | Message sortant | Marquer séquence terminée |
+| Relance envoyée | `outbound_template_sent` | Dernière relance de séquence | `follow_up` | Aucune | Personne | Aucun | Résolue | Message sortant | Motif `sequence_completed_no_reply` |
 | RDV setting arrive | `setting_call_due` | Appel à faire | `setting_call` | Selon résultat appel | Setter 1 | Maintenant | Ouverte | Appel | Option `in_progress` si pris en main |
 | Appel setting terminé | `setting_call_completed` | À closer | `setting_call` | `closing_call` | Closer | Date RDV ou maintenant | Ouverte | Mini note + qualification setter | Lead passe en `closing` |
 | Appel setting terminé | `setting_call_completed` | Pas de réponse | `setting_call` | `follow_up` | Setter 2 | +72h | Ouverte | Mini note | Séquence setter no next step |
@@ -229,29 +234,32 @@ Cadence à confirmer : J-14, J-7, J-3, J-1.
 
 Règle : une relance de cours gagne toujours contre une relance relative au lead. La relance perdante est annulée, pas décalée.
 
-## Points À Trancher
+## Points Encore À Confirmer
 
-- Faut-il résoudre automatiquement la conversation après la dernière relance sans réponse, ou la laisser ouverte avec séquence terminée ?
-- Quels outcomes exacts afficher pour `setting_call` ?
-- Quels outcomes exacts afficher pour `closing_call` ?
-- Quelle note minimale est obligatoire après un appel ?
-- Qui peut créer un template support : tous les utilisateurs ou admins seulement ?
-- Quand une action support `template_creation` doit-elle apparaître dans `Tâches` ?
-- Règles horaires : horaires de chaque collaborateur, backups, répondeur automatique.
-- Données SchoolDrive requises : date de cours, type `lead`/`presubscription`, URL prospect, statut d'inscription/signature.
+- Horaires exacts de chaque collaborateur.
+- Backup principal et secondaire de chaque collaborateur.
+- Message ou template hors horaire.
+- Données SchoolDrive exactes pour choisir la date de cours pertinente d'un simple `lead`.
+- URL SchoolDrive exacte du prospect.
 - Données Notion à synchroniser ou seulement afficher comme historique.
+
+## Points Tranchés Depuis Validation
+
+- Après la dernière relance sans réponse, la conversation passe en `resolved` avec le motif `sequence_completed_no_reply`.
+- Les outcomes `setting_call` sont : passer au closing, pas joint, pas prêt / pas de suite claire, non pertinent, ne plus contacter.
+- Les outcomes `closing_call` sont : signé, va signer, pas joint, joint mais pas décidé, non pertinent.
+- Une mini note est obligatoire après un appel.
+- Tous les utilisateurs peuvent créer ou demander un template.
+- Une action de template apparaît dans la file seulement si elle bloque réellement une relance.
+- `Ne plus contacter` est un statut de contact séparé, pas une qualification commerciale.
 
 ## Implications Techniques V1
 
 À implémenter ensuite :
 
-1. Renommer techniquement `call` vers `setting_call`, avec migration douce des données mock.
-2. Ajouter les statuts persistés `planned`, `cancelled`, `blocked`, `in_progress`.
-3. Ne pas stocker `due` comme statut ; calculer `À traiter` depuis `due_at`.
-4. Clôturer automatiquement `reply` quand un message sortant est envoyé.
-5. Clôturer automatiquement `follow_up` quand une relance est envoyée.
-6. Créer l'action suivante à partir de la table de transitions.
-7. Ajouter des champs ou métadonnées : `trigger_reason`, `sequence_code`, `proof`, `previous_action_id`, `next_action_id`, `blocked_reason`, `cancelled_reason`.
-8. Historiser toutes les transitions dans `lead_events`.
-9. Afficher un historique lisible qui mélange actions, messages, qualifications et notes.
-10. Garder l'interface simple : l'utilisateur choisit un résultat, le système crée la suite.
+1. Continuer à durcir les statuts persistés `planned`, `cancelled`, `blocked`, `in_progress`.
+2. Ne pas stocker `due` comme statut ; calculer `À traiter` depuis `due_at`.
+3. Continuer à créer l'action suivante à partir de la table de transitions.
+4. Historiser toutes les transitions dans `lead_events`.
+5. Afficher un historique lisible qui mélange actions, messages, qualifications et notes.
+6. Garder l'interface simple : l'utilisateur choisit un résultat, le système crée la suite.
