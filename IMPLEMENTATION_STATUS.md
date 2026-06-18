@@ -81,6 +81,7 @@ V1 local mock build is runnable.
 - Staging services running: `sales-cockpit-ui@staging.service` and `sales-cockpit-api@staging.service`.
 - Implemented SchoolDrive snapshot webhook with bearer auth, environment guard, `event_id` idempotency, `schooldrive_id` upsert, `aggregated_updated_at` ordering, autoresponder replacement, and archival handling.
 - SchoolDrive `url` is stored and used by the UI SchoolDrive link.
+- Implemented Twilio sandbox-ready integration: SDK send client, inbound WhatsApp form webhook, `X-Twilio-Signature` validation, inbound idempotency by `MessageSid`, status callback storage, and legacy JSON mock compatibility.
 
 ## Next Checkpoints
 
@@ -90,12 +91,13 @@ V1 local mock build is runnable.
 4. Send SchoolDrive staging webhook URL and token to Tiago.
 5. Validate a real SchoolDrive staging POST and backfill replay.
 6. Add Notion historical enrichment.
-7. Add Twilio sandbox integration.
+7. Configure Twilio sandbox credentials on staging and run a real sandbox message test.
 8. Define and automate SQLite backups before PROD.
 
 ## Integration Policy
 
 - Twilio production is not touched until an explicit cutover plan exists.
+- Twilio stays in mock mode unless `SALES_COCKPIT_TWILIO_MODE=sandbox` or `live` is explicitly configured.
 - SchoolDrive is read-only in V1.
 - Notion is read-only in V1.
 - Front.io remains active until Sales Cockpit is tested and approved.

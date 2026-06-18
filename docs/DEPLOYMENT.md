@@ -134,19 +134,31 @@ Use sandbox first. Do not switch production WhatsApp traffic until the cockpit h
 Minimum Twilio values needed in the target `.env`:
 
 ```text
+SALES_COCKPIT_TWILIO_MODE=sandbox
 SALES_COCKPIT_TWILIO_ACCOUNT_SID=
 SALES_COCKPIT_TWILIO_AUTH_TOKEN=
 SALES_COCKPIT_TWILIO_WHATSAPP_SENDER=
 SALES_COCKPIT_TWILIO_MESSAGING_SERVICE_SID=
+SALES_COCKPIT_TWILIO_VALIDATE_SIGNATURE=true
+SALES_COCKPIT_TWILIO_WEBHOOK_URL=http://139.59.158.77:8602
+SALES_COCKPIT_TWILIO_STATUS_CALLBACK_URL=http://139.59.158.77:8602/webhooks/twilio/whatsapp/status
 ```
 
-Twilio webhook currently available in the FastAPI mock:
+Twilio sandbox webhooks currently available in FastAPI:
 
 ```text
 POST /webhooks/twilio/whatsapp/inbound
+POST /webhooks/twilio/whatsapp/status
 ```
 
-Before connecting real Twilio, the webhook must be adapted to Twilio's real inbound form payload and signature validation. The current endpoint is intentionally mock-shaped.
+The inbound endpoint accepts Twilio's real form payload and validates `X-Twilio-Signature`.
+The legacy JSON mock payload remains available only for internal tests.
+
+Full sandbox notes:
+
+```text
+docs/TWILIO_SANDBOX.md
+```
 
 ## SchoolDrive And Notion
 

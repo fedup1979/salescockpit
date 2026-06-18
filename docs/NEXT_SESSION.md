@@ -13,6 +13,8 @@ DigitalOcean staging:
 
 - Staging UI: `http://139.59.158.77:8502`
 - SchoolDrive staging webhook: `http://139.59.158.77:8602/webhooks/schooldrive/lead-or-presubscription`
+- Twilio staging inbound webhook: `http://139.59.158.77:8602/webhooks/twilio/whatsapp/inbound`
+- Twilio staging status callback: `http://139.59.158.77:8602/webhooks/twilio/whatsapp/status`
 - Host: `salescockpit-prod-01`
 - Services: `sales-cockpit-ui@staging.service`, `sales-cockpit-api@staging.service`
 
@@ -114,7 +116,7 @@ The app has been iteratively reviewed by François and is currently in a good mo
 
 Latest known validation:
 
-- `pytest`: 48 tests passing.
+- `pytest`: 59 tests passing.
 - `compileall`: passed for `sales_cockpit`, `scripts`, and `tests`.
 - `scripts/reset_demo.py`: verified on a temporary SQLite database and creates 19 `SD-DEMO-*` leads.
 - Streamlit AppTest smoke covers reply-action guidance and absence of the generic `Terminer l'action` button in the main Actions flow.
@@ -146,10 +148,10 @@ Stop-Process -Id <PID> -Force
 
 ## Known Gaps
 
-- SchoolDrive connector is placeholder only.
-- SchoolDrive URL format is mock and must be confirmed by Tiago.
+- SchoolDrive snapshot webhook exists; real staging payload validation is still pending.
+- SchoolDrive URL format is provided by Tiago's webhook contract and should be checked during the first staging replay.
 - Notion connector is placeholder only.
-- Twilio is mock only.
+- Twilio is mock by default. Sandbox-ready SDK sending, signed inbound webhook handling, and status callbacks are implemented but not yet configured with real credentials.
 - Attachments UI exists but persistence/send is not implemented.
 - Auth is local password-based only.
 - GitHub remote exists: `https://github.com/fedup1979/salescockpit`.
@@ -167,7 +169,7 @@ Stop-Process -Id <PID> -Force
 4. Send Tiago the SchoolDrive staging webhook URL and token.
 5. Validate real SchoolDrive staging payloads and backfill replay.
 6. Implement Notion historical enrichment.
-7. Implement Twilio sandbox mode.
+7. Configure Twilio sandbox credentials on staging and run a real sandbox inbound/outbound test.
 
 ## Files Most Likely to Change Next
 
@@ -177,5 +179,6 @@ Stop-Process -Id <PID> -Force
 - `sales_cockpit/db.py`
 - `sales_cockpit/services/schooldrive.py`
 - `sales_cockpit/services/notion.py`
-- `sales_cockpit/services/mock_twilio.py`
+- `sales_cockpit/services/twilio_client.py`
+- `docs/TWILIO_SANDBOX.md`
 - `tests/test_store.py`

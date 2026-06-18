@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from hmac import compare_digest
 from typing import Any
+from urllib.parse import urlparse
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from sales_cockpit import __version__
@@ -17,6 +18,7 @@ from sales_cockpit.store import (
     list_messages,
     list_templates,
     record_inbound_message,
+    record_twilio_status_callback,
     send_freeform_message,
     send_template_message,
 )
@@ -159,13 +161,51 @@ def create_whatsapp_template(request: TemplateCreateRequest) -> dict:
 
 
 @app.post("/webhooks/twilio/whatsapp/inbound")
-def twilio_inbound_mock(request: InboundWebhookRequest) -> dict:
+async def twilio_inbound(
+    request: Request,
+    x_twilio_signature: str | None = Header(default=None),
+) -> dict[str, Any]:
+    content_type = request.headers.get("content-type", "").lower()
+    if "application/json" in content_type:
+        return await _record_mock_inbound(request)
+
+    params = await _twilio_form_params(request)
+    _validate_twilio_signature(request, params, x_twilio_signature)
+    from_phone = _strip_twilio_whatsapp_prefix(params.get("From", ""))
+    if not from_phone:
+        raise HTTPException(status_code=400, detail="Twilio From is required.")
+
     result = record_inbound_message(
-        from_phone=request.from_phone,
-        body=request.body,
-        lead_id=request.lead_id,
+        from_phone=from_phone,
+        body=_twilio_message_body(params),
+        twilio_message_sid=(
+            params.get("MessageSid") or params.get("SmsMessageSid") or params.get("SmsSid")
+        ),
+        twilio_status=params.get("SmsStatus") or params.get("MessageStatus") or "received",
+        raw_payload=params,
     )
-    return {"status": "ok", **result}
+    return {"status": "ok", "provider": "twilio", **result}
+
+
+@app.post("/webhooks/twilio/whatsapp/status")
+async def twilio_status_callback(
+    request: Request,
+    x_twilio_signature: str | None = Header(default=None),
+) -> dict[str, Any]:
+    params = await _twilio_form_params(request)
+    _validate_twilio_signature(request, params, x_twilio_signature)
+    try:
+        result = record_twilio_status_callback(
+            message_sid=params.get("MessageSid") or params.get("SmsSid") or "",
+            status=params.get("MessageStatus") or params.get("SmsStatus") or "",
+            error_code=params.get("ErrorCode"),
+            error_message=params.get("ErrorMessage"),
+            raw_payload=params,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    callback_status = result.pop("status")
+    return {"status": "ok", "callback_status": callback_status, **result}
 
 
 @app.post("/webhooks/schooldrive/lead-or-presubscription")
@@ -209,3 +249,84 @@ def schooldrive_lead_or_presubscription(
 
 def _clean_bearer_token(value: str | None) -> str:
     return (value or "").strip().lstrip("\ufeff")
+
+
+async def _record_mock_inbound(request: Request) -> dict[str, Any]:
+    try:
+        payload = await request.json()
+        inbound_request = InboundWebhookRequest.model_validate(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="Invalid mock inbound payload.") from exc
+    result = record_inbound_message(
+        from_phone=inbound_request.from_phone,
+        body=inbound_request.body,
+        lead_id=inbound_request.lead_id,
+    )
+    return {"status": "ok", "provider": "mock", **result}
+
+
+async def _twilio_form_params(request: Request) -> dict[str, str]:
+    try:
+        form = await request.form()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid Twilio form payload.") from exc
+    return {key: str(value) for key, value in form.items()}
+
+
+def _validate_twilio_signature(
+    request: Request,
+    params: dict[str, str],
+    signature: str | None,
+) -> None:
+    settings = get_settings()
+    if not settings.twilio_validate_signature:
+        return
+    if not settings.twilio_auth_token:
+        raise HTTPException(status_code=503, detail="Twilio auth token is not configured.")
+    try:
+        from twilio.request_validator import RequestValidator
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail="Twilio SDK is not installed.") from exc
+
+    validator = RequestValidator(settings.twilio_auth_token)
+    if not validator.validate(_twilio_validation_url(request), params, signature or ""):
+        raise HTTPException(status_code=403, detail="Invalid Twilio signature.")
+
+
+def _twilio_validation_url(request: Request) -> str:
+    settings = get_settings()
+    override = (settings.twilio_webhook_url or "").strip().rstrip("/")
+    if not override:
+        return str(request.url)
+
+    parsed = urlparse(override)
+    if parsed.path and parsed.path != "/":
+        return override
+
+    url = f"{override}{request.url.path}"
+    if request.url.query:
+        url = f"{url}?{request.url.query}"
+    return url
+
+
+def _strip_twilio_whatsapp_prefix(value: str) -> str:
+    return value.replace("whatsapp:", "", 1).strip()
+
+
+def _twilio_message_body(params: dict[str, str]) -> str:
+    body = (params.get("Body") or "").strip()
+    if body:
+        return body
+    try:
+        media_count = int(params.get("NumMedia") or "0")
+    except ValueError:
+        media_count = 0
+    if media_count <= 0:
+        return "[Message WhatsApp sans texte]"
+
+    media_items = []
+    for index in range(media_count):
+        media_type = params.get(f"MediaContentType{index}") or "media"
+        media_url = params.get(f"MediaUrl{index}") or ""
+        media_items.append(f"{media_type}: {media_url}" if media_url else media_type)
+    return "[Media WhatsApp recu] " + " ; ".join(media_items)

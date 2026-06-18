@@ -11,7 +11,11 @@ from sales_cockpit.business_rules import (
 )
 from sales_cockpit.db import connect, init_db, insert_event, row_to_dict, rows_to_dicts
 from sales_cockpit.security import verify_password
-from sales_cockpit.services.mock_twilio import MockTwilioClient
+from sales_cockpit.services.twilio_client import (
+    TwilioConfigurationError,
+    TwilioMessageError,
+    get_whatsapp_client,
+)
 from sales_cockpit.services.whatsapp_rules import calculate_window, iso_utc, parse_dt, utc_now
 
 
@@ -2752,7 +2756,12 @@ def send_freeform_message(
     if not state.is_open:
         return False, "Fenêtre WhatsApp fermée. Utilisez un modèle approuvé."
 
-    result = MockTwilioClient().send_freeform(conv["recipient_phone_e164"], body)
+    try:
+        result = get_whatsapp_client().send_freeform(conv["recipient_phone_e164"], body)
+    except TwilioConfigurationError as exc:
+        return False, str(exc)
+    except TwilioMessageError as exc:
+        return False, f"Twilio a refusé l'envoi : {exc}"
     now = iso_utc()
     with connect() as conn:
         cursor = conn.execute(
@@ -2798,6 +2807,8 @@ def send_freeform_message(
             user_id=user_id,
             new={"body": body, "twilio_sid": result.sid},
         )
+    if result.provider == "twilio":
+        return True, "Message libre envoyé."
     return True, "Message libre envoyé en mode mock."
 
 
@@ -2840,9 +2851,14 @@ def send_template_message(
     for key, value in variables.items():
         body = body.replace("{{" + key + "}}", value)
 
-    result = MockTwilioClient().send_template(
-        conv["recipient_phone_e164"], template["twilio_content_sid"] or "HX_MOCK", variables
-    )
+    try:
+        result = get_whatsapp_client().send_template(
+            conv["recipient_phone_e164"], template["twilio_content_sid"] or "HX_MOCK", variables
+        )
+    except TwilioConfigurationError as exc:
+        return False, str(exc)
+    except TwilioMessageError as exc:
+        return False, f"Twilio a refusé l'envoi : {exc}"
     now = iso_utc()
     with connect() as conn:
         cursor = conn.execute(
@@ -2890,6 +2906,8 @@ def send_template_message(
             user_id=user_id,
             new={"template_id": template_id, "variables": variables, "twilio_sid": result.sid},
         )
+    if result.provider == "twilio":
+        return True, "Modèle envoyé."
     return True, "Modèle envoyé en mode mock."
 
 
@@ -2943,9 +2961,30 @@ def record_inbound_message(
     from_phone: str,
     body: str,
     lead_id: int | None = None,
+    twilio_message_sid: str | None = None,
+    twilio_status: str | None = None,
+    raw_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     now = iso_utc()
     with connect() as conn:
+        if twilio_message_sid:
+            duplicate = conn.execute(
+                """
+                SELECT id, lead_id, conversation_id
+                FROM messages
+                WHERE twilio_message_sid = ?
+                LIMIT 1
+                """,
+                (twilio_message_sid,),
+            ).fetchone()
+            if duplicate:
+                return {
+                    "lead_id": duplicate["lead_id"],
+                    "conversation_id": duplicate["conversation_id"],
+                    "message_id": duplicate["id"],
+                    "duplicate": True,
+                }
+
         if lead_id is None:
             row = conn.execute(
                 """
@@ -3001,10 +3040,19 @@ def record_inbound_message(
         cursor = conn.execute(
             """
             INSERT INTO messages (
-                conversation_id, lead_id, direction, channel, body, received_at, created_at
-            ) VALUES (?, ?, 'inbound', 'whatsapp_twilio', ?, ?, ?)
+                conversation_id, lead_id, direction, channel, body,
+                twilio_message_sid, twilio_status, received_at, created_at
+            ) VALUES (?, ?, 'inbound', 'whatsapp_twilio', ?, ?, ?, ?, ?)
             """,
-            (conversation_id, lead_id, body, now, now),
+            (
+                conversation_id,
+                lead_id,
+                body,
+                twilio_message_sid,
+                twilio_status or "received",
+                now,
+                now,
+            ),
         )
         conn.execute(
             """
@@ -3020,13 +3068,74 @@ def record_inbound_message(
             lead_id,
             "whatsapp_inbound_received",
             new={"body": body, "from_phone": from_phone},
-            metadata={"source": "api"},
+            metadata={
+                "source": "api",
+                "twilio_message_sid": twilio_message_sid,
+                "raw_payload": raw_payload or {},
+            },
         )
         return {
             "lead_id": lead_id,
             "conversation_id": conversation_id,
             "message_id": cursor.lastrowid,
+            "duplicate": False,
         }
+
+
+def record_twilio_status_callback(
+    message_sid: str,
+    status: str,
+    error_code: str | None = None,
+    error_message: str | None = None,
+    raw_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    message_sid = message_sid.strip()
+    status = status.strip()
+    if not message_sid:
+        raise ValueError("MessageSid is required.")
+    if not status:
+        raise ValueError("MessageStatus is required.")
+
+    now = iso_utc()
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT id, lead_id, conversation_id
+            FROM messages
+            WHERE twilio_message_sid = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (message_sid,),
+        ).fetchone()
+        if not row:
+            return {"status": "unknown_message", "message_sid": message_sid}
+        conn.execute(
+            """
+            UPDATE messages
+            SET twilio_status = ?, twilio_error_code = ?, twilio_error_message = ?
+            WHERE id = ?
+            """,
+            (status, error_code, error_message, row["id"]),
+        )
+        insert_event(
+            conn,
+            row["lead_id"],
+            "twilio_message_status_updated",
+            new={
+                "message_id": row["id"],
+                "message_sid": message_sid,
+                "status": status,
+                "error_code": error_code,
+                "error_message": error_message,
+            },
+            metadata={
+                "conversation_id": row["conversation_id"],
+                "raw_payload": raw_payload or {},
+                "updated_at": now,
+            },
+        )
+    return {"status": "updated", "message_sid": message_sid}
 
 
 def list_tasks(status: str = "open") -> list[dict[str, Any]]:

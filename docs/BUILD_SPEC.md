@@ -32,7 +32,7 @@ Seed password for local mock mode: `ChangeMe!2026`.
 - `sales_cockpit/db.py`: SQLite schema and seed data.
 - `sales_cockpit/store.py`: app data access and business operations.
 - `sales_cockpit/services/whatsapp_rules.py`: WhatsApp 24-hour window logic.
-- `sales_cockpit/services/mock_twilio.py`: mock message sending.
+- `sales_cockpit/services/twilio_client.py`: mock-by-default WhatsApp client with Twilio sandbox/live support.
 - `sales_cockpit/services/schooldrive.py`: placeholder read-only connector.
 - `sales_cockpit/services/notion.py`: placeholder read-only connector.
 - `scripts/reset_demo.py`: resets local `SD-DEMO-*` scenarios before manual validation.
@@ -276,7 +276,7 @@ Invoke-WebRequest http://127.0.0.1:8000/health -UseBasicParsing
 1. Continue UX refinement with François.
 2. Add real read-only SchoolDrive connector.
 3. Add real read-only Notion enrichment.
-4. Add Twilio sandbox integration.
+4. Configure Twilio sandbox credentials and run a real sandbox validation.
 5. Add file attachment persistence.
 6. Prepare GitHub remote.
 7. Prepare DigitalOcean staging.

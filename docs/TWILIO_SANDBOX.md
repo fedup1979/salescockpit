@@ -1,0 +1,111 @@
+# Twilio Sandbox Integration
+
+## Scope
+
+Sales Cockpit supports three Twilio modes:
+
+- `mock`: default local/staging-safe mode. No Twilio API call is made.
+- `sandbox`: real Twilio Sandbox API calls and signed webhooks.
+- `live`: reserved for a later production cutover plan.
+
+Do not switch production WhatsApp traffic to Sales Cockpit without an explicit cutover plan.
+
+## Staging URLs
+
+Current staging API:
+
+```text
+http://139.59.158.77:8602
+```
+
+Configure Twilio Sandbox inbound messages to:
+
+```text
+http://139.59.158.77:8602/webhooks/twilio/whatsapp/inbound
+```
+
+Configure outbound message status callbacks to:
+
+```text
+http://139.59.158.77:8602/webhooks/twilio/whatsapp/status
+```
+
+Plain HTTP is acceptable only for sandbox testing. Production must use HTTPS.
+
+## Required Environment Variables
+
+For sandbox on staging:
+
+```text
+SALES_COCKPIT_TWILIO_MODE=sandbox
+SALES_COCKPIT_TWILIO_ACCOUNT_SID=AC...
+SALES_COCKPIT_TWILIO_AUTH_TOKEN=...
+SALES_COCKPIT_TWILIO_WHATSAPP_SENDER=+14155238886
+SALES_COCKPIT_TWILIO_MESSAGING_SERVICE_SID=
+SALES_COCKPIT_TWILIO_VALIDATE_SIGNATURE=true
+SALES_COCKPIT_TWILIO_WEBHOOK_URL=http://139.59.158.77:8602
+SALES_COCKPIT_TWILIO_STATUS_CALLBACK_URL=http://139.59.158.77:8602/webhooks/twilio/whatsapp/status
+```
+
+Use either:
+
+- `SALES_COCKPIT_TWILIO_WHATSAPP_SENDER` for the WhatsApp sender/sandbox number; or
+- `SALES_COCKPIT_TWILIO_MESSAGING_SERVICE_SID` if Twilio is configured through a Messaging Service.
+
+For Twilio Sandbox, the sender is usually the sandbox WhatsApp number shown in Twilio Console.
+
+## Implemented Behavior
+
+Inbound webhook:
+
+- accepts real Twilio `application/x-www-form-urlencoded` payloads;
+- validates `X-Twilio-Signature` with the Twilio Auth Token;
+- strips the `whatsapp:` prefix from `From`;
+- stores the inbound message in `messages`;
+- deduplicates by `MessageSid`;
+- reopens the conversation and creates/updates a `reply` action for Setter 1;
+- keeps the legacy JSON mock shape for internal tests only.
+
+Status callback:
+
+- validates the Twilio signature;
+- updates `messages.twilio_status`, `twilio_error_code`, and `twilio_error_message`;
+- logs a `twilio_message_status_updated` event;
+- returns 200 even for an unknown `MessageSid`, so Twilio does not retry forever.
+
+Outbound sending:
+
+- uses mock mode by default;
+- in `sandbox` or `live`, sends through Twilio's Python SDK;
+- free-form messages use `Body`;
+- templates use `ContentSid` and `ContentVariables`;
+- `SALES_COCKPIT_TWILIO_STATUS_CALLBACK_URL` is passed as `StatusCallback` when configured.
+
+## Important Template Constraint
+
+When Twilio mode is `sandbox` or `live`, approved templates must have a real Twilio `twilio_content_sid`.
+
+Demo templates with `HX_MOCK` are valid only in mock mode.
+
+## Manual Sandbox Test
+
+1. Put the staging env vars in `/opt/sales-cockpit/staging/.env`.
+2. Redeploy or run `pip install -r requirements.txt` on the droplet.
+3. Restart:
+
+```bash
+sudo systemctl restart sales-cockpit-api@staging
+sudo systemctl restart sales-cockpit-ui@staging
+```
+
+4. In Twilio Console > WhatsApp Sandbox, set the inbound webhook URL.
+5. Join the Twilio Sandbox from a phone.
+6. Send a WhatsApp message to the sandbox.
+7. Verify in Sales Cockpit that the conversation appears in Mihary's queue with a `Repondre au message` action.
+
+## References
+
+- Twilio webhook signature validation: https://www.twilio.com/docs/usage/webhooks/webhooks-security
+- Twilio WhatsApp quickstart and sandbox setup: https://www.twilio.com/docs/whatsapp/quickstart
+- Twilio Message resource: https://www.twilio.com/docs/messaging/api/message-resource
+- Twilio Content Template sending: https://www.twilio.com/docs/content/send-templates-created-with-the-content-template-builder

@@ -107,6 +107,9 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX IF NOT EXISTS idx_messages_twilio_message_sid
+ON messages(twilio_message_sid);
+
 CREATE TABLE IF NOT EXISTS attachments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -381,6 +384,16 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
             ("resolution_note", "TEXT"),
             ("resolved_at", "TEXT"),
             ("reopened_at", "TEXT"),
+        ],
+    )
+    add_missing_columns(
+        conn,
+        "messages",
+        [
+            ("twilio_message_sid", "TEXT"),
+            ("twilio_status", "TEXT"),
+            ("twilio_error_code", "TEXT"),
+            ("twilio_error_message", "TEXT"),
         ],
     )
     add_missing_columns(

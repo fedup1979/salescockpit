@@ -73,6 +73,7 @@ Seeded accounts:
 - Bug reporting with activity logs.
 - Scenario reset script for clean local validation.
 - FastAPI endpoints for future webhooks.
+- Twilio sandbox-ready inbound webhook, status callback, signature validation, and SDK client while keeping mock mode as the default.
 
 ## Safety
 
@@ -83,6 +84,7 @@ Do not put production secrets in Git. Use `.env` locally or DigitalOcean environ
 Deployment preparation is documented in:
 
 - `docs/DEPLOYMENT.md`
+- `docs/TWILIO_SANDBOX.md`
 - `deploy/README.md`
 
 Planned UI ports:
@@ -106,6 +108,7 @@ Before continuing work, read:
 - `docs/USER_GUIDE.md`
 - `docs/DEPLOYMENT.md`
 - `docs/SCHOOLDRIVE_WEBHOOK.md`
+- `docs/TWILIO_SANDBOX.md`
 - `PRODUCT.md`
 - `DESIGN.md`
 
