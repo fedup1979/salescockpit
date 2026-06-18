@@ -436,7 +436,8 @@ def get_next_action_for_lead(lead_id: int) -> dict[str, Any] | None:
             SELECT
                 t.*,
                 u.full_name AS assigned_to_name,
-                u.role AS assigned_to_role
+                u.role AS assigned_to_role,
+                u.email AS assigned_to_email
             FROM tasks t
             LEFT JOIN users u ON u.id = t.assigned_to_user_id
             WHERE t.lead_id = ? AND t.status IN ('open', 'in_progress', 'planned', 'blocked')
@@ -1499,9 +1500,9 @@ def create_template_request(
                     SELECT *
                     FROM tasks
                     WHERE lead_id = ?
+                      AND type = 'follow_up'
                       AND status IN ('open', 'in_progress', 'planned', 'blocked')
                     ORDER BY
-                        CASE WHEN type = 'follow_up' THEN 0 ELSE 1 END,
                         datetime(coalesce(due_at, created_at)) ASC,
                         id ASC
                     LIMIT 1
@@ -1561,7 +1562,9 @@ def create_template_request(
                 "reason": reason,
             },
         )
-    return True, "Demande de modèle créée et relance bloquée."
+    if task_id:
+        return True, "Demande de modèle créée et relance bloquée."
+    return True, "Demande de modèle créée."
 
 
 def update_template_request_status(
@@ -1620,6 +1623,13 @@ def update_lead_qualification(
     contact_status: str | None = None,
 ) -> None:
     now = iso_utc()
+    if sales_stage == "won":
+        lead_status = "signed"
+    elif sales_stage in {"lost", "not_interesting"}:
+        lead_status = "not_relevant"
+    elif sales_stage == "blacklist":
+        contact_status = "do_not_contact"
+        lead_status = "neutral"
     if lead_status == "do_not_contact":
         contact_status = "do_not_contact"
         lead_status = "neutral"
@@ -1674,6 +1684,10 @@ def update_lead_qualification(
                 """,
                 (resolution_reason, now, now, lead_id),
             )
+        elif lead_status == "will_sign":
+            _sync_next_action_for_lead_status(conn, lead_id, user_id, lead_status, now)
+        else:
+            _sync_next_action_for_sales_stage(conn, lead_id, user_id, sales_stage, now)
         insert_event(
             conn,
             lead_id,
@@ -1687,6 +1701,206 @@ def update_lead_qualification(
                 "contact_status": effective_contact_status,
             },
         )
+
+
+def _sync_next_action_for_sales_stage(
+    conn: Any,
+    lead_id: int,
+    user_id: int,
+    sales_stage: str,
+    now: str,
+) -> None:
+    row = row_to_dict(
+        conn.execute(
+            """
+            SELECT
+                l.id AS lead_id,
+                l.first_name,
+                l.last_name,
+                l.setter_user_id,
+                l.closer_user_id,
+                c.id AS conversation_id,
+                c.status AS conversation_status
+            FROM leads l
+            LEFT JOIN conversations c ON c.lead_id = l.id
+            WHERE l.id = ?
+            ORDER BY c.id DESC
+            LIMIT 1
+            """,
+            (lead_id,),
+        ).fetchone()
+    )
+    if not row or row.get("conversation_status") != "open" or not row.get("conversation_id"):
+        return
+
+    target_type = None
+    assignee_id = None
+    urgency = "normal"
+    trigger_reason = f"sales_stage_forced_{sales_stage}"
+    full_name = lead_full_name(row)
+
+    if sales_stage == "closing":
+        target_type = "closing_call"
+        assignee_id = row.get("closer_user_id") or default_closer_user_id(conn)
+        title = f"Contacter {full_name} pour closing"
+        urgency = "high"
+    elif sales_stage == "appointment_booked":
+        target_type = "setting_call"
+        assignee_id = row.get("setter_user_id") or _default_active_user_id(conn, "setter")
+        title = f"Appeler {full_name} pour setting"
+        urgency = "high"
+    elif sales_stage in {"new", "setting"}:
+        target_type = "reply"
+        assignee_id = row.get("setter_user_id") or _default_active_user_id(conn, "setter")
+        title = f"Répondre à {full_name}"
+    else:
+        return
+
+    if not target_type or not assignee_id:
+        return
+
+    active = _first_active_action_for_lead(conn, lead_id)
+    if active and active.get("type") == target_type:
+        conn.execute(
+            """
+            UPDATE tasks
+            SET assigned_to_user_id = coalesce(assigned_to_user_id, ?),
+                due_at = coalesce(due_at, ?),
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (assignee_id, now, now, active["id"]),
+        )
+        return
+
+    _complete_open_actions_for_lead(
+        conn,
+        lead_id,
+        user_id,
+        outcome=f"Forçage parcours : {sales_stage}",
+        excluded_types=(target_type,),
+    )
+
+    existing = _first_active_action_for_lead(conn, lead_id, action_types=(target_type,))
+    if existing:
+        return
+
+    action_id = _insert_next_action(
+        conn,
+        lead_id=lead_id,
+        conversation_id=row["conversation_id"],
+        action_type=target_type,
+        title=title,
+        assigned_to_user_id=assignee_id,
+        created_by_user_id=user_id,
+        urgency=urgency,
+        due_at=now,
+        trigger_reason=trigger_reason,
+    )
+    insert_event(
+        conn,
+        lead_id,
+        "next_action_created_by_sales_stage_force",
+        user_id=user_id,
+        new={
+            "task_id": action_id,
+            "sales_stage": sales_stage,
+            "action_type": target_type,
+            "assigned_to_user_id": assignee_id,
+        },
+    )
+
+
+def _sync_next_action_for_lead_status(
+    conn: Any,
+    lead_id: int,
+    user_id: int,
+    lead_status: str,
+    now: str,
+) -> None:
+    if lead_status != "will_sign":
+        return
+
+    row = row_to_dict(
+        conn.execute(
+            """
+            SELECT
+                l.id AS lead_id,
+                l.first_name,
+                l.last_name,
+                c.id AS conversation_id,
+                c.status AS conversation_status
+            FROM leads l
+            LEFT JOIN conversations c ON c.lead_id = l.id
+            WHERE l.id = ?
+            ORDER BY c.id DESC
+            LIMIT 1
+            """,
+            (lead_id,),
+        ).fetchone()
+    )
+    if not row or row.get("conversation_status") != "open" or not row.get("conversation_id"):
+        return
+
+    assignee_id = setter2_user_id(conn) or _default_active_user_id(conn, "setter")
+    if not assignee_id:
+        return
+
+    active = _first_active_action_for_lead(conn, lead_id)
+    if active and active.get("type") == "follow_up":
+        conn.execute(
+            """
+            UPDATE tasks
+            SET assigned_to_user_id = ?,
+                due_at = coalesce(due_at, ?),
+                sequence_code = coalesce(sequence_code, 'closer_will_sign'),
+                sequence_step_index = coalesce(sequence_step_index, 1),
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (assignee_id, _due_after(now, "+72h"), now, active["id"]),
+        )
+        return
+
+    _complete_open_actions_for_lead(
+        conn,
+        lead_id,
+        user_id,
+        outcome="Qualification : va signer",
+        excluded_types=("follow_up",),
+    )
+
+    existing = _first_active_action_for_lead(conn, lead_id, action_types=("follow_up",))
+    if existing:
+        return
+
+    full_name = lead_full_name(row)
+    action_id = _insert_next_action(
+        conn,
+        lead_id=lead_id,
+        conversation_id=row["conversation_id"],
+        action_type="follow_up",
+        title=f"Relancer {full_name}",
+        assigned_to_user_id=assignee_id,
+        created_by_user_id=user_id,
+        urgency="normal",
+        due_at=_due_after(now, "+72h"),
+        trigger_reason="lead_status_forced_will_sign",
+        sequence_code="closer_will_sign",
+        sequence_step_index=1,
+    )
+    insert_event(
+        conn,
+        lead_id,
+        "next_action_created_by_lead_status_force",
+        user_id=user_id,
+        new={
+            "task_id": action_id,
+            "type": "follow_up",
+            "lead_status": lead_status,
+            "assigned_to_user_id": assignee_id,
+        },
+    )
 
 
 def send_freeform_message(

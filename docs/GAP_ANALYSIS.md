@@ -1,4 +1,4 @@
-# Sales Cockpit Gap Analysis
+﻿# Sales Cockpit Gap Analysis
 
 Ce document compare la logique métier cible avec l'état actuel du système local.
 
@@ -57,9 +57,9 @@ Présent :
 - inbound d'un prospect `do_not_contact` crée une action `contact_review` ;
 - relance bloquée par template manquant crée une `template_request` ;
 - envoi sortant clôt l'action `reply` ou `follow_up` active ;
-- `reply` envoyé sans RDV crée une relance Setter 2 +72h ;
+- `reply` envoyé sans RDV crée une relance Tanjona +72h ;
 - appel non joint crée rappels +2h, +24h, puis relance WhatsApp ;
-- closing `will_sign` crée une séquence Setter 2 ;
+- closing `will_sign` crée une séquence Tanjona ;
 - résolution manuelle exige un motif ;
 - réouverture manuelle exige une prochaine action.
 
@@ -129,7 +129,7 @@ Présent :
 ### Gardé Pour V2
 
 - envoi automatique de templates ;
-- automatisation Setter 2 ;
+- automatisation Tanjona ;
 - PBX Twilio ;
 - écriture Notion ;
 - écriture SchoolDrive ;

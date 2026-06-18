@@ -1,4 +1,4 @@
-# Sales Cockpit Build Spec
+﻿# Sales Cockpit Build Spec
 
 ## Purpose
 
@@ -49,7 +49,7 @@ Operational state set by the user:
 
 Users can:
 
-- close an active conversation with `Clore`;
+- close an active conversation with `Clore la conversation`;
 - reactivate a closed conversation with `Réactiver`.
 
 Visible UI labels should avoid `résolue` / `résolution` for normal users:
@@ -150,7 +150,7 @@ Left panel:
 Right panel:
 
 - Prospect name.
-- Short conversation-state buttons: `Clore` and `Réactiver`.
+- Conversation-state buttons: `Clore la conversation` and `Réactiver`.
 - `Ouvrir SchoolDrive` link.
 - WhatsApp window badge.
 - Compact chips for qualification and parcours.
@@ -236,7 +236,7 @@ SQLite requirements:
 
 The seed creates:
 
-- 6 initial users, including Setter 2 at `setter2@essr.ch`.
+- 6 initial users, including Tanjona at `setter2@essr.ch`.
 - 23 demo conversations.
 - At least 10 conversations with WhatsApp window open.
 - At least 10 conversations with WhatsApp window closed.

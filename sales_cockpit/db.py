@@ -1488,7 +1488,7 @@ def seed_initial_data() -> None:
         ("francois.dupuis@essr.ch", "François Dupuis", "admin"),
         ("tiago.jacobs@gmail.com", "Tiago Jacobs", "admin"),
         ("service.etudiants@essr.ch", "Mihary", "setter"),
-        ("setter2@essr.ch", "Setter 2", "setter"),
+        ("setter2@essr.ch", "Tanjona", "setter"),
         ("yasmine@essr.ch", "Yasmine", "closer"),
     ]
 
@@ -1497,6 +1497,14 @@ def seed_initial_data() -> None:
         for email, full_name, role in users:
             existing = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
             if existing:
+                conn.execute(
+                    """
+                    UPDATE users
+                    SET full_name = ?, role = ?, active = 1
+                    WHERE email = ?
+                    """,
+                    (full_name, role, email),
+                )
                 continue
             conn.execute(
                 """

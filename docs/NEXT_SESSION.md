@@ -1,4 +1,4 @@
-# Next Session Handoff
+﻿# Next Session Handoff
 
 ## Current State
 
@@ -34,7 +34,7 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - WhatsApp API window state remains a separate badge:
   - `Fenêtre ouverte`
   - `Fenêtre fermée`
-- Users close a conversation with `Clore`; internally this stores `resolved` with a controlled reason.
+- Users close a conversation with `Clore la conversation`; internally this stores `resolved` with a controlled reason.
 - Users reactivate a conversation with `Réactiver`; internally this stores `open` and requires creating the next action.
 - New inbound messages reopen resolved conversations automatically.
 - New inbound messages create or update a setter `reply` next action.
@@ -58,7 +58,7 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - Lead-relative reminders follow `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
 - Course-date reminders win over lead-relative reminders. The losing lead-relative reminder is cancelled.
 - Minimum outbound WhatsApp follow-up delay is 24h.
-- Setter 2 is currently seeded as `setter2@essr.ch`.
+- Tanjona is currently seeded as `setter2@essr.ch`.
 - Dropdown labels should be displayed in French while internal values remain English.
 - Private notes remain yellow and align right like team messages.
 - Reply tools live below the conversation thread.
@@ -89,7 +89,7 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - Business events inserted via `lead_events` are mirrored into `user_activity_log`, so Admin can inspect recent usage and cross-check bug reports with workflow events.
 - Admin now has a `Bugs & logs` tab showing bug reports and recent activity.
 - Admin > Utilisateurs sorts users by ID, so Laura appears first in the seeded local data.
-- Admin shows page access by role. Admin sees everything; Setter 1, Setter 2 and Closer see all user pages except Admin.
+- Admin shows page access by role. Admin sees everything; Setter 1, Tanjona and Closer see all user pages except Admin.
 - Human and business hours have provisional V1 values in Admin > Règles métier > Horaires et bascules. They still need Laura validation.
 - The `Mode d'emploi` page is now prose, not expanders. Do not reintroduce accordion-heavy help unless François asks.
 - Obsolete legacy demo blocks and the old `_render_next_action_box_legacy` function were removed.

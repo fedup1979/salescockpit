@@ -1,4 +1,4 @@
-# Sales Cockpit
+﻿# Sales Cockpit
 
 Internal ESSR sales cockpit for WhatsApp conversations, next actions, lead qualification, template management, and future AI setter readiness.
 
@@ -44,7 +44,7 @@ Seeded accounts:
 - francois.dupuis@essr.ch, admin
 - tiago.jacobs@gmail.com, admin
 - service.etudiants@essr.ch, setter, Mihary
-- setter2@essr.ch, setter, Setter 2
+- setter2@essr.ch, setter, Tanjona
 - yasmine@essr.ch, closer
 
 ## Current Scope

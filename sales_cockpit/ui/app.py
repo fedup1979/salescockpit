@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
@@ -91,8 +91,8 @@ DISPLAY_LABELS = {
     "appointment_booked": "Entretien setting prévu",
     "closing": "Entretien closing",
     "won": "Inscription confirmée",
-    "lost": "Parcours perdu",
-    "not_interesting": "Non pertinent",
+    "lost": "Sans suite",
+    "not_interesting": "Hors cible",
     "no_show": "Absent au rendez-vous",
     "blacklist": "Bloqué",
     "cold": "Froid",
@@ -232,7 +232,7 @@ def render_shell() -> None:
         nav_options.append("Admin")
     with st.sidebar:
         st.subheader("Sales Cockpit")
-        st.caption(f"{user['full_name']} · {user['role']}")
+        st.caption(f"{user['full_name']} · {display_user_role(user)}")
         nav = st.radio(
             "Navigation",
             nav_options,
@@ -537,7 +537,7 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
             if ok:
                 st.rerun()
     else:
-        with st.popover("Clore", use_container_width=True):
+        with st.popover("Clore la conversation", use_container_width=True):
             reason = st.selectbox(
                 "Motif",
                 RESOLUTION_REASON_VALUES,
@@ -545,7 +545,7 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
                 key=f"resolve_reason_header_{conv['id']}",
             )
             note = st.text_area("Note", height=80, key=f"resolve_note_header_{conv['id']}")
-            submitted = st.button("Clore", key=f"submit_resolve_header_{conv['id']}")
+            submitted = st.button("Clore la conversation", key=f"submit_resolve_header_{conv['id']}")
         if submitted:
             ok, message = set_conversation_status(
                 conv["id"],
@@ -559,13 +559,8 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
                 st.rerun()
 
 
-def state_chip_html(label: str, value: str, help_text: str) -> str:
-    return (
-        f'<span title="{escape_html(help_text)}">'
-        f'<strong>{escape_html(label)}</strong> {escape_html(value)} '
-        f'<em class="sc-help-dot">?</em>'
-        f'</span>'
-    )
+def state_chip_html(label: str, value: str) -> str:
+    return f'<span><strong>{escape_html(label)}</strong> {escape_html(value)}</span>'
 
 
 def render_compact_lead_state(conv: dict) -> None:
@@ -575,18 +570,15 @@ def render_compact_lead_state(conv: dict) -> None:
             state_chip_html(
                 "Contact",
                 labelize(conv["contact_status"]),
-                HELP_TEXTS["contact_status"],
             )
         )
     stage_html = state_chip_html(
         "Parcours",
         labelize(conv["sales_stage"]),
-        HELP_TEXTS["sales_stage"],
     )
     qualification_html = state_chip_html(
         "Qualification",
         labelize(conv["lead_status"]),
-        HELP_TEXTS["lead_status"],
     )
     st.markdown(
         f"""
@@ -704,7 +696,7 @@ def render_reply_send_plan_controls(
     elif outcome in {"not_relevant", "do_not_contact"}:
         st.warning("Cette réponse résoudra la conversation et annulera les relances futures.")
     else:
-        st.caption("Après l'envoi, une relance Setter 2 sera planifiée à +72h si le prospect ne répond pas.")
+        st.caption("Après l'envoi, une relance Tanjona sera planifiée à +72h si le prospect ne répond pas.")
 
 
 def render_composer(user: dict, conv: dict) -> None:
@@ -743,12 +735,13 @@ def render_composer(user: dict, conv: dict) -> None:
     template_search = st.session_state.get(search_key, "")
     templates = list_templates(template_search, approved_only=True)
     if not templates:
-        st.info("Aucun modèle approuvé ne correspond. La demande de nouveau modèle se fait dans l'onglet Actions.")
+        st.info("Aucun modèle approuvé ne correspond.")
         st.text_input(
             "Recherche de modèles",
             placeholder="Mot dans le nom ou le contenu",
             key=search_key,
         )
+        render_template_request_form(user, conv, action)
         return
 
     selected = st.selectbox(
@@ -786,6 +779,35 @@ def render_composer(user: dict, conv: dict) -> None:
             next_due_at=next_due_at,
             assigned_to_user_id=assigned_to_user_id,
             note=action_note,
+        )
+        show_result(ok, message)
+        if ok:
+            st.rerun()
+    render_template_request_form(user, conv, action)
+
+
+def render_template_request_form(user: dict, conv: dict, action: dict | None) -> None:
+    st.markdown("**Demander un nouveau modèle WhatsApp**")
+    st.caption("À utiliser uniquement si aucun modèle approuvé ne convient.")
+    linked_task_id = action["id"] if action and action.get("type") == "follow_up" else None
+    with st.form(f"template_request_{conv['id']}_{linked_task_id or 'general'}"):
+        reason = st.text_input(
+            "Modèle manquant",
+            placeholder="Ex. relance financement pour APP",
+        )
+        context = st.text_area(
+            "Contexte pour le modèle",
+            value=conv.get("last_message_body") or "",
+            height=90,
+        )
+        submitted = st.form_submit_button("Créer la demande de modèle")
+    if submitted:
+        ok, message = create_template_request(
+            conv["id"],
+            user["id"],
+            reason,
+            context,
+            task_id=linked_task_id,
         )
         show_result(ok, message)
         if ok:
@@ -863,14 +885,14 @@ def render_next_action_summary(conv: dict) -> None:
 def action_consequence(action_type: str, outcome: str) -> str:
     consequences = {
         ("setting_call", "to_closing"): "Le système crée un entretien Closing pour le closer et passe le parcours en Closing.",
-        ("setting_call", "not_reached"): "Le système crée un rappel d'appel, puis une relance Setter 2 si les rappels sont épuisés.",
-        ("setting_call", "not_ready"): "Le système crée une relance Setter 2 à +72h.",
+        ("setting_call", "not_reached"): "Le système crée un rappel d'appel, puis une relance Tanjona si les rappels sont épuisés.",
+        ("setting_call", "not_ready"): "Le système crée une relance Tanjona à +72h.",
         ("setting_call", "not_relevant"): "Résout la conversation et annule les relances futures.",
         ("setting_call", "do_not_contact"): "Passe le contact en Ne plus contacter, résout la conversation et bloque les relances.",
         ("closing_call", "signed"): "Marque la vente comme signée, résout la conversation et annule les relances.",
-        ("closing_call", "will_sign"): "Le système crée une relance Setter 2 à +72h, puis suit la séquence Va signer.",
-        ("closing_call", "not_reached"): "Le système crée un rappel d'appel, puis une relance Setter 2 si les rappels sont épuisés.",
-        ("closing_call", "undecided"): "Le système crée une relance Setter 2 à +72h.",
+        ("closing_call", "will_sign"): "Le système crée une relance Tanjona à +72h, puis suit la séquence Va signer.",
+        ("closing_call", "not_reached"): "Le système crée un rappel d'appel, puis une relance Tanjona si les rappels sont épuisés.",
+        ("closing_call", "undecided"): "Le système crée une relance Tanjona à +72h.",
         ("closing_call", "not_relevant"): "Résout la conversation et annule les relances futures.",
         ("contact_review", "maintain_do_not_contact"): "Maintient le blocage Ne plus contacter et résout la conversation.",
         ("contact_review", "lift_do_not_contact"): "Le système lève le blocage et crée une action Répondre pour Setter 1.",
@@ -909,52 +931,7 @@ def render_blocked_action(user: dict, conv: dict, action: dict) -> None:
             )
         return
 
-    with st.form(f"blocked_template_request_{action['id']}"):
-        reason = st.text_input("Modèle manquant", placeholder="Ex. relance financement pour APP")
-        context = st.text_area(
-            "Contexte pour le modèle",
-            value=conv.get("last_message_body") or "",
-            height=90,
-        )
-        submitted = st.form_submit_button("Créer la demande de modèle")
-    if submitted:
-        ok, message = create_template_request(
-            conv["id"],
-            user["id"],
-            reason,
-            context,
-            task_id=action["id"],
-        )
-        show_result(ok, message)
-        if ok:
-            st.rerun()
-
-
-def render_template_request_action(user: dict, conv: dict, action: dict | None) -> None:
-    with st.expander("Demander un nouveau modèle WhatsApp"):
-        st.caption("À utiliser quand aucun modèle approuvé ne convient à la situation.")
-        with st.form(f"action_template_request_{conv['id']}_{action['id'] if action else 'none'}"):
-            reason = st.text_input(
-                "Modèle manquant",
-                placeholder="Ex. relance financement pour APP",
-            )
-            context = st.text_area(
-                "Contexte pour le modèle",
-                value=conv.get("last_message_body") or "",
-                height=90,
-            )
-            submitted = st.form_submit_button("Créer la demande de modèle")
-        if submitted:
-            ok, message = create_template_request(
-                conv["id"],
-                user["id"],
-                reason,
-                context,
-                task_id=action["id"] if action else None,
-            )
-            show_result(ok, message)
-            if ok:
-                st.rerun()
+    st.info("La demande de nouveau modèle se fait dans l'onglet Conversation, sous Envoyer un modèle.")
 
 
 def render_whatsapp_action_guidance(user: dict, conv: dict, action: dict) -> None:
@@ -962,7 +939,6 @@ def render_whatsapp_action_guidance(user: dict, conv: dict, action: dict) -> Non
         st.info("Le client attend une réponse. Cette action sera clôturée quand le message sera envoyé dans l'onglet Conversation.")
         st.caption("L'envoi se fait dans l'onglet Conversation. Sélectionnez la suite après envoi ici.")
         render_reply_send_plan_controls(action, f"reply_plan_{conv['id']}", list_users())
-        render_template_request_action(user, conv, action)
         return
 
     if action["type"] == "follow_up":
@@ -974,7 +950,6 @@ def render_whatsapp_action_guidance(user: dict, conv: dict, action: dict) -> Non
         else:
             st.warning("Relance à envoyer. Fenêtre WhatsApp fermée : modèle approuvé obligatoire.")
         st.caption("L'action sera clôturée uniquement quand le message ou le modèle aura été envoyé dans l'onglet Conversation.")
-        render_template_request_action(user, conv, action)
 
 
 def render_call_action_form(user: dict, action: dict) -> None:
@@ -1093,7 +1068,7 @@ def render_advanced_actions(user: dict, conv: dict, action: dict | None, users: 
         render_manual_completion_advanced(user, action)
         st.divider()
         st.markdown("**Planifier une relance exceptionnelle**")
-        st.caption("Effet : clôt les actions ouvertes du lead et crée une relance Setter 2 à la date choisie.")
+        st.caption("Effet : clôt les actions ouvertes du lead et crée une relance Tanjona à la date choisie.")
         with st.form(f"schedule_followup_{conv['lead_id']}"):
             assignee = st.selectbox(
                 "Assigné à",
@@ -1149,7 +1124,7 @@ def render_advanced_actions(user: dict, conv: dict, action: dict | None, users: 
         with st.form(f"resolve_action_{conv['id']}"):
             reason = st.selectbox("Motif", RESOLUTION_REASON_VALUES, format_func=labelize)
             note = st.text_area("Note", height=80)
-            submitted = st.form_submit_button("Clore")
+            submitted = st.form_submit_button("Clore la conversation")
         if submitted:
             ok, message = set_conversation_status(
                 conv["id"],
@@ -1419,7 +1394,7 @@ def render_user_guide() -> None:
 
         **Setter 1** répond aux messages entrants, mène les échanges écrits actifs et réalise les entretiens de setting. Dans le cockpit, ce rôle correspond principalement aux actions de réponse immédiate et aux appels de setting.
 
-        **Setter 2** gère les relances structurées. Il relit la conversation, choisit le bon modèle WhatsApp quand la fenêtre est fermée, et crée une demande de modèle si aucun modèle existant ne convient.
+        **Tanjona, Setter II** gère les relances structurées. Elle relit la conversation, choisit le bon modèle WhatsApp quand la fenêtre est fermée, et crée une demande de modèle si aucun modèle existant ne convient.
 
         **Closer** gère les entretiens de closing. Après l'appel, il indique le résultat : signé, va signer, indécis, non joint ou non pertinent. Cette décision détermine la suite du parcours.
 
@@ -1449,7 +1424,7 @@ def render_user_guide() -> None:
 
         ### Chaînage des actions
 
-        Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous, l'action de réponse est terminée et une relance est planifiée pour Setter 2. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un entretien de setting est créé. Si un entretien de setting doit passer au closing, une action de closing est créée pour le closer.
+        Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous, l'action de réponse est terminée et une relance est planifiée pour Tanjona. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un entretien de setting est créé. Si un entretien de setting doit passer au closing, une action de closing est créée pour le closer.
 
         Le chaînage peut être interrompu. Si le prospect répond, la conversation remonte avec une action de réponse immédiate. Si le prospect est marqué **Non pertinent**, **Ne plus contacter** ou **A signé**, les relances s'arrêtent. Si un prospect marqué **Ne plus contacter** écrit à nouveau, le cockpit crée une revue humaine au lieu de relancer automatiquement.
 
@@ -1505,7 +1480,7 @@ def page_access_matrix() -> list[dict]:
             "Admin": True,
         },
         {
-            "Rôle": "Setter 1",
+            "Rôle": "Setter I",
             "Tâches": True,
             "Inbox": True,
             "Modèles": True,
@@ -1513,7 +1488,7 @@ def page_access_matrix() -> list[dict]:
             "Admin": False,
         },
         {
-            "Rôle": "Setter 2",
+            "Rôle": "Setter II",
             "Tâches": True,
             "Inbox": True,
             "Modèles": True,
@@ -1844,15 +1819,30 @@ def safe_user_index(users: list[dict], user_id: int | None) -> int:
 
 
 def format_user(user: dict) -> str:
-    return f"{user['full_name']} · {labelize(user['role'])}"
+    return f"{user['full_name']} · {display_user_role(user)}"
 
 
 def format_assignee_filter(user: dict, current_user_id: int | None = None) -> str:
     if user["id"] == "all":
         return "Tous"
+    label = f"{user['full_name']} · {display_user_role(user)}"
     if current_user_id is not None and user["id"] == current_user_id:
-        return f"Moi · {user['full_name']}"
-    return f"{user['full_name']} · {labelize(user['role'])}"
+        return f"{label} (moi)"
+    return label
+
+
+def display_user_role(user: dict) -> str:
+    role = user.get("role")
+    email = (user.get("email") or "").lower()
+    if role == "admin":
+        return "Admin"
+    if role == "closer":
+        return "Closer"
+    if role == "setter":
+        if email == "setter2@essr.ch":
+            return "Setter II"
+        return "Setter I"
+    return labelize(role)
 
 
 def sort_work_items(tasks: list[dict], sort_by: str) -> list[dict]:

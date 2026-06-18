@@ -128,21 +128,6 @@ h1, h2, h3 {
   font-weight: 650;
 }
 
-.sc-help-dot {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: .9rem;
-  height: .9rem;
-  border-radius: 999px;
-  border: 1px solid oklch(0.78 0.014 250);
-  color: var(--sc-muted);
-  font-size: .66rem;
-  font-style: normal;
-  font-weight: 700;
-  line-height: 1;
-}
-
 .sc-badge {
   display: inline-flex;
   align-items: center;

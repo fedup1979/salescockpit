@@ -1,4 +1,4 @@
-# Sales Cockpit Implementation Status
+﻿# Sales Cockpit Implementation Status
 
 ## Current Status
 
@@ -31,7 +31,7 @@ V1 local mock build is runnable.
 - Global `Tâches` page with responsible-person and action filters.
 - Formal business rules module in `sales_cockpit/business_rules.py`.
 - Admin view for roles, qualifications, operating rules, follow-up sequences, lead types, and demo templates.
-- Seeded Setter 2 user: `setter2@essr.ch`.
+- Seeded Tanjona user: `setter2@essr.ch`.
 - Demo WhatsApp templates for initial offer, 72h/7d/30d follow-ups, setting, will-sign, course-date, and out-of-hours.
 - Stop statuses `Non pertinent`, `Ne plus contacter`, and `A signé` complete open actions and resolve conversations.
 - UI simplification: `Température` hidden, `sales_stage` displayed as `Parcours`, private notes always included for future learning.

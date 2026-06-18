@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 
 SOURCE_TYPES = [
@@ -142,7 +142,7 @@ TEMPLATE_REQUEST_STATUSES = [
 SALES_ACTORS = [
     {
         "code": "setter_1",
-        "label": "Setter 1",
+        "label": "Setter I",
         "person": "Mihary",
         "email": "service.etudiants@essr.ch",
         "responsibility": "Conversation écrite active, revue des messages entrants et entretien de setting.",
@@ -155,8 +155,8 @@ SALES_ACTORS = [
     },
     {
         "code": "setter_2",
-        "label": "Setter 2",
-        "person": "Setter 2",
+        "label": "Setter II",
+        "person": "Tanjona",
         "email": "setter2@essr.ch",
         "responsibility": "Relances structurées par template, hors conversation active.",
         "automation": "Candidat prioritaire à l'automatisation après V1",
@@ -205,7 +205,7 @@ OPERATING_RULES = [
     {
         "rule": "Relances hors fenêtre",
         "value": "Template approuvé obligatoire.",
-        "effect": "Setter 2 relit la conversation, choisit le template approprié ou demande un nouveau template.",
+        "effect": "Tanjona relit la conversation, choisit le template approprié ou demande un nouveau template.",
     },
     {
         "rule": "Délai minimum WhatsApp",
@@ -230,34 +230,34 @@ OPERATING_RULES = [
     {
         "rule": "Automatisation V1",
         "value": "Le cockpit crée les tâches de relance mais n'envoie pas automatiquement les templates.",
-        "effect": "L'automatisation des relances et du Setter 2 est gardée pour V2.",
+        "effect": "L'automatisation des relances est gardée pour V2.",
     },
 ]
 
 SCHEDULE_RULES = [
     {
         "rule": "Horaires entreprise",
-        "value": "V1 provisoire à valider : lundi-vendredi 08:30-18:00, fuseau Europe/Zurich. Samedi, dimanche et jours fériés fermés.",
+        "value": "Lundi-vendredi 08:00-20:00, fuseau Europe/Zurich. Samedi, dimanche et jours fériés fermés.",
         "effect": "Base commune pour décider si une réponse doit être immédiate, différée au prochain créneau ouvré ou confiée à un backup.",
     },
     {
-        "rule": "Horaires Setter 1",
-        "value": "V1 provisoire à valider : Mihary, lundi-vendredi 08:30-17:30.",
-        "effect": "Si Mihary est indisponible, les réponses urgentes doivent être visibles comme à reprendre par un backup.",
+        "rule": "Horaires Setter I",
+        "value": "Mihary, lundi-vendredi 08:00-17:00, fuseau Europe/Zurich.",
+        "effect": "Si Mihary est absent, ses tâches basculent vers Yasmine.",
     },
     {
-        "rule": "Horaires Setter 2",
-        "value": "V1 provisoire à valider : Setter 2, lundi-vendredi 09:00-17:00.",
-        "effect": "Les relances dues hors plage doivent rester visibles mais être planifiées ou reprises au prochain créneau ouvré.",
+        "rule": "Horaires Setter II",
+        "value": "Tanjona, lundi-vendredi 12:00-16:00, fuseau Europe/Zurich.",
+        "effect": "Si Tanjona est absente, ses tâches attendent.",
     },
     {
         "rule": "Horaires Closer",
-        "value": "V1 provisoire à valider : Yasmine, lundi-vendredi 09:00-18:00, appels selon rendez-vous.",
-        "effect": "Permet de planifier les appels closing, les rappels et les relances post-closing dans un créneau humain réaliste.",
+        "value": "Yasmine, lundi-vendredi 11:00-20:00, fuseau Europe/Zurich.",
+        "effect": "Si Yasmine est absente, ses tâches attendent.",
     },
     {
         "rule": "Absences et backups",
-        "value": "V1 provisoire à valider : les admins peuvent reprendre toutes les files. Backup Setter 1 = Laura, backup Setter 2 = Laura, backup Closer = Laura.",
+        "value": "Mihary absent -> Yasmine. Yasmine absente -> attente. Tanjona absente -> attente.",
         "effect": "Transférer la prochaine action à un backup sans changer sa nature ni perdre l'historique.",
     },
     {
@@ -280,7 +280,7 @@ ASSIGNMENT_RULES = [
     },
     {
         "trigger": "relance structurée",
-        "owner": "Setter 2",
+        "owner": "Tanjona",
         "effect": "Relire la conversation, choisir le template et envoyer manuellement en V1.",
     },
     {
@@ -301,7 +301,7 @@ SEQUENCES = [
         "label": "Lead sans réponse initiale",
         "timeline": "Relative au message automatique initial",
         "trigger": "Template automatique envoyé, aucun message entrant du prospect.",
-        "owner": "Setter 2",
+        "owner": "Tanjona",
         "stop_when": "Réponse entrante, non pertinent, ne plus contacter, signé.",
     },
     {
@@ -309,7 +309,7 @@ SEQUENCES = [
         "label": "Conversation setter sans suite",
         "timeline": "Relative au dernier message sortant ou échange setter",
         "trigger": "Setter 1 a échangé, aucun RDV posé et 72h sans échange.",
-        "owner": "Setter 2",
+        "owner": "Tanjona",
         "stop_when": "Réponse entrante, RDV posé, non pertinent, ne plus contacter.",
     },
     {
@@ -317,7 +317,7 @@ SEQUENCES = [
         "label": "Appel setting non joint",
         "timeline": "Relative à la tentative d'appel setting",
         "trigger": "Setter 1 n'a pas pu joindre le prospect.",
-        "owner": "Setter 1 puis Setter 2",
+        "owner": "Setter 1 puis Tanjona",
         "stop_when": "Prospect joint, réponse entrante, non pertinent, ne plus contacter.",
     },
     {
@@ -325,7 +325,7 @@ SEQUENCES = [
         "label": "Appel closing non joint",
         "timeline": "Relative à la tentative d'appel closing",
         "trigger": "Closer n'a pas pu joindre le prospect.",
-        "owner": "Closer puis Setter 2",
+        "owner": "Closer puis Tanjona",
         "stop_when": "Prospect joint, réponse entrante, signé, non pertinent, ne plus contacter.",
     },
     {
@@ -333,7 +333,7 @@ SEQUENCES = [
         "label": "Post-appel sans décision claire",
         "timeline": "Relative à l'appel terminé",
         "trigger": "Le prospect a été joint mais aucune décision claire n'est prise.",
-        "owner": "Setter 2",
+        "owner": "Tanjona",
         "stop_when": "Réponse entrante, RDV posé, signature, non pertinent, ne plus contacter.",
     },
     {
@@ -341,7 +341,7 @@ SEQUENCES = [
         "label": "Closer : va signer",
         "timeline": "Relative à la qualification closer",
         "trigger": "Yasmine qualifie le prospect en Va signer.",
-        "owner": "Setter 2",
+        "owner": "Tanjona",
         "stop_when": "Signature, réponse entrante nécessitant humain, ne plus contacter.",
     },
     {
@@ -349,7 +349,7 @@ SEQUENCES = [
         "label": "Début de cours",
         "timeline": "Relative au cours",
         "trigger": "Date de début de session connue dans SchoolDrive.",
-        "owner": "Setter 2 ou automatisation",
+        "owner": "Tanjona ou automatisation",
         "stop_when": "Signature, non pertinent, ne plus contacter.",
     },
 ]
@@ -458,7 +458,7 @@ SEQUENCE_STEPS = [
         "step_index": 3,
         "delay": "+72h",
         "template_name": "demo_relance_setting_72h_1",
-        "meaning": "Passage à Setter 2 pour relance WhatsApp.",
+        "meaning": "Passage à Tanjona pour relance WhatsApp.",
     },
     {
         "sequence_code": "closing_call_not_reached",
@@ -479,7 +479,7 @@ SEQUENCE_STEPS = [
         "step_index": 3,
         "delay": "+72h",
         "template_name": "demo_va_signer_72h_1",
-        "meaning": "Passage à Setter 2 pour relance WhatsApp.",
+        "meaning": "Passage à Tanjona pour relance WhatsApp.",
     },
     {
         "sequence_code": "post_call_undecided",
@@ -572,7 +572,7 @@ MAIN_ACTION_TYPES = [
         "type": "follow_up",
         "label": "Relancer",
         "meaning": "Relancer le prospect, souvent via template WhatsApp.",
-        "default_owner": "Setter 2",
+        "default_owner": "Tanjona",
         "expected_proof": "Message libre ou template de relance envoyé.",
     },
     {
@@ -664,7 +664,7 @@ WORKFLOW_TRANSITIONS = [
         "trigger": "web_form_submitted_then_schooldrive_lead_created",
         "outcome": "SchoolDrive crée un Lead ou une Préinscription et envoie le WhatsApp automatique initial",
         "next_action": "follow_up",
-        "owner": "Setter 2",
+        "owner": "Tanjona",
         "due": "+72h après le WhatsApp automatique initial",
         "conversation": "Ouverte",
         "required_support": "Identifiant SchoolDrive, type lead/presubscription, source paid_ads/organic",
@@ -675,7 +675,7 @@ WORKFLOW_TRANSITIONS = [
         "trigger": "initial_message_no_reply_after_72h",
         "outcome": "Le prospect n'a pas répondu au WhatsApp automatique initial",
         "next_action": "follow_up",
-        "owner": "Setter 2",
+        "owner": "Tanjona",
         "due": "Maintenant",
         "conversation": "Ouverte",
         "required_support": "Relire conversation, choisir template approuvé ou créer template_request",
@@ -708,7 +708,7 @@ WORKFLOW_TRANSITIONS = [
         "trigger": "outbound_message_sent",
         "outcome": "Réponse envoyée sans RDV",
         "next_action": "follow_up",
-        "owner": "Setter 2",
+        "owner": "Tanjona",
         "due": "+72h après le dernier message sortant",
         "conversation": "Ouverte",
         "required_support": "Message sortant",
@@ -741,7 +741,7 @@ WORKFLOW_TRANSITIONS = [
         "trigger": "follow_up_due",
         "outcome": "Fenêtre WhatsApp ouverte",
         "next_action": "Selon résultat de l'envoi",
-        "owner": "Setter 2",
+        "owner": "Tanjona",
         "due": "Maintenant",
         "conversation": "Ouverte",
         "required_support": "Message libre ou template",
@@ -752,7 +752,7 @@ WORKFLOW_TRANSITIONS = [
         "trigger": "follow_up_due",
         "outcome": "Fenêtre WhatsApp fermée, template disponible",
         "next_action": "Selon résultat de l'envoi",
-        "owner": "Setter 2",
+        "owner": "Tanjona",
         "due": "Maintenant",
         "conversation": "Ouverte",
         "required_support": "Template approuvé",
@@ -763,7 +763,7 @@ WORKFLOW_TRANSITIONS = [
         "trigger": "follow_up_due_template_missing",
         "outcome": "Fenêtre fermée et aucun template adapté",
         "next_action": "follow_up bloquée",
-        "owner": "Setter 2",
+        "owner": "Tanjona",
         "due": "Maintenant",
         "conversation": "Ouverte",
         "required_support": "template_request",
@@ -774,7 +774,7 @@ WORKFLOW_TRANSITIONS = [
         "trigger": "template_submitted",
         "outcome": "Nouveau template soumis à validation",
         "next_action": "follow_up reste bloquée",
-        "owner": "Setter 2",
+        "owner": "Tanjona",
         "due": "Dès approbation",
         "conversation": "Ouverte",
         "required_support": "Statut Twilio/Meta",
@@ -785,7 +785,7 @@ WORKFLOW_TRANSITIONS = [
         "trigger": "template_approved",
         "outcome": "Relance débloquée",
         "next_action": "follow_up",
-        "owner": "Setter 2",
+        "owner": "Tanjona",
         "due": "Maintenant",
         "conversation": "Ouverte",
         "required_support": "Template approuvé",
@@ -796,7 +796,7 @@ WORKFLOW_TRANSITIONS = [
         "trigger": "outbound_template_sent",
         "outcome": "Relance envoyée, séquence non terminée",
         "next_action": "follow_up",
-        "owner": "Setter 2",
+        "owner": "Tanjona",
         "due": "Selon prochaine étape de séquence",
         "conversation": "Ouverte",
         "required_support": "Message sortant",
@@ -829,7 +829,7 @@ WORKFLOW_TRANSITIONS = [
         "trigger": "setting_call_not_reached",
         "outcome": "Prospect non joint",
         "next_action": "setting_call puis follow_up si rappels épuisés",
-        "owner": "Setter 1 puis Setter 2",
+        "owner": "Setter 1 puis Tanjona",
         "due": "+2h ouvrées, +24h ouvrées, puis +72h",
         "conversation": "Ouverte",
         "required_support": "Mini note d'appel",
@@ -840,7 +840,7 @@ WORKFLOW_TRANSITIONS = [
         "trigger": "setting_call_completed_no_next_step",
         "outcome": "Prospect joint mais pas prêt ou pas de suite claire",
         "next_action": "follow_up",
-        "owner": "Setter 2",
+        "owner": "Tanjona",
         "due": "+72h après l'appel",
         "conversation": "Ouverte",
         "required_support": "Mini note",
@@ -873,7 +873,7 @@ WORKFLOW_TRANSITIONS = [
         "trigger": "closing_call_completed",
         "outcome": "Va signer",
         "next_action": "follow_up",
-        "owner": "Setter 2",
+        "owner": "Tanjona",
         "due": "+72h puis séquence closer_will_sign",
         "conversation": "Ouverte",
         "required_support": "Mini note, qualification closer will_sign",
@@ -884,7 +884,7 @@ WORKFLOW_TRANSITIONS = [
         "trigger": "closing_call_not_reached",
         "outcome": "Prospect non joint",
         "next_action": "closing_call puis follow_up si rappels épuisés",
-        "owner": "Closer puis Setter 2",
+        "owner": "Closer puis Tanjona",
         "due": "+2h ouvrées, +24h ouvrées, puis +72h",
         "conversation": "Ouverte",
         "required_support": "Mini note d'appel",
@@ -895,7 +895,7 @@ WORKFLOW_TRANSITIONS = [
         "trigger": "closing_call_completed_undecided",
         "outcome": "Prospect joint mais pas de décision claire",
         "next_action": "follow_up",
-        "owner": "Setter 2",
+        "owner": "Tanjona",
         "due": "+72h après l'appel",
         "conversation": "Ouverte",
         "required_support": "Mini note",
@@ -917,7 +917,7 @@ WORKFLOW_TRANSITIONS = [
         "trigger": "course_start_approaching",
         "outcome": "Lead non signé, date de cours connue",
         "next_action": "follow_up cours",
-        "owner": "Setter 2 ou IA",
+        "owner": "Tanjona ou IA",
         "due": "J-14/J-7/J-3/J-1",
         "conversation": "Ouverte",
         "required_support": "Template cours",

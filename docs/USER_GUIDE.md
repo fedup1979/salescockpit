@@ -1,4 +1,4 @@
-# Sales Cockpit - Mode d'emploi utilisateur
+﻿# Sales Cockpit - Mode d'emploi utilisateur
 
 Bienvenue dans Sales Cockpit. Cet outil sert à savoir très vite qui contacter, quand le faire, et quelle suite donner à chaque prospect. Il ne remplace pas SchoolDrive comme source de vérité, mais il regroupe le travail quotidien autour des conversations WhatsApp, des relances, des appels et des qualifications.
 
@@ -12,7 +12,7 @@ La page **Inbox** sert à retrouver les conversations WhatsApp. Elle est utile p
 
 **Setter 1** répond aux messages entrants, mène les échanges écrits actifs et réalise les entretiens de setting. Dans le cockpit, ce rôle correspond principalement aux actions de réponse immédiate et aux appels de setting.
 
-**Setter 2** gère les relances structurées. Il relit la conversation, choisit le bon modèle WhatsApp quand la fenêtre est fermée, et crée une demande de modèle si aucun modèle existant ne convient.
+**Tanjona, Setter II** gère les relances structurées. Elle relit la conversation, choisit le bon modèle WhatsApp quand la fenêtre est fermée, et crée une demande de modèle si aucun modèle existant ne convient.
 
 **Closer** gère les entretiens de closing. Après l'appel, il indique le résultat : signé, va signer, indécis, non joint ou non pertinent. Cette décision détermine la suite du parcours.
 
@@ -42,7 +42,7 @@ Pour les appels, la mini-note est obligatoire. Elle permet au prochain utilisate
 
 ## Chaînage des actions
 
-Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous, l'action de réponse est terminée et une relance est planifiée pour Setter 2. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un entretien de setting est créé. Si un entretien de setting doit passer au closing, une action de closing est créée pour le closer.
+Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous, l'action de réponse est terminée et une relance est planifiée pour Tanjona. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un entretien de setting est créé. Si un entretien de setting doit passer au closing, une action de closing est créée pour le closer.
 
 Le chaînage peut être interrompu. Si le prospect répond, la conversation remonte avec une action de réponse immédiate. Si le prospect est marqué **Non pertinent**, **Ne plus contacter** ou **A signé**, les relances s'arrêtent. Si un prospect marqué **Ne plus contacter** écrit à nouveau, le cockpit crée une revue humaine au lieu de relancer automatiquement.
 

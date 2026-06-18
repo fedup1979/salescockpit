@@ -360,6 +360,29 @@ def test_template_request_blocks_followup_action() -> None:
     assert any(item["task_id"] == action["id"] for item in requests)
 
 
+def test_template_request_without_followup_does_not_block_reply_action() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je veux un modèle spécifique.")
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "reply"
+
+    ok, message = create_template_request(
+        result["conversation_id"],
+        admin["id"],
+        "Créer un modèle de clarification.",
+        "Contexte de test",
+    )
+
+    assert ok is True
+    assert "relance bloquée" not in message
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["id"] == action["id"]
+    assert next_action["status"] == "open"
+    requests = list_template_requests()
+    assert any(item["task_id"] is None for item in requests)
+
+
 def test_handoff_to_closer_creates_closing_action() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
@@ -419,7 +442,10 @@ def test_setting_call_not_reached_creates_call_retry_before_followup() -> None:
 def test_seed_includes_setter2_and_demo_templates() -> None:
     seed_initial_data()
     users = list_users(active_only=False)
-    assert any(user["email"] == "setter2@essr.ch" for user in users)
+    assert any(
+        user["email"] == "setter2@essr.ch" and user["full_name"] == "Tanjona"
+        for user in users
+    )
     templates = list_templates("demo_")
     assert len(templates) >= 10
 
@@ -459,6 +485,63 @@ def test_stop_status_blocks_followups_and_resolves_conversation() -> None:
     )
     assert ok is False
     assert "bloque" in message
+
+
+def test_forced_closing_stage_updates_next_action() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je veux parler à Yasmine.")
+    assert get_next_action_for_lead(result["lead_id"])["type"] == "reply"
+
+    update_lead_qualification(
+        result["lead_id"],
+        admin["id"],
+        "closing",
+        "neutral",
+        contact_status="contact_allowed",
+    )
+
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "closing_call"
+    assert next_action["assigned_to_role"] == "closer"
+
+
+def test_will_sign_status_updates_next_action_to_setter2_followup() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je pense signer.")
+
+    update_lead_qualification(
+        result["lead_id"],
+        admin["id"],
+        "closing",
+        "will_sign",
+        contact_status="contact_allowed",
+    )
+
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "follow_up"
+    assert next_action["assigned_to_email"] == "setter2@essr.ch"
+    assert next_action["sequence_code"] == "closer_will_sign"
+
+
+def test_terminal_stage_resolves_and_clears_next_action() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Finalement je ne continue pas.")
+
+    update_lead_qualification(
+        result["lead_id"],
+        admin["id"],
+        "lost",
+        "neutral",
+        contact_status="contact_allowed",
+    )
+
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["status"] == "resolved"
+    assert conversation["lead_status"] == "not_relevant"
+    assert get_next_action_for_lead(result["lead_id"]) is None
 
 
 def unique_phone() -> str:
