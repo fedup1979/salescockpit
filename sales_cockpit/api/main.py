@@ -174,14 +174,14 @@ def schooldrive_lead_or_presubscription(
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     settings = get_settings()
-    expected_token = settings.schooldrive_webhook_token
+    expected_token = _clean_bearer_token(settings.schooldrive_webhook_token)
     if not expected_token:
         raise HTTPException(status_code=503, detail="SchoolDrive webhook token is not configured.")
     prefix = "Bearer "
     if not authorization or not authorization.startswith(prefix):
         raise HTTPException(status_code=401, detail="Missing bearer token.")
-    provided_token = authorization[len(prefix) :].strip()
-    if not compare_digest(provided_token, expected_token):
+    provided_token = _clean_bearer_token(authorization[len(prefix) :])
+    if not compare_digest(provided_token.encode("utf-8"), expected_token.encode("utf-8")):
         raise HTTPException(status_code=403, detail="Invalid bearer token.")
 
     expected_environment = {
@@ -205,3 +205,7 @@ def schooldrive_lead_or_presubscription(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "ok", **result}
+
+
+def _clean_bearer_token(value: str | None) -> str:
+    return (value or "").strip().lstrip("\ufeff")
