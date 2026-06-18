@@ -103,7 +103,7 @@ Right panel:
 - Button to mark as resolved or reopen.
 - `Ouvrir SchoolDrive` link.
 - WhatsApp window badge.
-- Metrics for lead status, sales stage, temperature, conversation status.
+- Metrics for qualification status, parcours, and conversation status.
 - Next-action summary panel.
 - Tabs: `Conversation`, `Qualification`, `À faire`, `Note privée`.
 
@@ -122,9 +122,8 @@ Right panel:
 
 Fields:
 
-- Sales stage.
-- Temperature.
-- Lead status.
+- Parcours.
+- Qualification.
 
 Dropdown labels are displayed in French. Internal values remain in English.
 
@@ -141,7 +140,7 @@ Dropdown labels are displayed in French. Internal values remain in English.
 ### Private Note Tab
 
 - Manual note for private/informal WhatsApp conversation.
-- Flag to include/exclude note from future AI learning.
+- Notes are included in the future learning base by default.
 
 ### Admin
 
@@ -150,7 +149,7 @@ Dropdown labels are displayed in French. Internal values remain in English.
 - Operating rules, including WhatsApp window constraints and conflict policy.
 - Schedule and absence-transfer rules, currently declarative.
 - Follow-up sequences.
-- SchoolDrive lead types: generic lead vs pre-registration.
+- SchoolDrive lead types: `lead` and `presubscription` (`Lead` / `Préinscription` in the UI).
 - Demo template catalog used until Twilio template sync exists.
 
 ## Current Data Model Highlights

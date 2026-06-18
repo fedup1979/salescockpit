@@ -54,12 +54,14 @@ def list_conversations(
                 lower(l.first_name || ' ' || l.last_name) LIKE ?
                 OR lower(coalesce(l.email, '')) LIKE ?
                 OR lower(coalesce(l.phone_e164, '')) LIKE ?
+                OR lower(coalesce(l.course_category_short_title, '')) LIKE ?
                 OR lower(coalesce(l.course_title, '')) LIKE ?
+                OR lower(coalesce(l.lead_type, '')) LIKE ?
                 OR lower(coalesce(last_msg.body, '')) LIKE ?
             )
             """
         )
-        params.extend([like, like, like, like, like])
+        params.extend([like, like, like, like, like, like, like])
     if stage != "all":
         filters.append("l.sales_stage = ?")
         params.append(stage)
@@ -69,11 +71,15 @@ def list_conversations(
         SELECT
             c.id AS conversation_id,
             l.id AS lead_id,
+            l.schooldrive_lead_id,
             l.first_name,
             l.last_name,
             l.email,
             l.phone_e164,
+            l.course_id,
+            l.course_category_short_title,
             l.course_title,
+            l.lead_type,
             l.lead_status,
             l.sales_stage,
             l.temperature,
@@ -193,7 +199,9 @@ def get_conversation(conversation_id: int) -> dict[str, Any] | None:
                 l.phone_e164,
                 l.phone_raw,
                 l.course_id,
+                l.course_category_short_title,
                 l.course_title,
+                l.lead_type,
                 l.lead_status,
                 l.sales_stage,
                 l.temperature,
@@ -743,8 +751,8 @@ def update_lead_qualification(
     lead_id: int,
     user_id: int,
     sales_stage: str,
-    temperature: str,
     lead_status: str,
+    temperature: str | None = None,
 ) -> None:
     now = iso_utc()
     with connect() as conn:
@@ -754,13 +762,14 @@ def update_lead_qualification(
                 (lead_id,),
             ).fetchone()
         )
+        effective_temperature = temperature or previous["temperature"]
         conn.execute(
             """
             UPDATE leads
             SET sales_stage = ?, temperature = ?, lead_status = ?, updated_at = ?
             WHERE id = ?
             """,
-            (sales_stage, temperature, lead_status, now, lead_id),
+            (sales_stage, effective_temperature, lead_status, now, lead_id),
         )
         if lead_status in STOP_FOLLOWUP_STATUSES:
             _complete_open_actions_for_lead(
@@ -785,7 +794,7 @@ def update_lead_qualification(
             previous=previous,
             new={
                 "sales_stage": sales_stage,
-                "temperature": temperature,
+                "temperature": effective_temperature,
                 "lead_status": lead_status,
             },
         )

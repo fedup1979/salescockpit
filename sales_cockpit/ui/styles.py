@@ -32,6 +32,17 @@ h1, h2, h3 {
   letter-spacing: 0;
 }
 
+.sc-detail-title {
+  color: var(--sc-text);
+  font-size: 1.08rem;
+  font-weight: 680;
+  line-height: 1.25;
+}
+
+.sc-search-field-offset {
+  height: 1.72rem;
+}
+
 .sc-topline {
   display: flex;
   gap: .5rem;
@@ -39,6 +50,71 @@ h1, h2, h3 {
   color: var(--sc-muted);
   font-size: .85rem;
   margin-bottom: .5rem;
+}
+
+.sc-conversation-meta-bar {
+  display: flex;
+  justify-content: space-between;
+  gap: .8rem;
+  align-items: flex-start;
+  color: var(--sc-muted);
+  font-size: .85rem;
+  margin: .15rem 0 .55rem 0;
+}
+
+.sc-prospect-meta {
+  display: flex;
+  gap: .45rem;
+  flex-wrap: wrap;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.sc-prospect-meta span + span::before {
+  content: "·";
+  margin-right: .45rem;
+  color: oklch(0.66 0.014 250);
+}
+
+.sc-window-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: .16rem;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.sc-window-close {
+  color: var(--sc-muted);
+  font-size: .76rem;
+  line-height: 1.2;
+}
+
+.sc-compact-state {
+  display: flex;
+  gap: .45rem;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: .35rem 0 .7rem 0;
+}
+
+.sc-compact-state span {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  padding: .18rem .5rem;
+  border: 1px solid var(--sc-border);
+  border-radius: 999px;
+  background: oklch(0.99 0.004 250);
+  color: var(--sc-muted);
+  font-size: .78rem;
+  line-height: 1.2;
+}
+
+.sc-compact-state strong {
+  color: var(--sc-text);
+  font-weight: 650;
 }
 
 .sc-badge {
@@ -65,6 +141,17 @@ h1, h2, h3 {
 .sc-badge-neutral {
   color: var(--sc-muted);
   background: oklch(0.97 0.006 250);
+}
+
+@media (max-width: 760px) {
+  .sc-conversation-meta-bar {
+    flex-direction: column;
+  }
+
+  .sc-window-status {
+    align-items: flex-start;
+    margin-left: 0;
+  }
 }
 
 .sc-message {
@@ -156,6 +243,16 @@ h1, h2, h3 {
 
 .sc-conversation-row {
   padding: .2rem 0 .36rem 0;
+}
+
+.sc-lead-type-line {
+  color: var(--sc-accent);
+  font-size: .7rem;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: .12rem;
+  text-transform: uppercase;
+  letter-spacing: 0;
 }
 
 .sc-conversation-title {

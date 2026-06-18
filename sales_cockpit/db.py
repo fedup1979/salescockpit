@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS leads (
     phone_raw TEXT,
     course_id TEXT,
     course_title TEXT,
+    course_category_short_title TEXT,
+    lead_type TEXT NOT NULL DEFAULT 'lead',
     source TEXT NOT NULL DEFAULT 'mock',
     lead_status TEXT NOT NULL DEFAULT 'new',
     sales_stage TEXT NOT NULL DEFAULT 'new',
@@ -208,6 +210,37 @@ def connect() -> sqlite3.Connection:
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+        ensure_schema_columns(conn)
+
+
+def ensure_schema_columns(conn: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(leads)").fetchall()
+    }
+    migrations = [
+        ("course_category_short_title", "TEXT"),
+        ("lead_type", "TEXT NOT NULL DEFAULT 'lead'"),
+    ]
+    for column_name, definition in migrations:
+        if column_name not in columns:
+            conn.execute(f"ALTER TABLE leads ADD COLUMN {column_name} {definition}")
+
+    conn.execute(
+        """
+        UPDATE leads
+        SET lead_type = 'lead'
+        WHERE lead_type IS NULL OR trim(lead_type) = ''
+        """
+    )
+    conn.execute(
+        """
+        UPDATE leads
+        SET course_category_short_title = course_id
+        WHERE (course_category_short_title IS NULL OR trim(course_category_short_title) = '')
+          AND course_id IS NOT NULL
+        """
+    )
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -399,7 +432,9 @@ def seed_initial_data() -> None:
                 "phone_e164": "+41790000001",
                 "phone_raw": "079 000 00 01",
                 "course_id": "APP",
+                "course_category_short_title": "APP",
                 "course_title": "Anatomie, Physiologie, Pathologie",
+                "lead_type": "lead",
                 "lead_status": "lead",
                 "sales_stage": "setting",
                 "temperature": "hot",
@@ -420,7 +455,9 @@ def seed_initial_data() -> None:
                 "phone_e164": "+41790000002",
                 "phone_raw": "079 000 00 02",
                 "course_id": "FSM",
-                "course_title": "Formation en santé naturelle",
+                "course_category_short_title": "FSM",
+                "course_title": "FSM GE P26",
+                "lead_type": "presubscription",
                 "lead_status": "prospect",
                 "sales_stage": "closing",
                 "temperature": "warm",
@@ -441,7 +478,9 @@ def seed_initial_data() -> None:
                 "phone_e164": "+41790000003",
                 "phone_raw": "079 000 00 03",
                 "course_id": "AS",
-                "course_title": "Assistant médical",
+                "course_category_short_title": "AS",
+                "course_title": "AS GE E26 PM",
+                "lead_type": "presubscription",
                 "lead_status": "new",
                 "sales_stage": "new",
                 "temperature": "cold",
@@ -485,6 +524,8 @@ def seed_initial_data() -> None:
             closer_id = yasmine_id if stage in {"closing", "appointment_booked", "won", "lost"} else None
             inbound_at = now - timedelta(hours=hours_ago)
             outbound_at = inbound_at + timedelta(minutes=18)
+            lead_type = "presubscription" if index % 3 == 0 else "lead"
+            stored_course_title = f"{course_id} GE P26" if lead_type == "presubscription" else course_title
             demo_leads.append(
                 {
                     "schooldrive_lead_id": sd_id,
@@ -494,7 +535,9 @@ def seed_initial_data() -> None:
                     "phone_e164": f"+4179000{index + 10:04d}",
                     "phone_raw": f"079 000 {index + 10:02d} {index + 10:02d}",
                     "course_id": course_id,
-                    "course_title": course_title,
+                    "course_category_short_title": course_id,
+                    "course_title": stored_course_title,
+                    "lead_type": lead_type,
                     "lead_status": "prospect" if stage == "closing" else "lead",
                     "sales_stage": stage,
                     "temperature": temperature,
@@ -520,15 +563,30 @@ def seed_initial_data() -> None:
                 (lead["schooldrive_lead_id"],),
             ).fetchone()
             if existing:
+                conn.execute(
+                    """
+                    UPDATE leads
+                    SET course_category_short_title = ?, course_title = ?, lead_type = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        lead["course_category_short_title"],
+                        lead["course_title"],
+                        lead["lead_type"],
+                        iso_utc(now),
+                        existing["id"],
+                    ),
+                )
                 continue
 
             cursor = conn.execute(
                 """
                 INSERT INTO leads (
                     schooldrive_lead_id, first_name, last_name, email, phone_e164, phone_raw,
-                    course_id, course_title, lead_status, sales_stage, temperature,
+                    course_id, course_category_short_title, course_title, lead_type,
+                    lead_status, sales_stage, temperature,
                     setter_user_id, closer_user_id, last_schooldrive_sync_at, last_notion_sync_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     lead["schooldrive_lead_id"],
@@ -538,7 +596,9 @@ def seed_initial_data() -> None:
                     lead["phone_e164"],
                     lead["phone_raw"],
                     lead["course_id"],
+                    lead["course_category_short_title"],
                     lead["course_title"],
+                    lead["lead_type"],
                     lead["lead_status"],
                     lead["sales_stage"],
                     lead["temperature"],

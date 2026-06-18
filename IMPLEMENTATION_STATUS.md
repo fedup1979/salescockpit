@@ -34,6 +34,9 @@ V1 local mock build is runnable.
 - Seeded Setter 2 user: `setter2@essr.ch`.
 - Demo WhatsApp templates for initial offer, 72h/7d/30d follow-ups, setting, will-sign, course-date, and out-of-hours.
 - Stop statuses `Non pertinent`, `Ne plus contacter`, and `A signé` complete open actions and resolve conversations.
+- UI simplification: `Température` hidden, `sales_stage` displayed as `Parcours`, private notes always included for future learning.
+- Global `À faire` filters responsibility by individual people and can sort by responsible person, prospect, or due date.
+- SchoolDrive lead source types use `lead` and `presubscription`; inbox cards display `Lead` / `Préinscription` and use course category vs course short name accordingly.
 
 ## Next Checkpoints
 

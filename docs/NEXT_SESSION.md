@@ -29,6 +29,10 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - Resolving a conversation completes open actions for that lead.
 - The old technical `tasks` table remains, but the UI should call these `actions` or `prochaines actions`.
 - Business rules are centralized in `sales_cockpit/business_rules.py` and shown in Admin.
+- `Température` is no longer shown in the UI. Keep the DB field for compatibility, but do not reintroduce it as a visible qualification field unless François explicitly asks.
+- `sales_stage` is displayed as `Parcours`.
+- Private notes are always included in the future learning base; there is no checkbox in the UI.
+- The global `À faire` view filters by individual responsible people, not only by role.
 - `Non pertinent` and `Ne plus contacter` are separate. Both stop follow-ups, but `Ne plus contacter` means strict do-not-contact.
 - Lead-relative reminders follow `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
 - Course-date reminders win over lead-relative reminders. The losing lead-relative reminder is cancelled.
@@ -38,6 +42,9 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - Private notes remain yellow and align right like team messages.
 - Reply tools live below the conversation thread.
 - SchoolDrive link appears next to the prospect name, opening in a new tab.
+- SchoolDrive lead types use SD terms internally: `lead` and `presubscription`.
+- Inbox conversation cards show `Lead` or `Préinscription` above the prospect name.
+- For `lead`, the course line shows the SD course category short title, e.g. `APP`; for `presubscription`, it shows the SD course short name, e.g. `APP GE P26`.
 
 ## Current Validation
 

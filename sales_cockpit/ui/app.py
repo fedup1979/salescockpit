@@ -48,12 +48,11 @@ from sales_cockpit.ui.styles import APP_CSS
 
 
 SALES_STAGES = ["new", "setting", "appointment_booked", "closing", "won", "lost", "not_interesting", "no_show", "blacklist"]
-TEMPERATURES = ["cold", "warm", "hot"]
 LEAD_STATUSES = [item["value"] for item in QUALIFICATION_STATUSES]
 URGENCIES = ["low", "normal", "high", "urgent"]
 WORK_QUEUES = ["todo", "follow_up", "waiting", "resolved"]
-RESPONSIBILITIES = ["all", "setter", "closer"]
 ACTION_TYPES = ["reply", "call", "follow_up", "closing_call", "other"]
+WORK_SORTS = ["assignee_name", "lead_name", "due_at"]
 OUTCOMES = ["Reached", "No answer", "Wrong number", "Callback requested", "Appointment booked", "Not interested", "Converted", "Other"]
 
 DISPLAY_LABELS = {
@@ -72,6 +71,7 @@ DISPLAY_LABELS = {
     "hot": "Chaud",
     "suspect": "Suspect",
     "lead": "Lead",
+    "presubscription": "Préinscription",
     "prospect": "Prospect",
     "neutral": "Neutre",
     "eligible": "Éligible",
@@ -95,6 +95,9 @@ DISPLAY_LABELS = {
     "call": "Appeler",
     "closing_call": "Appel closing",
     "other": "Autre",
+    "assignee_name": "Responsable",
+    "lead_name": "Prospect",
+    "due_at": "Échéance",
     "low": "Faible",
     "normal": "Normale",
     "high": "Élevée",
@@ -119,12 +122,7 @@ DISPLAY_LABELS = {
 
 HELP_TEXTS = {
     "sales_stage": (
-        "Diagnostic commercial : où en est la personne dans le processus de vente. "
-        "Exemples : setting, RDV pris, closing, gagné ou perdu."
-    ),
-    "temperature": (
-        "Niveau d'intérêt estimé. Froid = peu engagé, tiède = intérêt réel mais pas urgent, "
-        "chaud = forte probabilité d'action rapide."
+        "État du parcours commercial. Il indique où se trouve le prospect dans le processus."
     ),
     "lead_status": (
         "Qualification commerciale. Non pertinent, Ne plus contacter et A signé arrêtent les relances."
@@ -190,43 +188,41 @@ def render_shell() -> None:
 def render_inbox(user: dict) -> None:
     st.title("Inbox WhatsApp")
 
-    filters = st.columns([2, 1, 1])
-    search = filters[0].text_input("Recherche", placeholder="Nom, téléphone, cours, message...")
-    stage = filters[1].selectbox("Étape", ["all"] + SALES_STAGES, format_func=labelize)
-    responsibility = filters[2].selectbox(
-        "Responsabilité",
-        RESPONSIBILITIES,
-        format_func=labelize,
-    )
+    search_col, header_col = st.columns([0.95, 1.45], gap="large")
+    with search_col:
+        search = st.text_input("Recherche", placeholder="Nom, téléphone, cours, message...")
     conversations = list_conversations(
         search=search,
-        stage=stage,
-        responsibility=responsibility,
     )
 
     if not conversations:
         st.warning("Aucune conversation trouvée.")
         return
 
+    conversations_by_queue = {
+        queue: [conv for conv in conversations if conv["work_queue"] == queue]
+        for queue in WORK_QUEUES
+    }
+    visible_ids = {conv["conversation_id"] for conv in conversations}
+    if st.session_state.get("selected_conversation_id") not in visible_ids:
+        default = next(
+            (
+                queue_conversations[0]
+                for queue_conversations in conversations_by_queue.values()
+                if queue_conversations
+            ),
+            conversations[0],
+        )
+        st.session_state.selected_conversation_id = default["conversation_id"]
+    conversation_id = st.session_state.selected_conversation_id
+
+    with header_col:
+        st.markdown('<div class="sc-search-field-offset"></div>', unsafe_allow_html=True)
+        render_conversation_header(user, conversation_id)
+
     left, right = st.columns([0.95, 1.45], gap="large")
     with left:
         st.subheader("File de travail")
-        conversations_by_queue = {
-            queue: [conv for conv in conversations if conv["work_queue"] == queue]
-            for queue in WORK_QUEUES
-        }
-
-        visible_ids = {conv["conversation_id"] for conv in conversations}
-        if st.session_state.get("selected_conversation_id") not in visible_ids:
-            default = next(
-                (
-                    queue_conversations[0]
-                    for queue_conversations in conversations_by_queue.values()
-                    if queue_conversations
-                ),
-                conversations[0],
-            )
-            st.session_state.selected_conversation_id = default["conversation_id"]
 
         tabs = st.tabs(
             [
@@ -237,7 +233,6 @@ def render_inbox(user: dict) -> None:
         for index, queue in enumerate(WORK_QUEUES):
             with tabs[index]:
                 render_conversation_rows(conversations_by_queue[queue], queue)
-        conversation_id = st.session_state.selected_conversation_id
 
     with right:
         render_conversation_detail(user, conversation_id)
@@ -277,7 +272,8 @@ def conversation_row_html(conv: dict) -> str:
     action = conv.get("next_action_title") or "Aucune action ouverte"
     due = format_due(conv.get("next_action_due_at"))
     name = escape_html(f"{conv['first_name']} {conv['last_name']}")
-    course = escape_html(conv.get("course_title") or "Sans cours")
+    lead_type = escape_html(labelize(conv.get("lead_type") or "lead"))
+    course = escape_html(conversation_course_label(conv))
     owner_html = escape_html(owner)
     preview_html = escape_html(preview)
     action_html = escape_html(compact_text(action, 92))
@@ -285,6 +281,7 @@ def conversation_row_html(conv: dict) -> str:
     queue_html = escape_html(labelize(conv.get("work_queue")))
     return f"""
         <div class="sc-conversation-row">
+          <div class="sc-lead-type-line">{lead_type}</div>
           <div class="sc-conversation-title"><strong>{name}</strong></div>
           <div class="sc-row-meta">{course} · {owner_html}</div>
           <div class="sc-next-action-line"><span>{queue_html}</span> · {action_html}</div>
@@ -294,50 +291,25 @@ def conversation_row_html(conv: dict) -> str:
     """
 
 
+def conversation_course_label(conv: dict) -> str:
+    if conv.get("lead_type") == "presubscription":
+        return conv.get("course_title") or conv.get("course_category_short_title") or "Sans cours"
+    return (
+        conv.get("course_category_short_title")
+        or conv.get("course_id")
+        or conv.get("course_title")
+        or "Sans cours"
+    )
+
+
 def render_conversation_detail(user: dict, conversation_id: int) -> None:
     conv = get_conversation(conversation_id)
     if not conv:
         st.error("Conversation introuvable.")
         return
 
-    full_name = f"{conv['first_name']} {conv['last_name']}"
-    header_col, status_action_col, schooldrive_col = st.columns(
-        [0.48, 0.24, 0.28], vertical_alignment="center"
-    )
-    with header_col:
-        st.subheader(full_name)
-    with status_action_col:
-        render_conversation_status_button(user, conv)
-    with schooldrive_col:
-        schooldrive_url = get_schooldrive_url(conv)
-        if schooldrive_url:
-            st.markdown(
-                f'<a class="sc-link-button" href="{escape_html(schooldrive_url)}" target="_blank" rel="noopener noreferrer">Ouvrir SchoolDrive</a>',
-                unsafe_allow_html=True,
-            )
-        else:
-            st.button("SchoolDrive indisponible", disabled=True, use_container_width=True)
-    badge_class = "sc-badge-open" if conv["window_is_open"] else "sc-badge-closed"
-    window_text = "Fenêtre ouverte" if conv["window_is_open"] else "Fenêtre fermée"
-    closes = format_dt(conv.get("window_closes_at")) if conv.get("window_closes_at") else "Non disponible"
-    st.markdown(
-        f"""
-        <div class="sc-topline">
-          <span class="sc-badge {badge_class}">{window_text}</span>
-          <span>{conv.get('course_title') or 'Sans cours'}</span>
-          <span>{conv.get('phone_e164') or ''}</span>
-          <span>Ferme : {closes}</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    info_cols = st.columns(4)
-    info_cols[0].metric("Statut", labelize(conv["lead_status"]))
-    info_cols[1].metric("Étape", labelize(conv["sales_stage"]))
-    info_cols[2].metric("Température", labelize(conv["temperature"]))
-    info_cols[3].metric("Conversation", labelize(conv["status"]))
-
+    render_conversation_context(conv)
+    render_compact_lead_state(conv)
     render_next_action_summary(conv)
 
     tabs = st.tabs(["Conversation", "Qualification", "À faire", "Note privée"])
@@ -353,6 +325,53 @@ def render_conversation_detail(user: dict, conversation_id: int) -> None:
         render_manual_note_box(user, conv)
 
 
+def render_conversation_header(user: dict, conversation_id: int) -> None:
+    conv = get_conversation(conversation_id)
+    if not conv:
+        return
+
+    full_name = escape_html(f"{conv['first_name']} {conv['last_name']}")
+    header_col, status_action_col, schooldrive_col = st.columns(
+        [0.48, 0.24, 0.28], vertical_alignment="center"
+    )
+    with header_col:
+        st.markdown(f'<div class="sc-detail-title">{full_name}</div>', unsafe_allow_html=True)
+    with status_action_col:
+        render_conversation_status_button(user, conv)
+    with schooldrive_col:
+        schooldrive_url = get_schooldrive_url(conv)
+        if schooldrive_url:
+            st.markdown(
+                f'<a class="sc-link-button" href="{escape_html(schooldrive_url)}" target="_blank" rel="noopener noreferrer">Ouvrir SchoolDrive</a>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.button("SchoolDrive indisponible", disabled=True, use_container_width=True)
+
+
+def render_conversation_context(conv: dict) -> None:
+    badge_class = "sc-badge-open" if conv["window_is_open"] else "sc-badge-closed"
+    window_text = "Fenêtre ouverte" if conv["window_is_open"] else "Fenêtre fermée"
+    closes = format_dt(conv.get("window_closes_at")) if conv.get("window_closes_at") else "Non disponible"
+    course = escape_html(conversation_course_label(conv))
+    phone = escape_html(conv.get("phone_e164") or "Téléphone indisponible")
+    st.markdown(
+        f"""
+        <div class="sc-conversation-meta-bar">
+          <div class="sc-prospect-meta">
+            <span>{course}</span>
+            <span>{phone}</span>
+          </div>
+          <div class="sc-window-status">
+            <span class="sc-badge {badge_class}">{window_text}</span>
+            <span class="sc-window-close">Ferme : {escape_html(closes)}</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_conversation_status_button(user: dict, conv: dict) -> None:
     if conv["status"] == "resolved":
         if st.button("Rouvrir la conversation", use_container_width=True):
@@ -366,6 +385,18 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
             show_result(ok, message)
             if ok:
                 st.rerun()
+
+
+def render_compact_lead_state(conv: dict) -> None:
+    st.markdown(
+        f"""
+        <div class="sc-compact-state">
+          <span><strong>Qualification</strong> {escape_html(labelize(conv["lead_status"]))}</span>
+          <span><strong>Parcours</strong> {escape_html(labelize(conv["sales_stage"]))}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_messages(conversation_id: int) -> None:
@@ -462,21 +493,14 @@ def render_composer(user: dict, conv: dict) -> None:
 def render_qualification(user: dict, conv: dict) -> None:
     with st.form(f"qualification_{conv['lead_id']}"):
         sales_stage = st.selectbox(
-            "Étape commerciale",
+            "Parcours",
             SALES_STAGES,
             index=safe_index(SALES_STAGES, conv["sales_stage"]),
             format_func=labelize,
             help=HELP_TEXTS["sales_stage"],
         )
-        temperature = st.selectbox(
-            "Température",
-            TEMPERATURES,
-            index=safe_index(TEMPERATURES, conv["temperature"]),
-            format_func=labelize,
-            help=HELP_TEXTS["temperature"],
-        )
         lead_status = st.selectbox(
-            "Statut du lead",
+            "Qualification",
             LEAD_STATUSES,
             index=safe_index(LEAD_STATUSES, conv["lead_status"]),
             format_func=labelize,
@@ -484,7 +508,7 @@ def render_qualification(user: dict, conv: dict) -> None:
         )
         submitted = st.form_submit_button("Mettre à jour")
     if submitted:
-        update_lead_qualification(conv["lead_id"], user["id"], sales_stage, temperature, lead_status)
+        update_lead_qualification(conv["lead_id"], user["id"], sales_stage, lead_status)
         st.success("Qualification mise à jour.")
         st.rerun()
 
@@ -687,10 +711,9 @@ def render_next_action_box(user: dict, conv: dict) -> None:
 def render_manual_note_box(user: dict, conv: dict) -> None:
     with st.form(f"manual_note_{conv['id']}"):
         body = st.text_area("Résumé ou transcript privé", height=130)
-        include = st.checkbox("Inclure dans la base d'apprentissage future", value=True)
         submitted = st.form_submit_button("Ajouter la note privée")
     if submitted:
-        ok, message = add_manual_note(conv["id"], user["id"], body.strip(), include)
+        ok, message = add_manual_note(conv["id"], user["id"], body.strip(), True)
         show_result(ok, message)
         if ok:
             st.rerun()
@@ -698,16 +721,18 @@ def render_manual_note_box(user: dict, conv: dict) -> None:
 
 def render_work_queue(user: dict) -> None:
     st.title("À faire")
-    filters = st.columns([1, 1, 1])
+    users = list_users()
+    assignee_options = [{"id": "all", "full_name": "Tous", "role": "all"}] + users
+    filters = st.columns([1, 1, 1, 1])
     status = filters[0].selectbox(
         "Statut",
         ["open", "in_progress", "done", "cancelled", "all"],
         format_func=labelize,
     )
-    responsibility = filters[1].selectbox(
-        "Responsabilité",
-        RESPONSIBILITIES,
-        format_func=labelize,
+    assignee_filter = filters[1].selectbox(
+        "Responsable",
+        assignee_options,
+        format_func=format_assignee_filter,
         key="work_queue_responsibility",
     )
     action_type = filters[2].selectbox(
@@ -715,11 +740,16 @@ def render_work_queue(user: dict) -> None:
         ["all"] + ACTION_TYPES,
         format_func=labelize,
     )
+    sort_by = filters[3].selectbox("Tri", WORK_SORTS, format_func=labelize)
     tasks = list_tasks(status)
-    if responsibility != "all":
-        tasks = [task for task in tasks if task.get("assigned_to_role") == responsibility]
+    if assignee_filter["id"] != "all":
+        tasks = [
+            task for task in tasks
+            if task.get("assigned_to_user_id") == assignee_filter["id"]
+        ]
     if action_type != "all":
         tasks = [task for task in tasks if task["type"] == action_type]
+    tasks = sort_work_items(tasks, sort_by)
 
     if not tasks:
         st.info("Aucune action.")
@@ -930,6 +960,35 @@ def safe_user_index(users: list[dict], user_id: int | None) -> int:
 
 def format_user(user: dict) -> str:
     return f"{user['full_name']} · {labelize(user['role'])}"
+
+
+def format_assignee_filter(user: dict) -> str:
+    if user["id"] == "all":
+        return "Tous"
+    return f"{user['full_name']} · {labelize(user['role'])}"
+
+
+def sort_work_items(tasks: list[dict], sort_by: str) -> list[dict]:
+    if sort_by == "lead_name":
+        return sorted(
+            tasks,
+            key=lambda task: (
+                task.get("last_name") or "",
+                task.get("first_name") or "",
+                task.get("due_at") or "",
+            ),
+        )
+    if sort_by == "due_at":
+        return sorted(tasks, key=lambda task: task.get("due_at") or "")
+    return sorted(
+        tasks,
+        key=lambda task: (
+            task.get("assigned_to_name") or "zzzz",
+            task.get("last_name") or "",
+            task.get("first_name") or "",
+            task.get("due_at") or "",
+        ),
+    )
 
 
 def quick_due_at(days: int) -> str:

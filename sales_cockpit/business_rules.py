@@ -172,13 +172,13 @@ SEQUENCES = [
 
 LEAD_TYPES = [
     {
-        "type": "lead_generic",
-        "label": "Lead générique",
+        "type": "lead",
+        "label": "Lead",
         "source": "Demande d'information sans session pré-sélectionnée.",
         "course_date_rule": "Utiliser la prochaine session pertinente depuis SchoolDrive, à confirmer.",
     },
     {
-        "type": "pre_registration",
+        "type": "presubscription",
         "label": "Préinscription",
         "source": "Le prospect a pré-sélectionné une session.",
         "course_date_rule": "Utiliser la date de cette session SchoolDrive.",

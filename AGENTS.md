@@ -76,6 +76,11 @@ Operational rule:
 - Course-date reminders always win over lead-relative reminders. If both conflict, cancel the lead-relative reminder.
 - Minimum delay between outbound WhatsApp follow-ups is 24h.
 - Business rules are centralized in `sales_cockpit/business_rules.py` and displayed in Admin.
+- Keep the UI simple: no visible `Température` field. Display `sales_stage` as `Parcours`.
+- Private notes are always included in the future learning base; do not show an inclusion checkbox.
+- In the global `À faire` view, filter responsibility by individual people, not only by role.
+- Use SchoolDrive terms for lead source type: `lead` and `presubscription`. Show them in French as `Lead` and `Préinscription`.
+- In inbox cards, show the SD course category short title for `lead`, and the SD course short name for `presubscription`.
 
 WhatsApp window is shown separately as a badge under the contact name:
 

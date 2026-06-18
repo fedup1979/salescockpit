@@ -121,6 +121,17 @@ def test_seed_includes_setter2_and_demo_templates() -> None:
     assert len(templates) >= 10
 
 
+def test_seeded_conversations_include_schooldrive_lead_types() -> None:
+    seed_initial_data()
+    conversations = [
+        item for item in list_conversations()
+        if str(item.get("schooldrive_lead_id") or "").startswith("SD-DEMO-")
+    ]
+    assert any(item["lead_type"] == "lead" for item in conversations)
+    assert any(item["lead_type"] == "presubscription" for item in conversations)
+    assert all(item.get("course_category_short_title") for item in conversations)
+
+
 def test_stop_status_blocks_followups_and_resolves_conversation() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
@@ -130,7 +141,6 @@ def test_stop_status_blocks_followups_and_resolves_conversation() -> None:
         result["lead_id"],
         admin["id"],
         "lost",
-        "cold",
         "do_not_contact",
     )
 
