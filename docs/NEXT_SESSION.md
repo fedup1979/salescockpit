@@ -147,6 +147,7 @@ Stop-Process -Id <PID> -Force
 - Auth is local password-based only.
 - No GitHub remote yet.
 - No DigitalOcean staging yet.
+- Deployment scaffold exists in `deploy/` and `docs/DEPLOYMENT.md`, but it has not been executed on a server.
 - No backup strategy implemented yet.
 
 ## Recommended Next Work
@@ -154,10 +155,11 @@ Stop-Process -Id <PID> -Force
 1. Run the focused manual scenario validation in `docs/TEST_PLAN.md`, starting with `scripts/reset_demo.py`.
 2. Fix any UX or workflow failures discovered by the scenario pass.
 3. After scenario behavior is validated, do a moderate refactor of the largest files without changing behavior.
-4. Add GitHub remote.
-5. Implement SchoolDrive read-only lead lookup.
-6. Implement Notion historical enrichment.
-7. Implement Twilio sandbox mode and prepare staging deployment.
+4. Add GitHub remote once the private GitHub repo exists or the GitHub CLI token can create repositories.
+5. Create DigitalOcean droplet and deploy staging using `docs/DEPLOYMENT.md`.
+6. Implement SchoolDrive read-only lead lookup.
+7. Implement Notion historical enrichment.
+8. Implement Twilio sandbox mode.
 
 ## Files Most Likely to Change Next
 

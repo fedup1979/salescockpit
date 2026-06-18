@@ -1,0 +1,17 @@
+[Unit]
+Description=Sales Cockpit Streamlit UI (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=salescockpit
+Group=salescockpit
+WorkingDirectory=/opt/sales-cockpit/%i/app
+EnvironmentFile=/opt/sales-cockpit/%i/.env
+ExecStart=/opt/sales-cockpit/%i/app/.venv/bin/streamlit run sales_cockpit/ui/app.py --server.address 0.0.0.0 --server.port ${SALES_COCKPIT_STREAMLIT_PORT} --server.headless true --browser.gatherUsageStats false
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

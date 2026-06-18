@@ -1,0 +1,17 @@
+[Unit]
+Description=Sales Cockpit FastAPI backend (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=salescockpit
+Group=salescockpit
+WorkingDirectory=/opt/sales-cockpit/%i/app
+EnvironmentFile=/opt/sales-cockpit/%i/.env
+ExecStart=/opt/sales-cockpit/%i/app/.venv/bin/python -m uvicorn sales_cockpit.api.main:app --host 127.0.0.1 --port ${SALES_COCKPIT_API_PORT}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

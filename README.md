@@ -78,6 +78,19 @@ Seeded accounts:
 
 Do not put production secrets in Git. Use `.env` locally or DigitalOcean environment variables for staging.
 
+## Deployment
+
+Deployment preparation is documented in:
+
+- `docs/DEPLOYMENT.md`
+- `deploy/README.md`
+
+Planned UI ports:
+
+- PROD: `8501`
+- STAGING: `8502`
+- DEV: `8503`
+
 ## New Codex Sessions
 
 Before continuing work, read:
@@ -91,6 +104,7 @@ Before continuing work, read:
 - `docs/GAP_ANALYSIS.md`
 - `docs/TEST_PLAN.md`
 - `docs/USER_GUIDE.md`
+- `docs/DEPLOYMENT.md`
 - `PRODUCT.md`
 - `DESIGN.md`
 
