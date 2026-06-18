@@ -176,15 +176,18 @@ h1, h2, h3 {
 }
 
 .sc-message-inbound {
-  background: oklch(0.985 0.012 215);
+  background: oklch(0.972 0.024 218);
+  border-color: oklch(0.84 0.045 218);
 }
 
 .sc-message-outbound {
-  background: oklch(0.972 0.018 145);
+  background: oklch(0.958 0.034 145);
+  border-color: oklch(0.82 0.06 145);
 }
 
 .sc-message-note {
-  background: oklch(0.972 0.018 82);
+  background: oklch(0.965 0.045 86);
+  border-color: oklch(0.84 0.07 86);
   max-width: min(86%, 760px);
 }
 

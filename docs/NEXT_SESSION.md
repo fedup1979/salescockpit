@@ -36,6 +36,7 @@ The app has been iteratively reviewed by François and is currently in a good mo
   - `Fenêtre fermée`
 - Users close a conversation with `Clore la conversation`; internally this stores `resolved` with a controlled reason.
 - Users reactivate a conversation with `Réactiver`; internally this stores `open` and requires creating the next action.
+- Closing or reactivating a conversation now requires a note. The note is inserted into the conversation thread as a yellow internal note.
 - New inbound messages reopen resolved conversations automatically.
 - New inbound messages create or update a setter `reply` next action.
 - Passing to closer completes current open actions, moves the lead to `closing`, and creates a `closing_call` action for the closer.
@@ -48,19 +49,23 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - The global `Tâches` view filters by individual responsible people, not only by role.
 - `Non pertinent` and `Ne plus contacter` are separate. `Non pertinent` is commercial qualification. `Ne plus contacter` is a separate contact status.
 - If a `Ne plus contacter` prospect writes again, create a `contact_review` action for Setter 1. Do not create automatic follow-ups.
+- While a prospect is `Ne plus contacter`, all WhatsApp sends are blocked, including free-form messages and templates. The user must complete the contact review and lift the status before replying.
 - Missing templates create `template_requests` linked to the blocked follow-up action.
 - Follow-up sequences and sequence steps are stored structurally in SQLite and displayed in Admin.
 - Outbound WhatsApp messages close the active `reply` or `follow_up` action and create the next follow-up when applicable.
 - `reply` and `follow_up` should not be manually marked as sent in the main Actions flow. The normal proof is the outbound WhatsApp message from the Conversation composer.
 - The Conversation composer can capture the send-time outcome for a `reply`: no appointment, setting appointment booked, non pertinent, or ne plus contacter.
+- The `reply` outcome labels must explain the next action clearly. If the prospect accepts an appointment, the user should choose `RDV setting fixé : créer un appel` before sending the WhatsApp reply.
 - The Actions tab is contextual: WhatsApp actions explain where to send, call actions collect result + mandatory note, blocked relances show template-request state, and manual overrides are inside `Actions avancées`.
 - Setting and closing calls can be completed with business outcomes that create the next action.
 - Lead-relative reminders follow `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
 - Course-date reminders win over lead-relative reminders. The losing lead-relative reminder is cancelled.
 - Minimum outbound WhatsApp follow-up delay is 24h.
 - Tanjona is currently seeded as `setter2@essr.ch`.
+- The UI normalizes old `Setter 2` display names to `Tanjona` to handle stale local sessions or older seeded databases.
 - Dropdown labels should be displayed in French while internal values remain English.
 - Private notes remain yellow and align right like team messages.
+- Action notes, call notes, closure notes, and reactivation notes also appear as yellow internal notes in the conversation thread. The Conversation tab has a checkbox to show or hide internal notes.
 - Reply tools live below the conversation thread.
 - SchoolDrive link appears next to the prospect name, opening in a new tab.
 - SchoolDrive lead types use SD terms internally: `lead` and `presubscription`.

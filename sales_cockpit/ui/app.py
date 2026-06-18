@@ -53,6 +53,7 @@ from sales_cockpit.store import (
     list_bug_reports,
     list_user_activity_log,
     list_users,
+    normalize_user_display_name,
     schedule_followup,
     send_freeform_message,
     send_template_message,
@@ -82,6 +83,12 @@ ACTION_OUTCOMES = {
     "other": ["done"],
 }
 REPLY_SEND_OUTCOMES = ["reply_no_appointment", "setting_booked", "not_relevant", "do_not_contact"]
+REPLY_SEND_OUTCOME_LABELS = {
+    "reply_no_appointment": "Pas de RDV : relance Tanjona à +72h",
+    "setting_booked": "RDV setting fixé : créer un appel",
+    "not_relevant": "Hors cible : clore la conversation",
+    "do_not_contact": "Ne plus contacter : clore et bloquer",
+}
 CALL_ACTION_TYPES = {"setting_call", "closing_call"}
 
 DISPLAY_LABELS = {
@@ -226,13 +233,14 @@ def render_login() -> None:
 
 
 def render_shell() -> None:
-    user = st.session_state.user
+    user = refresh_current_user(st.session_state.user)
+    st.session_state.user = user
     nav_options = ["Tâches", "Inbox", "Modèles", "Mode d'emploi"]
     if user["role"] == "admin":
         nav_options.append("Admin")
     with st.sidebar:
         st.subheader("Sales Cockpit")
-        st.caption(f"{user['full_name']} · {display_user_role(user)}")
+        st.caption(f"{display_user_name(user)} · {display_user_role(user)}")
         nav = st.radio(
             "Navigation",
             nav_options,
@@ -380,11 +388,12 @@ def render_conversation_rows(conversations: list[dict], bucket: str) -> None:
 
 
 def conversation_row_html(conv: dict) -> str:
-    owner = (
+    owner = normalize_user_display_name(
+        conv.get("next_action_assigned_to_email"),
         conv.get("next_action_assigned_to_name")
         or conv.get("closer_name")
         or conv.get("setter_name")
-        or "Non assigné"
+        or "Non assigné",
     )
     preview = compact_text(conv.get("last_message_body") or "Aucun message", 96)
     action = conv.get("next_action_title") or "Aucune action ouverte"
@@ -439,7 +448,12 @@ def render_conversation_detail(user: dict, conversation_id: int) -> None:
 
     tabs = st.tabs(["Conversation", "Actions", "Statuts", "Notes privées"])
     with tabs[0]:
-        render_messages(conversation_id)
+        show_internal_notes = st.checkbox(
+            "Afficher les notes internes",
+            value=True,
+            key=f"show_internal_notes_{conversation_id}",
+        )
+        render_messages(conversation_id, show_internal_notes=show_internal_notes)
         st.markdown('<div class="sc-reply-anchor"></div>', unsafe_allow_html=True)
         render_composer(user, conv)
     with tabs[1]:
@@ -522,7 +536,11 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
             reopen_date = st.date_input("Date", value=datetime.now().date(), key=f"reopen_date_{conv['id']}")
             reopen_time = st.time_input("Heure", value=time(9, 0), key=f"reopen_time_{conv['id']}")
             reason = st.text_area("Raison de réactivation", height=80, key=f"reopen_reason_{conv['id']}")
-            submitted = st.button("Réactiver", key=f"submit_reopen_{conv['id']}")
+            submitted = st.button(
+                "Réactiver",
+                key=f"submit_reopen_{conv['id']}",
+                disabled=not reason.strip(),
+            )
         if submitted:
             ok, message = set_conversation_status(
                 conv["id"],
@@ -545,7 +563,11 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
                 key=f"resolve_reason_header_{conv['id']}",
             )
             note = st.text_area("Note", height=80, key=f"resolve_note_header_{conv['id']}")
-            submitted = st.button("Clore la conversation", key=f"submit_resolve_header_{conv['id']}")
+            submitted = st.button(
+                "Clore la conversation",
+                key=f"submit_resolve_header_{conv['id']}",
+                disabled=not note.strip(),
+            )
         if submitted:
             ok, message = set_conversation_status(
                 conv["id"],
@@ -592,9 +614,11 @@ def render_compact_lead_state(conv: dict) -> None:
     )
 
 
-def render_messages(conversation_id: int) -> None:
+def render_messages(conversation_id: int, show_internal_notes: bool = True) -> None:
     messages = list_messages(conversation_id)
     for message in messages:
+        if message["direction"] == "manual_note" and not show_internal_notes:
+            continue
         if message["direction"] == "inbound":
             css = "sc-message-inbound"
             row_css = "sc-message-row-inbound"
@@ -602,11 +626,11 @@ def render_messages(conversation_id: int) -> None:
         elif message["direction"] == "manual_note":
             css = "sc-message-note"
             row_css = "sc-message-row-outbound"
-            sender = message.get("sender_name") or "Note"
+            sender = normalize_user_display_name(message.get("sender_email"), message.get("sender_name") or "Note")
         else:
             css = "sc-message-outbound"
             row_css = "sc-message-row-outbound"
-            sender = message.get("sender_name") or "ESSR"
+            sender = normalize_user_display_name(message.get("sender_email"), message.get("sender_name") or "ESSR")
         created = format_dt(message.get("created_at"))
         template = f" · modèle: {message['template_name']}" if message.get("template_name") else ""
         st.markdown(
@@ -665,14 +689,15 @@ def render_reply_send_plan_controls(
     if not action or action.get("type") != "reply":
         return
 
-    st.markdown("**Suite après envoi du prochain WhatsApp**")
+    st.markdown("**Après votre réponse, quelle suite faut-il créer ?**")
+    st.caption("Si le prospect accepte un appel, choisissez `RDV setting fixé`, renseignez le rendez-vous, puis envoyez le message dans Conversation.")
     outcome = st.selectbox(
-        "Résultat de la réponse",
+        "Suite à créer après l'envoi",
         REPLY_SEND_OUTCOMES,
-        format_func=labelize,
+        format_func=lambda value: REPLY_SEND_OUTCOME_LABELS.get(value, labelize(value)),
         key=f"{key_prefix}_reply_outcome",
     )
-    note = st.text_area("Note interne", height=80, key=f"{key_prefix}_reply_note")
+    note = st.text_area("Note interne, optionnelle", height=80, key=f"{key_prefix}_reply_note")
     if outcome == "setting_booked":
         assignee = st.selectbox(
             "Responsable de l'appel",
@@ -707,13 +732,21 @@ def render_composer(user: dict, conv: dict) -> None:
         f"reply_plan_{conv['id']}",
         users,
     )
+    if conv.get("contact_status") == "do_not_contact":
+        st.error("Contact bloqué : le prospect est marqué Ne plus contacter. Le statut doit être levé dans Actions avant tout envoi.")
+        return
     if conv["window_is_open"]:
         st.success("Fenêtre WhatsApp ouverte : message libre autorisé.")
+        if action and action.get("type") == "reply":
+            st.caption("Si votre message fixe un appel, choisissez d'abord la suite dans l'onglet Actions.")
         with st.form(f"freeform_{conv['id']}"):
             body = st.text_area("Message libre", height=110)
             st.file_uploader("Pièces jointes, mock UI", accept_multiple_files=True)
             submitted = st.form_submit_button("Envoyer le message libre")
         if submitted:
+            if not body.strip():
+                st.error("Écrivez un message avant l'envoi.")
+                return
             ok, message = send_freeform_message(
                 conv["id"],
                 user["id"],
@@ -787,6 +820,10 @@ def render_composer(user: dict, conv: dict) -> None:
 
 
 def render_template_request_form(user: dict, conv: dict, action: dict | None) -> None:
+    flash_key = f"template_request_flash_{conv['id']}"
+    flash = st.session_state.pop(flash_key, None)
+    if flash:
+        st.success(flash)
     st.markdown("**Demander un nouveau modèle WhatsApp**")
     st.caption("À utiliser uniquement si aucun modèle approuvé ne convient.")
     linked_task_id = action["id"] if action and action.get("type") == "follow_up" else None
@@ -811,6 +848,7 @@ def render_template_request_form(user: dict, conv: dict, action: dict | None) ->
         )
         show_result(ok, message)
         if ok:
+            st.session_state[flash_key] = message
             st.rerun()
 
 
@@ -858,11 +896,11 @@ def render_next_action_summary(conv: dict) -> None:
         due = "Aucune échéance"
     elif action:
         title = next_action_display_title(action)
-        assignee = action.get("assigned_to_name") or "Non assigné"
+        assignee = display_assignee_name(action)
         due = format_action_datetime(action.get("due_at"))
     else:
         title = "Aucune action ouverte"
-        assignee = conv.get("setter_name") or "Non assigné"
+        assignee = normalize_user_display_name(None, conv.get("setter_name") or "Non assigné")
         due = "À définir"
 
     st.markdown(
@@ -901,12 +939,13 @@ def action_consequence(action_type: str, outcome: str) -> str:
 
 
 def render_current_action_card(action: dict) -> None:
+    assignee = display_assignee_name(action)
     st.markdown(
         f"""
         <div class="sc-panel">
           <div class="sc-action-title">{escape_html(action['title'])}</div>
           <div class="sc-row-meta">
-            {escape_html(labelize(action['type']))} · {escape_html(action.get('assigned_to_name') or 'Non assigné')} ·
+            {escape_html(labelize(action['type']))} · {escape_html(assignee)} ·
             {escape_html(format_due(action.get('due_at')))} · {escape_html(labelize(action.get('status')))} ·
             {escape_html(labelize(action.get('urgency')))}
           </div>
@@ -1206,7 +1245,7 @@ def render_next_action_box(user: dict, conv: dict) -> None:
             outcome = f" · {item['outcome']}" if item.get("outcome") else ""
             st.caption(
                 f"{item['title']} · {labelize(item['type'])} · {labelize(item['status'])} · "
-                f"{item.get('assigned_to_name') or 'Non assigné'} · {format_due(item.get('due_at'))}"
+                f"{display_assignee_name(item)} · {format_due(item.get('due_at'))}"
                 f"{outcome}{proof}"
             )
 
@@ -1346,7 +1385,7 @@ def action_row_html(task: dict) -> str:
     lead_type = escape_html(labelize(task.get("lead_type") or "lead"))
     name = escape_html(lead_display_name(task))
     course = escape_html(conversation_course_label(task))
-    owner = escape_html(task.get("assigned_to_name") or "Non assigné")
+    owner = escape_html(display_assignee_name(task))
     action_type = escape_html(labelize(task.get("type")))
     title = escape_html(compact_text(action_display_title(task.get("title") or "Action sans titre"), 92))
     due = escape_html(format_due(task.get("due_at")))
@@ -1437,9 +1476,72 @@ def render_user_guide() -> None:
 
 def render_templates(user: dict) -> None:
     st.title("Modèles WhatsApp")
+    request_flash = st.session_state.pop("template_page_flash", None)
+    if request_flash:
+        st.success(request_flash)
+
+    st.subheader("Demandes de modèles à créer")
+    requests = [
+        item for item in list_template_requests()
+        if item.get("status") in {"to_create", "submitted"}
+    ]
+    if requests:
+        st.dataframe(requests, hide_index=True, use_container_width=True, height=220)
+        with st.expander("Créer un modèle depuis une demande", expanded=False):
+            with st.form("create_template_from_request"):
+                request = st.selectbox(
+                    "Demande",
+                    requests,
+                    format_func=lambda item: f"#{item['id']} · {lead_display_name(item)} · {item.get('reason') or 'Sans motif'}",
+                )
+                name = st.text_input("Nom interne", value=f"demande_modele_{request['id']}")
+                body = st.text_area(
+                    "Corps du modèle",
+                    value="",
+                    placeholder="Bonjour {{first_name}}, ...",
+                    height=120,
+                )
+                status = st.selectbox("Statut mock", ["draft", "pending", "approved"], index=1, format_func=labelize)
+                placeholders_raw = st.text_input("Placeholders", value="first_name, course_title")
+                submitted = st.form_submit_button("Créer et lier à la demande")
+            if submitted:
+                if not name.strip() or not body.strip():
+                    st.error("Ajoutez un nom et un corps de modèle.")
+                    return
+                placeholders = {
+                    item.strip(): ""
+                    for item in placeholders_raw.split(",")
+                    if item.strip()
+                }
+                template_id = create_template(
+                    user["id"],
+                    name.strip(),
+                    body.strip(),
+                    status=status,
+                    placeholders=placeholders,
+                )
+                request_status = "approved" if status == "approved" else "submitted"
+                ok, message = update_template_request_status(
+                    request["id"],
+                    user["id"],
+                    request_status,
+                    template_id,
+                )
+                show_result(ok, message)
+                if ok:
+                    st.session_state.template_page_flash = (
+                        "Modèle créé et lié à la demande. "
+                        "Si le modèle est approuvé, la relance bloquée est débloquée."
+                    )
+                    st.rerun()
+    else:
+        st.info("Aucune demande de modèle à traiter.")
+
+    st.divider()
     search = st.text_input("Recherche dynamique", placeholder="Ex. financement, rendez-vous, COVID")
     templates = list_templates(search)
     st.subheader("Bibliothèque")
+    st.caption(f"{len(templates)} modèle(s) affiché(s). La recherche porte sur le nom, le contenu et la catégorie.")
     for template in templates:
         with st.container(border=True):
             st.write(f"**{template['name']}**")
@@ -1459,6 +1561,9 @@ def render_templates(user: dict) -> None:
         placeholders_raw = st.text_input("Placeholders", placeholder="first_name, course_title")
         submitted = st.form_submit_button("Créer le modèle")
     if submitted:
+        if not name.strip() or not body.strip():
+            st.error("Ajoutez un nom et un corps de modèle.")
+            return
         placeholders = {
             item.strip(): ""
             for item in placeholders_raw.split(",")
@@ -1818,14 +1923,30 @@ def safe_user_index(users: list[dict], user_id: int | None) -> int:
     return 0
 
 
+def refresh_current_user(user: dict) -> dict:
+    for item in list_users(active_only=False):
+        if item["id"] == user["id"]:
+            refreshed = {**user, **item}
+            return refreshed
+    return user
+
+
+def display_user_name(user: dict) -> str:
+    return normalize_user_display_name(user.get("email"), user.get("full_name"))
+
+
+def display_assignee_name(item: dict, name_key: str = "assigned_to_name", email_key: str = "assigned_to_email") -> str:
+    return normalize_user_display_name(item.get(email_key), item.get(name_key))
+
+
 def format_user(user: dict) -> str:
-    return f"{user['full_name']} · {display_user_role(user)}"
+    return f"{display_user_name(user)} · {display_user_role(user)}"
 
 
 def format_assignee_filter(user: dict, current_user_id: int | None = None) -> str:
     if user["id"] == "all":
         return "Tous"
-    label = f"{user['full_name']} · {display_user_role(user)}"
+    label = f"{display_user_name(user)} · {display_user_role(user)}"
     if current_user_id is not None and user["id"] == current_user_id:
         return f"{label} (moi)"
     return label

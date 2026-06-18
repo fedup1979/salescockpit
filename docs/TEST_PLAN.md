@@ -1,8 +1,8 @@
-﻿# Sales Cockpit - Parcours de test court
+# Sales Cockpit - Protocole de test court
 
-Objectif : valider vite si l'interface permet de savoir quoi faire, de répondre correctement, et de ne pas se tromper avec WhatsApp.
+Objectif : tester un maximum de boutons, fonctions, actions et transitions avec un minimum de clics.
 
-Avant de tester :
+Avant une validation propre :
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\reset_demo.py
@@ -10,69 +10,123 @@ Avant de tester :
 
 Mot de passe local : `ChangeMe!2026`.
 
-## Parcours 1 : Mihary, message entrant chaud
+## Format de retour
+
+```text
+P0 Admin :
+P1 Mihary réponse client :
+P2 Tanjona relance modèle :
+P3 Demande de modèle :
+P4 Setting call vers closing :
+P5 Closing signé / va signer :
+P6 Ne plus contacter qui réécrit :
+P7 Clore / Réactiver :
+Bugs / confusions :
+```
+
+## P0 Admin
+
+Compte : `francois.dupuis@essr.ch`.
+
+1. Ouvrir `Admin`.
+2. Vérifier que Tanjona existe avec le rôle `Setter II`.
+3. Vérifier `Règles métier > Horaires et bascules`.
+4. Créer un signalement avec le bouton `Bug`.
+5. Vérifier le signalement dans `Admin > Bugs & logs`.
+
+Résultat attendu : admin clair, bug enregistrable, logs visibles.
+
+## P1 Mihary Réponse Client
 
 Compte : `service.etudiants@essr.ch`.
 
-1. Ouvrir **Tâches**.
-2. Trouver `Léa Martin` ou `Inconnu(e)`.
-3. Vérifier que le client est clairement à traiter maintenant.
-4. Ouvrir la conversation.
-5. Vérifier que la fenêtre WhatsApp est ouverte.
-6. Envoyer un message libre.
-7. Dans **Actions**, vérifier que la suite choisie est compréhensible.
+1. Ouvrir `Tâches`.
+2. Ouvrir `Léa Martin` ou `Inconnu(e)`.
+3. Vérifier que le client attend une réponse.
+4. Ajouter une note privée.
+5. Dans `Actions`, choisir la suite après réponse.
+6. Si le prospect accepte un appel, choisir `RDV setting fixé : créer un appel`.
+7. Dans `Conversation`, envoyer le message libre.
 
-Résultat attendu : l'utilisateur comprend immédiatement qu'il faut répondre, le message peut être envoyé, et la prochaine action est cohérente.
+Résultat attendu : la réponse clôt l'action `Répondre au message`. La prochaine action correspond au choix fait dans `Actions`.
 
-## Parcours 2 : Tanjona, relance avec fenêtre fermée
+## P2 Tanjona Relance Modèle
 
 Compte : `setter2@essr.ch`.
 
-1. Ouvrir **Tâches**.
-2. Trouver `Aline Favre`.
-3. Vérifier que la fenêtre WhatsApp est fermée.
-4. Vérifier que le message libre est bloqué.
-5. Choisir un modèle approuvé.
-6. Vérifier l'aperçu avec placeholders remplis.
-7. Envoyer le modèle.
+1. Ouvrir `Tâches`.
+2. Vérifier que la file affichée est celle de Tanjona.
+3. Ouvrir `Aline Favre`.
+4. Vérifier que la fenêtre WhatsApp est fermée.
+5. Vérifier que le message libre est impossible.
+6. Choisir un modèle approuvé.
+7. Vérifier l'aperçu avec placeholders remplis.
+8. Envoyer le modèle.
 
-Résultat attendu : impossible de se tromper, la relance passe par un modèle, et la prochaine action est claire.
+Résultat attendu : la relance passe obligatoirement par un modèle, puis la prochaine action se met à jour.
 
-## Parcours 3 : Tanjona, aucun modèle ne convient
+## P3 Demande De Modèle
 
 Compte : `setter2@essr.ch`.
 
 1. Ouvrir `Thomas Girard`.
-2. Aller dans **Conversation**, section **Envoyer un modèle**.
+2. Aller dans `Conversation > Envoyer un modèle`.
 3. Créer une demande de nouveau modèle.
-4. Aller dans **Admin > Templates** avec un admin.
-5. Vérifier que la demande existe.
+4. Vérifier la confirmation.
+5. Aller dans `Modèles`.
+6. Vérifier la demande dans `Demandes de modèles à créer`.
+7. Créer un modèle mock depuis la demande si nécessaire.
 
-Résultat attendu : la demande est facile à créer, visible en admin, et ne ressemble pas à une action commerciale normale.
+Résultat attendu : la demande est visible dans `Modèles`. Si un modèle mock est créé et approuvé, la relance bloquée est débloquée.
 
-## Parcours 4 : Yasmine, closing
+## P4 Setting Call Vers Closing
+
+Compte : `service.etudiants@essr.ch`.
+
+1. Ouvrir `Nadia Keller`.
+2. Aller dans `Actions`.
+3. Essayer d'enregistrer l'appel sans note.
+4. Ajouter une mini-note.
+5. Choisir `Passer au closing`, closer `Yasmine`.
+6. Enregistrer.
+
+Résultat attendu : la note est obligatoire, l'action setting est terminée, une action closing est créée pour Yasmine. La note apparaît dans la conversation si les notes internes sont affichées.
+
+## P5 Closing Signé / Va Signer
 
 Compte : `yasmine@essr.ch`.
 
-1. Ouvrir **Tâches**.
-2. Trouver `Nicolas Meyer`.
-3. Ouvrir l'action de closing.
-4. Essayer de terminer sans note.
-5. Ajouter une mini-note et choisir `Signé`.
+1. Ouvrir `Nicolas Meyer`.
+2. Aller dans `Actions`.
+3. Essayer d'enregistrer sans note.
+4. Ajouter une mini-note.
+5. Tester `Signé` ou `Va signer`.
 
-Résultat attendu : la note est obligatoire, la conversation se termine, et il ne reste aucune prochaine action.
+Résultat attendu : `Signé` termine la conversation sans prochaine action. `Va signer` crée une relance Tanjona selon la séquence post-closing.
 
-## Contrôle final ultra-court
+## P6 Ne Plus Contacter Qui Réécrit
 
-Avec un compte admin :
+Compte : `service.etudiants@essr.ch`.
 
-1. Vérifier que `Tanjona` apparaît bien comme `Setter II`.
-2. Vérifier que les horaires affichent :
-   - entreprise : lundi-vendredi 08:00-20:00 ;
-   - Mihary : 08:00-17:00 ;
-   - Yasmine : 11:00-20:00 ;
-   - Tanjona : 12:00-16:00.
-3. Vérifier qu'une conversation active a une prochaine action.
-4. Vérifier qu'une conversation terminée n'a pas de prochaine action.
+1. Ouvrir `Hugo Muller`.
+2. Vérifier que l'envoi WhatsApp est bloqué tant que le statut `Ne plus contacter` existe.
+3. Aller dans `Actions`.
+4. Vérifier l'action de revue de contact.
+5. Cliquer `Lever et répondre`.
 
-Si ces quatre parcours passent, le prototype est assez clair pour continuer vers les corrections restantes avant staging.
+Résultat attendu : le statut de contact est levé, une action `Répondre au message` est créée. L'envoi reste impossible avant la levée du statut.
+
+## P7 Clore / Réactiver
+
+Compte : `francois.dupuis@essr.ch`.
+
+1. Aller dans `Inbox > Terminées`.
+2. Ouvrir `Chloé Schmid` ou `Irina Lopes`.
+3. Cliquer `Réactiver`.
+4. Vérifier que le bouton reste bloqué sans note.
+5. Ajouter une note et réactiver avec une prochaine action.
+6. Cliquer `Clore la conversation`.
+7. Vérifier que le bouton reste bloqué sans note.
+8. Ajouter une note et clore.
+
+Résultat attendu : réactivation et clôture exigent une note. Les notes apparaissent dans la conversation si les notes internes sont affichées.

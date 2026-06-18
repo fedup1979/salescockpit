@@ -36,6 +36,7 @@ def authenticate(email: str, password: str) -> dict[str, Any] | None:
         entity_id=user["id"],
     )
     user.pop("password_hash", None)
+    user["full_name"] = normalize_user_display_name(user.get("email"), user.get("full_name"))
     return user
 
 
@@ -46,7 +47,40 @@ def list_users(active_only: bool = True) -> list[dict[str, Any]]:
     query += " ORDER BY role, full_name"
     with connect() as conn:
         rows = conn.execute(query).fetchall()
-    return rows_to_dicts(rows)
+    users = rows_to_dicts(rows)
+    for user in users:
+        user["full_name"] = normalize_user_display_name(user.get("email"), user.get("full_name"))
+    return users
+
+
+def normalize_user_display_name(email: str | None, full_name: str | None) -> str:
+    if (email or "").lower() == "setter2@essr.ch":
+        return "Tanjona"
+    if (full_name or "").strip().lower() == "setter 2":
+        return "Tanjona"
+    return (full_name or "").strip() or "Non assigné"
+
+
+def _insert_internal_note_message(
+    conn: Any,
+    lead_id: int,
+    conversation_id: int | None,
+    user_id: int | None,
+    body: str,
+    created_at: str,
+) -> int | None:
+    body = body.strip()
+    if not body or not conversation_id:
+        return None
+    cursor = conn.execute(
+        """
+        INSERT INTO messages (
+            conversation_id, lead_id, direction, channel, body, sender_user_id, created_at
+        ) VALUES (?, ?, 'manual_note', 'sales_cockpit_internal_note', ?, ?, ?)
+        """,
+        (conversation_id, lead_id, body, user_id, created_at),
+    )
+    return int(cursor.lastrowid)
 
 
 def log_user_activity(
@@ -303,6 +337,7 @@ def list_conversations(
             next_task.assigned_to_user_id AS next_action_assigned_to_user_id,
             next_assignee.full_name AS next_action_assigned_to_name,
             next_assignee.role AS next_action_assigned_to_role,
+            next_assignee.email AS next_action_assigned_to_email,
             (
                 SELECT COUNT(*) FROM tasks t
                 WHERE t.lead_id = l.id AND t.status IN ('open', 'in_progress', 'planned', 'blocked')
@@ -465,7 +500,8 @@ def list_actions_for_lead(lead_id: int, status: str = "all") -> list[dict[str, A
             SELECT
                 t.*,
                 u.full_name AS assigned_to_name,
-                u.role AS assigned_to_role
+                u.role AS assigned_to_role,
+                u.email AS assigned_to_email
             FROM tasks t
             LEFT JOIN users u ON u.id = t.assigned_to_user_id
             WHERE {' AND '.join(filters)}
@@ -699,11 +735,13 @@ def set_conversation_status(
     valid_resolution_reasons = {item["value"] for item in RESOLUTION_REASONS}
     if status == "resolved":
         if not resolution_reason or resolution_reason not in valid_resolution_reasons:
-            return False, "Choisis un motif de résolution."
-        if resolution_reason_requires_note(resolution_reason) and not (resolution_note or "").strip():
-            return False, "Une note est obligatoire pour ce motif de résolution."
+            return False, "Choisissez un motif de résolution."
+        if not (resolution_note or "").strip():
+            return False, "Une note est obligatoire pour clore la conversation."
     if status == "open" and previous_status == "resolved" and not reopen_action_type:
-        return False, "Choisis une prochaine action pour rouvrir la conversation."
+        return False, "Choisissez une prochaine action pour rouvrir la conversation."
+    if status == "open" and previous_status == "resolved" and not (reopen_reason or "").strip():
+        return False, "Une note est obligatoire pour réactiver la conversation."
 
     now = iso_utc()
     created_action_id = None
@@ -751,6 +789,14 @@ def set_conversation_status(
                 user_id,
                 outcome=f"Conversation résolue : {resolution_reason}",
             )
+            _insert_internal_note_message(
+                conn,
+                conv["lead_id"],
+                conversation_id,
+                user_id,
+                f"Clôture de conversation ({resolution_reason}) : {(resolution_note or '').strip()}",
+                now,
+            )
         else:
             conn.execute(
                 """
@@ -787,6 +833,14 @@ def set_conversation_status(
                 description=(reopen_reason or "").strip() or "Conversation rouverte.",
                 trigger_reason="conversation_reopened",
                 metadata={"reopen_reason": reopen_reason},
+            )
+            _insert_internal_note_message(
+                conn,
+                conv["lead_id"],
+                conversation_id,
+                user_id,
+                f"Réactivation de conversation : {(reopen_reason or '').strip()}",
+                now,
             )
         insert_event(
             conn,
@@ -1028,6 +1082,15 @@ def _close_outbound_action_and_chain(
             "note": note,
         },
     )
+    if note:
+        _insert_internal_note_message(
+            conn,
+            conv["lead_id"],
+            conv["id"],
+            user_id,
+            f"Note après envoi WhatsApp : {note}",
+            sent_at,
+        )
 
     full_name = lead_full_name(conv)
     if action["type"] == "reply":
@@ -1301,7 +1364,7 @@ def list_messages(conversation_id: int) -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT m.*, u.full_name AS sender_name, wt.name AS template_name
+            SELECT m.*, u.full_name AS sender_name, u.email AS sender_email, wt.name AS template_name
             FROM messages m
             LEFT JOIN users u ON u.id = m.sender_user_id
             LEFT JOIN whatsapp_templates wt ON wt.id = m.template_id
@@ -1640,6 +1703,8 @@ def update_lead_qualification(
                 (lead_id,),
             ).fetchone()
         )
+        stage_changed = sales_stage != previous["sales_stage"]
+        lead_status_changed = lead_status != previous["lead_status"]
         effective_temperature = temperature or previous["temperature"]
         effective_contact_status = contact_status or previous.get("contact_status") or "contact_allowed"
         conn.execute(
@@ -1684,6 +1749,10 @@ def update_lead_qualification(
                 """,
                 (resolution_reason, now, now, lead_id),
             )
+        elif lead_status == "will_sign" and lead_status_changed:
+            _sync_next_action_for_lead_status(conn, lead_id, user_id, lead_status, now)
+        elif stage_changed:
+            _sync_next_action_for_sales_stage(conn, lead_id, user_id, sales_stage, now)
         elif lead_status == "will_sign":
             _sync_next_action_for_lead_status(conn, lead_id, user_id, lead_status, now)
         else:
@@ -1915,9 +1984,11 @@ def send_freeform_message(
     conv = get_conversation(conversation_id)
     if not conv:
         return False, "Conversation introuvable."
+    if conv.get("contact_status") in STOP_CONTACT_STATUSES:
+        return False, "Contact bloqué : le statut Ne plus contacter doit être levé avant tout envoi."
     state = calculate_window(conv["last_inbound_at"])
     if not state.is_open:
-        return False, "Fenêtre WhatsApp fermée. Utilise un modèle approuvé."
+        return False, "Fenêtre WhatsApp fermée. Utilisez un modèle approuvé."
 
     result = MockTwilioClient().send_freeform(conv["recipient_phone_e164"], body)
     now = iso_utc()
@@ -1984,6 +2055,8 @@ def send_template_message(
         return False, "Conversation introuvable."
     if not template:
         return False, "Modèle introuvable."
+    if conv.get("contact_status") in STOP_CONTACT_STATUSES:
+        return False, "Contact bloqué : le statut Ne plus contacter doit être levé avant tout envoi."
     if template["status"] != "approved":
         return False, "Ce modèle n'est pas approuvé."
 
@@ -2215,6 +2288,7 @@ def list_tasks(status: str = "open") -> list[dict[str, Any]]:
                 l.sales_stage,
                 u.full_name AS assigned_to_name,
                 u.role AS assigned_to_role,
+                u.email AS assigned_to_email,
                 c.status AS conversation_status,
                 c.last_inbound_at,
                 c.last_outbound_at,
@@ -2406,6 +2480,24 @@ def complete_action_with_workflow(
 
         full_name = lead_full_name(task)
         conversation_id = task.get("conversation_id")
+        if note and conversation_id:
+            action_note_labels = {
+                "reply": "Note de réponse",
+                "follow_up": "Note de relance",
+                "setting_call": "Note d'entretien setting",
+                "closing_call": "Note d'entretien closing",
+                "contact_review": "Note de revue contact",
+                "other": "Note d'action",
+            }
+            action_note_label = action_note_labels.get(task["type"], "Note d'action")
+            _insert_internal_note_message(
+                conn,
+                task["lead_id"],
+                conversation_id,
+                user_id,
+                f"{action_note_label} : {note}",
+                now,
+            )
 
         def create_followup(
             sequence_code: str,
