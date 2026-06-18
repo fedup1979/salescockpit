@@ -29,6 +29,12 @@ def authenticate(email: str, password: str) -> dict[str, Any] | None:
         return None
     if not verify_password(password, user["password_hash"]):
         return None
+    log_user_activity(
+        user["id"],
+        "login",
+        entity_type="user",
+        entity_id=user["id"],
+    )
     user.pop("password_hash", None)
     return user
 
@@ -40,6 +46,146 @@ def list_users(active_only: bool = True) -> list[dict[str, Any]]:
     query += " ORDER BY role, full_name"
     with connect() as conn:
         rows = conn.execute(query).fetchall()
+    return rows_to_dicts(rows)
+
+
+def log_user_activity(
+    user_id: int | None,
+    event_type: str,
+    entity_type: str | None = None,
+    entity_id: int | None = None,
+    lead_id: int | None = None,
+    conversation_id: int | None = None,
+    action_id: int | None = None,
+    metadata: dict | None = None,
+) -> None:
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO user_activity_log (
+                user_id, event_type, entity_type, entity_id, lead_id,
+                conversation_id, action_id, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                event_type,
+                entity_type,
+                entity_id,
+                lead_id,
+                conversation_id,
+                action_id,
+                json.dumps(metadata or {}, ensure_ascii=False),
+            ),
+        )
+
+
+def create_bug_report(
+    user_id: int,
+    page: str,
+    title: str,
+    description: str,
+    expected_behavior: str = "",
+    actual_behavior: str = "",
+    severity: str = "normal",
+    conversation_id: int | None = None,
+    action_id: int | None = None,
+    metadata: dict | None = None,
+) -> tuple[bool, str]:
+    title = title.strip()
+    description = description.strip()
+    if not title or not description:
+        return False, "Ajoutez un titre et une description."
+    now = iso_utc()
+    with connect() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO bug_reports (
+                user_id, page, conversation_id, action_id, title, description,
+                expected_behavior, actual_behavior, severity, status,
+                metadata_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)
+            """,
+            (
+                user_id,
+                page,
+                conversation_id,
+                action_id,
+                title,
+                description,
+                expected_behavior.strip() or None,
+                actual_behavior.strip() or None,
+                severity,
+                json.dumps(metadata or {}, ensure_ascii=False),
+                now,
+                now,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO user_activity_log (
+                user_id, event_type, entity_type, entity_id,
+                conversation_id, action_id, metadata_json, created_at
+            ) VALUES (?, 'bug_report_created', 'bug_report', ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                cursor.lastrowid,
+                conversation_id,
+                action_id,
+                json.dumps({"page": page, "severity": severity, **(metadata or {})}, ensure_ascii=False),
+                now,
+            ),
+        )
+    return True, "Signalement enregistré."
+
+
+def list_bug_reports(status: str = "all") -> list[dict[str, Any]]:
+    filters = []
+    params: list[Any] = []
+    if status != "all":
+        filters.append("br.status = ?")
+        params.append(status)
+    where = f"WHERE {' AND '.join(filters)}" if filters else ""
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT
+                br.*,
+                u.full_name AS user_name
+            FROM bug_reports br
+            LEFT JOIN users u ON u.id = br.user_id
+            {where}
+            ORDER BY datetime(br.created_at) DESC, br.id DESC
+            """,
+            params,
+        ).fetchall()
+    return rows_to_dicts(rows)
+
+
+def list_user_activity_log(limit: int = 200) -> list[dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                al.id,
+                al.created_at,
+                al.event_type,
+                al.entity_type,
+                al.entity_id,
+                al.lead_id,
+                al.conversation_id,
+                al.action_id,
+                al.metadata_json,
+                u.full_name AS user_name,
+                u.email AS user_email
+            FROM user_activity_log al
+            LEFT JOIN users u ON u.id = al.user_id
+            ORDER BY datetime(al.created_at) DESC, al.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
     return rows_to_dicts(rows)
 
 
@@ -55,6 +201,15 @@ def resolution_reason_requires_note(reason: str | None) -> bool:
         item["value"] == reason and item["requires_note"]
         for item in RESOLUTION_REASONS
     )
+
+
+def lead_full_name(record: dict[str, Any]) -> str:
+    first_name = str(record.get("first_name") or "").strip()
+    last_name = str(record.get("last_name") or "").strip()
+    full_name = " ".join(part for part in [first_name, last_name] if part).strip()
+    if not full_name or full_name.lower() == "whatsapp unknown":
+        return "Inconnu(e)"
+    return full_name
 
 
 def setter2_user_id(conn: Any) -> int | None:
@@ -395,7 +550,7 @@ def schedule_followup(
     if followups_are_blocked(conv):
         return False, "Ce statut bloque les relances commerciales."
 
-    full_name = f"{conv['first_name']} {conv['last_name']}"
+    full_name = lead_full_name(conv)
     title = f"Relancer {full_name}"
     with connect() as conn:
         _complete_open_actions_for_lead(
@@ -458,7 +613,7 @@ def handoff_to_closer(
         if not closer or closer["role"] != "closer":
             return False, "Closer invalide."
 
-        full_name = f"{conv['first_name']} {conv['last_name']}"
+        full_name = lead_full_name(conv)
         description_parts = []
         if appointment_note.strip():
             description_parts.append(f"RDV / contexte : {appointment_note.strip()}")
@@ -608,7 +763,7 @@ def set_conversation_status(
                 """,
                 (now, now, conversation_id),
             )
-            full_name = f"{conv['first_name']} {conv['last_name']}"
+            full_name = lead_full_name(conv)
             action_type = reopen_action_type or "reply"
             assigned_to_user_id = reopen_assigned_to_user_id or user_id
             action_labels = {
@@ -873,7 +1028,7 @@ def _close_outbound_action_and_chain(
         },
     )
 
-    full_name = f"{conv['first_name']} {conv['last_name']}"
+    full_name = lead_full_name(conv)
     if action["type"] == "reply":
         if action_outcome == "setting_booked":
             assignee_id = assigned_to_user_id or action.get("assigned_to_user_id") or user_id
@@ -1046,7 +1201,7 @@ def _upsert_reply_action_for_inbound(
     )
 
     if lead.get("contact_status") in STOP_CONTACT_STATUSES:
-        title = f"Revoir le statut de contact de {lead['first_name']} {lead['last_name']}"
+        title = f"Revoir le statut de contact de {lead_full_name(lead)}"
         existing_review = conn.execute(
             """
             SELECT id FROM tasks
@@ -1097,7 +1252,7 @@ def _upsert_reply_action_for_inbound(
         )
         return
 
-    title = f"Répondre à {lead['first_name']} {lead['last_name']}"
+    title = f"Répondre à {lead_full_name(lead)}"
     existing = conn.execute(
         """
         SELECT id FROM tasks
@@ -1224,6 +1379,26 @@ def create_template(
                 """,
                 (template_id, key, key, example),
             )
+        conn.execute(
+            """
+            INSERT INTO user_activity_log (
+                user_id, event_type, entity_type, entity_id, metadata_json
+            ) VALUES (?, 'template_created', 'whatsapp_template', ?, ?)
+            """,
+            (
+                user_id,
+                template_id,
+                json.dumps(
+                    {
+                        "name": name,
+                        "status": status,
+                        "language": language,
+                        "category": category,
+                    },
+                    ensure_ascii=False,
+                ),
+            ),
+        )
     return int(template_id)
 
 
@@ -1755,7 +1930,7 @@ def record_inbound_message(
                     first_name, last_name, phone_e164, phone_raw, source,
                     acquisition_type, lead_status, contact_status, sales_stage,
                     temperature, setter_user_id
-                ) VALUES ('WhatsApp', 'Unknown', ?, ?, 'twilio_webhook_mock',
+                ) VALUES ('Inconnu(e)', '', ?, ?, 'twilio_webhook_mock',
                     'unknown', 'neutral', 'contact_allowed', 'new', 'warm', ?)
                 """,
                 (from_phone, from_phone, setter_user_id),
@@ -2015,7 +2190,7 @@ def complete_action_with_workflow(
             new={"outcome": outcome, "note": note},
         )
 
-        full_name = f"{task['first_name']} {task['last_name']}"
+        full_name = lead_full_name(task)
         conversation_id = task.get("conversation_id")
 
         def create_followup(

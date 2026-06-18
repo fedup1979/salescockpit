@@ -6,6 +6,7 @@ from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
 from sales_cockpit.store import (
     authenticate,
     complete_action_with_workflow,
+    create_bug_report,
     create_template_request,
     get_conversation,
     get_next_action_for_lead,
@@ -14,6 +15,8 @@ from sales_cockpit.store import (
     list_conversations,
     list_template_requests,
     list_templates,
+    list_bug_reports,
+    list_user_activity_log,
     list_users,
     record_inbound_message,
     schedule_followup,
@@ -28,6 +31,29 @@ def test_seeded_user_can_login() -> None:
     user = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
     assert user is not None
     assert user["role"] == "admin"
+    assert any(item["event_type"] == "login" for item in list_user_activity_log())
+
+
+def test_bug_report_is_stored_with_activity_log() -> None:
+    seed_initial_data()
+    user = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+
+    ok, message = create_bug_report(
+        user["id"],
+        "Inbox",
+        "Carte incorrecte",
+        "La prochaine action semble incohérente.",
+        expected_behavior="Voir une relance.",
+        actual_behavior="Voir un appel.",
+        severity="high",
+    )
+
+    assert ok is True
+    assert "enregistré" in message
+    reports = list_bug_reports()
+    assert reports[0]["title"] == "Carte incorrecte"
+    assert reports[0]["severity"] == "high"
+    assert any(item["event_type"] == "bug_report_created" for item in list_user_activity_log())
 
 
 def test_freeform_send_blocked_when_window_closed() -> None:
@@ -41,7 +67,8 @@ def test_freeform_send_blocked_when_window_closed() -> None:
 
 def test_conversation_can_be_resolved_and_reopened() -> None:
     seed_initial_data()
-    conversation_id = list_conversations()[0]["conversation_id"]
+    result = record_inbound_message(unique_phone(), "Conversation de test.")
+    conversation_id = result["conversation_id"]
 
     ok, _ = set_conversation_status(
         conversation_id,
@@ -66,7 +93,8 @@ def test_conversation_can_be_resolved_and_reopened() -> None:
 
 def test_resolution_requires_reason_and_reopen_requires_action() -> None:
     seed_initial_data()
-    conversation_id = list_conversations()[0]["conversation_id"]
+    result = record_inbound_message(unique_phone(), "Conversation de test.")
+    conversation_id = result["conversation_id"]
 
     ok, message = set_conversation_status(conversation_id, 1, "resolved")
     assert ok is False
@@ -109,6 +137,23 @@ def test_inbound_message_creates_setter_reply_action() -> None:
         if item["conversation_id"] == result["conversation_id"]
     )
     assert conversation["work_queue"] == "todo"
+
+
+def test_unknown_inbound_message_uses_french_fallback_name() -> None:
+    seed_initial_data()
+    phone = unique_phone()
+    result = record_inbound_message(phone, "Bonjour, je veux des informations.")
+
+    conversation = next(
+        item for item in list_conversations(search=phone)
+        if item["conversation_id"] == result["conversation_id"]
+    )
+    action = get_next_action_for_lead(result["lead_id"])
+
+    assert conversation["first_name"] == "Inconnu(e)"
+    assert conversation["last_name"] == ""
+    assert "WhatsApp Unknown" not in action["title"]
+    assert "Inconnu(e)" in action["title"]
 
 
 def test_do_not_contact_inbound_creates_contact_review() -> None:

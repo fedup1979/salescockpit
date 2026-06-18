@@ -25,16 +25,17 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - Persisted action statuses should be `planned`, `open`, `in_progress`, `done`, `cancelled`, `blocked`; `due` should be calculated from `due_at`, not stored as a status.
 - The transition table is partially implemented in the local mock system: resolution/reopen guards, contact review, template requests, outbound message chaining, and call outcome chaining are now active.
 - Inbox tabs are not WhatsApp API window tabs.
-- Inbox tabs are operational work queues:
-  - `À faire`
-  - `À venir`
-  - `Résolues`
-- `Relancer` is an action type, not a separate top-level Inbox queue.
+- Inbox and `Tâches` tabs are operational work queues:
+  - `À traiter`
+  - `En suspens`
+  - `Terminées`
+  - `Toutes`
+- `follow_up` is an action type, shown as `Envoyer relance`, not a separate top-level Inbox queue.
 - WhatsApp API window state remains a separate badge:
   - `Fenêtre ouverte`
   - `Fenêtre fermée`
-- Users can mark a conversation as resolved only with a controlled reason.
-- Users can reopen a conversation only by creating the next action.
+- Users close a conversation with `Clore`; internally this stores `resolved` with a controlled reason.
+- Users reactivate a conversation with `Réactiver`; internally this stores `open` and requires creating the next action.
 - New inbound messages reopen resolved conversations automatically.
 - New inbound messages create or update a setter `reply` next action.
 - Passing to closer completes current open actions, moves the lead to `closing`, and creates a `closing_call` action for the closer.
@@ -73,14 +74,35 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - Inbound unanswered prospects show a restrained hot signal in Inbox and `Tâches`, sort above ordinary due actions, and the mock seed includes `Léa Martin` as a waiting-reply example.
 - Inbox and `Tâches` auto-refresh every 10 seconds while visible.
 - The right-side detail tabs use the same order in `Tâches` and Inbox: `Conversation`, `Actions`, `Qualification`, `Notes privées`.
-- Inbox has a `Tous` tab before the operational queue tabs.
+- Inbox and `Tâches` use `Toutes` for the all-items tab.
+- Left split-screen cards use `Voir`, not `Ouvrir`.
+- The `Prochaine action` card shows only the action type, due date/time, and responsible-person badge.
+- Unknown WhatsApp prospects must display as `Inconnu(e)`, never `WhatsApp Unknown`.
+- WhatsApp window text is explicit: `Ferme le ... à ...`, `Fermée le ... à ...`, or `Jamais ouverte` when no client reply has ever opened the window.
+- Streamlit developer toolbar options are hidden with `client.toolbarMode = "viewer"` in `.streamlit/config.toml` to avoid exposing the `Clear caches` command in the UI.
+- Demo data is versioned with `DEMO_SEED_VERSION` in `sales_cockpit/db.py`. The seed refreshes only `SD-DEMO-*` leads when the demo scenario version changes.
+- Current coherent demo scenarios are `SD-DEMO-4001` through `SD-DEMO-4019`; see `docs/TEST_PLAN.md`.
+- Before a clean manual validation pass, run `.\.venv\Scripts\python.exe scripts\reset_demo.py` to reset those demo scenarios.
+- Manual validation checklist is in `docs/TEST_PLAN.md`.
+- Navigation now includes `Mode d'emploi`; non-admin users no longer see the `Admin` page.
+- Sidebar includes a `Bug` button. It opens a large dialog, creates a row in `bug_reports`, and logs the event in `user_activity_log`.
+- Business events inserted via `lead_events` are mirrored into `user_activity_log`, so Admin can inspect recent usage and cross-check bug reports with workflow events.
+- Admin now has a `Bugs & logs` tab showing bug reports and recent activity.
+- Admin > Utilisateurs sorts users by ID, so Laura appears first in the seeded local data.
+- Admin shows page access by role. Admin sees everything; Setter 1, Setter 2 and Closer see all user pages except Admin.
+- Human and business hours have provisional V1 values in Admin > Règles métier > Horaires et bascules. They still need Laura validation.
+- The `Mode d'emploi` page is now prose, not expanders. Do not reintroduce accordion-heavy help unless François asks.
+- Obsolete legacy demo blocks and the old `_render_next_action_box_legacy` function were removed.
 
 ## Current Validation
 
 Latest known validation:
 
-- `pytest`: 25 tests passing.
+- `pytest`: 28 tests passing.
+- `compileall`: passed for `sales_cockpit`, `scripts`, and `tests`.
+- `scripts/reset_demo.py`: verified on a temporary SQLite database and creates 19 `SD-DEMO-*` leads.
 - Streamlit AppTest smoke covers reply-action guidance and absence of the generic `Terminer l'action` button in the main Actions flow.
+- Pytest uses an isolated temporary SQLite database via `tests/conftest.py`; it should not create test leads in the local app database.
 - Streamlit smoke tests passed during the session.
 - Streamlit and FastAPI were restarted after a stale import issue.
 
@@ -120,13 +142,13 @@ Stop-Process -Id <PID> -Force
 
 ## Recommended Next Work
 
-1. Let François continue UX review on the mock UI, especially the `Tâches` workflow.
-2. After the UI shape stabilizes, create first Git commit.
-3. Add GitHub remote.
-4. Implement SchoolDrive read-only lead lookup.
-5. Implement Notion historical enrichment.
-6. Implement Twilio sandbox mode.
-7. Prepare staging deployment.
+1. Run the focused manual scenario validation in `docs/TEST_PLAN.md`, starting with `scripts/reset_demo.py`.
+2. Fix any UX or workflow failures discovered by the scenario pass.
+3. After scenario behavior is validated, do a moderate refactor of the largest files without changing behavior.
+4. Add GitHub remote.
+5. Implement SchoolDrive read-only lead lookup.
+6. Implement Notion historical enrichment.
+7. Implement Twilio sandbox mode and prepare staging deployment.
 
 ## Files Most Likely to Change Next
 

@@ -318,6 +318,10 @@ h1, h2, h3 {
   background: oklch(0.99 0.004 250);
 }
 
+.sc-action-form-gap {
+  height: .5rem;
+}
+
 .sc-action-title {
   font-weight: 680;
   line-height: 1.3;

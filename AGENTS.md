@@ -60,7 +60,7 @@ Core source-of-truth decisions:
 There are two different concepts. Do not merge them:
 
 - Main navigation order starts with `Tâches`, then `Inbox`, then `Modèles`, then `Admin`.
-- Conversation status: user-controlled operational state, `open` or `resolved`.
+- Conversation status: user-controlled operational state, internally `open` or `resolved`, shown to users as `Active` / `Terminée`.
 - WhatsApp window state: technical 24-hour API window, `open` or `closed`. This drives whether free-form messages are allowed.
 - Next action: operational work item stored in the `tasks` table but displayed as `prochaine action` / `Tâches`, not as an abstract task list.
 - Action is the central operational unit of the system. A conversation with `open` status must always have one open next action.
@@ -70,11 +70,18 @@ There are two different concepts. Do not merge them:
 
 Inbox tabs are work queues:
 
-- `À faire`: someone must act now, including reply, call, contact review, blocked template work, or due follow-up.
-- `À venir`: the next action is planned later.
-- `Résolues`: conversation manually or automatically marked as resolved.
+- `À traiter`: someone must act now, including reply, call, contact review, blocked template work, or due follow-up.
+- `En suspens`: the next action is planned later.
+- `Terminées`: conversation internally marked as resolved.
+- `Toutes`: all items in the current view.
 
-`Relancer` is an action type, not a separate top-level Inbox queue.
+`follow_up` is an action type, shown as `Envoyer relance`, not a separate top-level Inbox queue.
+
+Visible queue and conversation controls:
+
+- Left split-screen cards use `Voir`, not `Ouvrir`.
+- Conversation-state buttons use short labels: `Clore` and `Réactiver`.
+- The `Prochaine action` summary card shows only action type, due date/time, and the responsible-person badge.
 
 Operational rule:
 

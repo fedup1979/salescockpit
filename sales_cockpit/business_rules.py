@@ -147,6 +147,11 @@ SALES_ACTORS = [
         "email": "service.etudiants@essr.ch",
         "responsibility": "Conversation écrite active, revue des messages entrants et entretien de setting.",
         "automation": "Humain en V1",
+        "Tâches": True,
+        "Inbox": True,
+        "Modèles": True,
+        "Mode d'emploi": True,
+        "Admin": False,
     },
     {
         "code": "setter_2",
@@ -155,6 +160,11 @@ SALES_ACTORS = [
         "email": "setter2@essr.ch",
         "responsibility": "Relances structurées par template, hors conversation active.",
         "automation": "Candidat prioritaire à l'automatisation après V1",
+        "Tâches": True,
+        "Inbox": True,
+        "Modèles": True,
+        "Mode d'emploi": True,
+        "Admin": False,
     },
     {
         "code": "closer",
@@ -163,6 +173,11 @@ SALES_ACTORS = [
         "email": "yasmine@essr.ch",
         "responsibility": "Closing téléphonique et qualification de closing.",
         "automation": "Humain",
+        "Tâches": True,
+        "Inbox": True,
+        "Modèles": True,
+        "Mode d'emploi": True,
+        "Admin": False,
     },
 ]
 
@@ -221,19 +236,34 @@ OPERATING_RULES = [
 
 SCHEDULE_RULES = [
     {
-        "rule": "Horaires humains",
-        "value": "À confirmer par collaborateur.",
-        "effect": "Hors horaire, créer une action différée ou envoyer un répondeur automatique.",
+        "rule": "Horaires entreprise",
+        "value": "V1 provisoire à valider : lundi-vendredi 08:30-18:00, fuseau Europe/Zurich. Samedi, dimanche et jours fériés fermés.",
+        "effect": "Base commune pour décider si une réponse doit être immédiate, différée au prochain créneau ouvré ou confiée à un backup.",
     },
     {
-        "rule": "Absence",
-        "value": "À confirmer par collaborateur.",
-        "effect": "Transfert de la prochaine action à un backup défini.",
+        "rule": "Horaires Setter 1",
+        "value": "V1 provisoire à valider : Mihary, lundi-vendredi 08:30-17:30.",
+        "effect": "Si Mihary est indisponible, les réponses urgentes doivent être visibles comme à reprendre par un backup.",
+    },
+    {
+        "rule": "Horaires Setter 2",
+        "value": "V1 provisoire à valider : Setter 2, lundi-vendredi 09:00-17:00.",
+        "effect": "Les relances dues hors plage doivent rester visibles mais être planifiées ou reprises au prochain créneau ouvré.",
+    },
+    {
+        "rule": "Horaires Closer",
+        "value": "V1 provisoire à valider : Yasmine, lundi-vendredi 09:00-18:00, appels selon rendez-vous.",
+        "effect": "Permet de planifier les appels closing, les rappels et les relances post-closing dans un créneau humain réaliste.",
+    },
+    {
+        "rule": "Absences et backups",
+        "value": "V1 provisoire à valider : les admins peuvent reprendre toutes les files. Backup Setter 1 = Laura, backup Setter 2 = Laura, backup Closer = Laura.",
+        "effect": "Transférer la prochaine action à un backup sans changer sa nature ni perdre l'historique.",
     },
     {
         "rule": "Répondeur hors horaire",
-        "value": "Template ou message automatique à définir.",
-        "effect": "Informer le prospect qu'un retour sera fait au prochain créneau ouvré.",
+        "value": "V1 provisoire à valider : utiliser le modèle `demo_out_of_hours_ack` si un accusé de réception est nécessaire.",
+        "effect": "Informer le prospect qu'un retour sera fait au prochain créneau ouvré et planifier la vraie réponse.",
     },
 ]
 

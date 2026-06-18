@@ -15,6 +15,12 @@ python scripts\init_db.py
 streamlit run sales_cockpit\ui\app.py
 ```
 
+To reset the local demo scenarios before a manual validation session:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\reset_demo.py
+```
+
 In another terminal, the API can be started with:
 
 ```powershell
@@ -47,8 +53,8 @@ Seeded accounts:
 - SQLite WAL database.
 - Mock leads, conversations, messages, templates, and tasks.
 - WhatsApp 24-hour window enforcement.
-- Operational conversation state: open / resolved.
-- User actions to mark conversations resolved or reopen them.
+- Operational conversation state: internal open / resolved, shown as active / terminée in the UI.
+- User actions to close or reactivate conversations.
 - Resolution with mandatory reason.
 - Reopening with mandatory next action.
 - Separate commercial qualification and contact status.
@@ -58,12 +64,14 @@ Seeded accounts:
 - Template requests linked to blocked follow-up actions.
 - Structured follow-up sequences and sequence steps.
 - Template creation in local draft or approved mock status.
-- Work queues: `À faire`, `À venir`, `Résolues`. `Relancer` is an action type, not a separate main queue.
+- Work queues: `À traiter`, `En suspens`, `Terminées`, `Toutes`. `Envoyer relance` is an action type, not a separate main queue.
 - Next-action creation, scheduling, completion, and setter-to-closer handoff.
 - Contextual Actions tab where WhatsApp actions are normally completed by sent-message proof, while calls require result and note.
 - Lead qualification.
 - Formal business rules visible in Admin.
 - Manual private WhatsApp notes.
+- Bug reporting with activity logs.
+- Scenario reset script for clean local validation.
 - FastAPI endpoints for future webhooks.
 
 ## Safety
@@ -81,6 +89,8 @@ Before continuing work, read:
 - `docs/ACTION_WORKFLOW.md`
 - `docs/BUSINESS_LOGIC.md`
 - `docs/GAP_ANALYSIS.md`
+- `docs/TEST_PLAN.md`
+- `docs/USER_GUIDE.md`
 - `PRODUCT.md`
 - `DESIGN.md`
 

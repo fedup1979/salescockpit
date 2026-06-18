@@ -35,6 +35,7 @@ Seed password for local mock mode: `ChangeMe!2026`.
 - `sales_cockpit/services/mock_twilio.py`: mock message sending.
 - `sales_cockpit/services/schooldrive.py`: placeholder read-only connector.
 - `sales_cockpit/services/notion.py`: placeholder read-only connector.
+- `scripts/reset_demo.py`: resets local `SD-DEMO-*` scenarios before manual validation.
 - `docs/ACTION_WORKFLOW.md`: source of truth for action workflow decisions and transition table.
 
 ## Core Concepts
@@ -48,8 +49,14 @@ Operational state set by the user:
 
 Users can:
 
-- mark an open conversation as resolved;
-- reopen a resolved conversation.
+- close an active conversation with `Clore`;
+- reactivate a closed conversation with `Réactiver`.
+
+Visible UI labels should avoid `résolue` / `résolution` for normal users:
+
+- `open` is shown as `Active`;
+- `resolved` is shown as `Terminée`;
+- resolution reasons are shown as closure reasons where possible.
 
 Inbound WhatsApp messages should automatically reopen resolved conversations.
 Resolving a conversation completes open next actions for that lead.
@@ -73,13 +80,14 @@ Main V1 action types:
 
 Qualification, contact status, manual notes, and template creation are support actions or proofs by default. They only become queue-visible work if they block the main action flow.
 
-Work queues:
+Work queue labels:
 
-- `À faire`: action due now or overdue, including reply, call, contact review, blocked template work, or follow-up.
-- `À venir`: future follow-up or future action.
-- `Résolues`: conversation is resolved.
+- `À traiter`: action due now or overdue, including reply, call, contact review, blocked template work, or follow-up.
+- `En suspens`: future follow-up or future action.
+- `Terminées`: conversation is internally `resolved`.
+- `Toutes`: all items in the current view.
 
-`Relancer` is an action type, not a separate Inbox queue.
+`follow_up` is an action type, shown as `Envoyer relance`, not a separate Inbox queue.
 
 Operational rules:
 
@@ -116,7 +124,7 @@ Refreshes every 10 seconds while visible.
 Left panel:
 
 - Responsible-person filter.
-- Operational tabs: `À faire`, `À venir`, `Terminées`, `Tous`.
+- Operational tabs: `À traiter`, `En suspens`, `Terminées`, `Toutes`.
 - Rows represent people/actions, not abstract standalone tasks.
 - The responsible-person filter defaults to the connected user's own queue. Users can switch to another person or `Tous`, and the choice persists while navigating between pages.
 - Mock data keeps at least one open task per active user for visual checks.
@@ -134,19 +142,19 @@ Refreshes every 10 seconds while visible.
 Left panel:
 
 - Search.
-- Tabs: `Tous`, `À faire`, `À venir`, `Résolues`.
+- Tabs: `Toutes`, `À traiter`, `En suspens`, `Terminées`.
 - Conversation rows with prospect name, course, responsible person, next action, due date, and last message.
 - If the latest prospect message is inbound and unanswered, the row shows the same waiting-reply signal as `Tâches`.
-- `Ouvrir` button per row.
+- `Voir` button per row.
 
 Right panel:
 
 - Prospect name.
-- Button to mark as resolved or reopen.
+- Short conversation-state buttons: `Clore` and `Réactiver`.
 - `Ouvrir SchoolDrive` link.
 - WhatsApp window badge.
 - Compact chips for qualification and parcours.
-- Next-action summary panel.
+- Next-action summary panel with only action type, due date/time, and responsible-person badge.
 - Tabs: `Conversation`, `Actions`, `Qualification`, `Notes privées`.
 
 ### Conversation Tab

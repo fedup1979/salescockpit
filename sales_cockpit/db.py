@@ -12,7 +12,16 @@ from sales_cockpit.security import hash_password
 from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
 
 
+DEMO_SEED_VERSION = "2026-06-18-action-scenarios-v1"
+
+
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS app_metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT NOT NULL UNIQUE,
@@ -212,6 +221,37 @@ CREATE TABLE IF NOT EXISTS lead_events (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS user_activity_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER REFERENCES users(id),
+    event_type TEXT NOT NULL,
+    entity_type TEXT,
+    entity_id INTEGER,
+    lead_id INTEGER REFERENCES leads(id) ON DELETE SET NULL,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    action_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+    metadata_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS bug_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    page TEXT,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    action_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL,
+    expected_behavior TEXT,
+    actual_behavior TEXT,
+    severity TEXT NOT NULL DEFAULT 'normal',
+    status TEXT NOT NULL DEFAULT 'open',
+    metadata_json TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS ai_labels (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
@@ -406,7 +446,7 @@ def insert_event(
     new: dict | None = None,
     metadata: dict | None = None,
 ) -> None:
-    conn.execute(
+    cursor = conn.execute(
         """
         INSERT INTO lead_events (
             lead_id, user_id, event_type, previous_value_json, new_value_json, metadata_json
@@ -419,6 +459,31 @@ def insert_event(
             json.dumps(previous or {}, ensure_ascii=False),
             json.dumps(new or {}, ensure_ascii=False),
             json.dumps(metadata or {}, ensure_ascii=False),
+        ),
+    )
+    metadata_payload = metadata or {}
+    conn.execute(
+        """
+        INSERT INTO user_activity_log (
+            user_id, event_type, entity_type, entity_id, lead_id,
+            conversation_id, action_id, metadata_json
+        ) VALUES (?, ?, 'lead_event', ?, ?, ?, ?, ?)
+        """,
+        (
+            user_id,
+            event_type,
+            cursor.lastrowid,
+            lead_id,
+            metadata_payload.get("conversation_id"),
+            metadata_payload.get("task_id") or metadata_payload.get("action_id"),
+            json.dumps(
+                {
+                    "previous": previous or {},
+                    "new": new or {},
+                    "metadata": metadata_payload,
+                },
+                ensure_ascii=False,
+            ),
         ),
     )
 
@@ -593,99 +658,6 @@ def _ensure_demo_task_for_each_user(conn: sqlite3.Connection, now) -> None:
         )
 
 
-def _ensure_demo_waiting_reply_signal(conn: sqlite3.Connection, now, setter_id: int) -> None:
-    demo_body = "Je suis disponible maintenant pour échanger si vous pouvez me répondre."
-    row = conn.execute(
-        """
-        SELECT l.id AS lead_id, l.first_name, l.last_name, c.id AS conversation_id
-        FROM leads l
-        JOIN conversations c ON c.lead_id = l.id
-        WHERE l.schooldrive_lead_id = 'SD-DEMO-2001'
-        LIMIT 1
-        """
-    ).fetchone()
-    if not row:
-        return
-
-    existing_message = conn.execute(
-        """
-        SELECT id, created_at
-        FROM messages
-        WHERE conversation_id = ?
-          AND body = ?
-        LIMIT 1
-        """,
-        (row["conversation_id"], demo_body),
-    ).fetchone()
-
-    received_at = existing_message["created_at"] if existing_message else iso_utc(now - timedelta(minutes=4))
-    current_time = iso_utc(now)
-    if not existing_message:
-        conn.execute(
-            """
-            INSERT INTO messages (
-                conversation_id, lead_id, direction, channel, body, received_at, created_at
-            ) VALUES (?, ?, 'inbound', 'whatsapp_twilio', ?, ?, ?)
-            """,
-            (row["conversation_id"], row["lead_id"], demo_body, received_at, received_at),
-        )
-    conn.execute(
-        """
-        UPDATE conversations
-        SET last_inbound_at = ?, status = 'open', updated_at = ?
-        WHERE id = ?
-        """,
-        (received_at, current_time, row["conversation_id"]),
-    )
-    conn.execute(
-        """
-        UPDATE tasks
-        SET status = 'done', outcome = 'Nouveau message reçu',
-            completed_at = ?, updated_at = ?
-        WHERE lead_id = ?
-          AND status IN ('open', 'in_progress')
-          AND type != 'reply'
-        """,
-        (current_time, current_time, row["lead_id"]),
-    )
-
-    title = f"Répondre à {row['first_name']} {row['last_name']}"
-    existing_reply = conn.execute(
-        """
-        SELECT id
-        FROM tasks
-        WHERE lead_id = ?
-          AND conversation_id = ?
-          AND type = 'reply'
-          AND status IN ('open', 'in_progress')
-        ORDER BY id DESC
-        LIMIT 1
-        """,
-        (row["lead_id"], row["conversation_id"]),
-    ).fetchone()
-    if existing_reply:
-        conn.execute(
-            """
-            UPDATE tasks
-            SET title = ?, assigned_to_user_id = ?, due_at = ?,
-                urgency = 'urgent', updated_at = ?
-            WHERE id = ?
-            """,
-            (title, setter_id, received_at, current_time, existing_reply["id"]),
-        )
-        return
-
-    conn.execute(
-        """
-        INSERT INTO tasks (
-            lead_id, conversation_id, type, title, description,
-            assigned_to_user_id, created_by_user_id, due_at, urgency, status
-        ) VALUES (?, ?, 'reply', ?, 'Le client attend une réponse maintenant.', ?, NULL, ?, 'urgent', 'open')
-        """,
-        (row["lead_id"], row["conversation_id"], title, setter_id, received_at),
-    )
-
-
 def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
     current_time = iso_utc(now)
     for sequence in SEQUENCES:
@@ -777,6 +749,734 @@ def _normalize_lead_business_fields(conn: sqlite3.Connection) -> None:
     )
 
 
+def _reset_demo_dataset_if_needed(conn: sqlite3.Connection, now) -> None:
+    row = conn.execute(
+        "SELECT value FROM app_metadata WHERE key = 'demo_seed_version'"
+    ).fetchone()
+    if row and row["value"] == DEMO_SEED_VERSION:
+        return
+
+    conn.execute("DELETE FROM leads WHERE schooldrive_lead_id LIKE 'SD-DEMO-%'")
+    conn.execute(
+        """
+        INSERT INTO app_metadata (key, value, updated_at)
+        VALUES ('demo_seed_version', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = excluded.updated_at
+        """,
+        (DEMO_SEED_VERSION, iso_utc(now)),
+    )
+
+
+def reset_demo_data() -> None:
+    init_db()
+    with connect() as conn:
+        conn.execute("DELETE FROM leads WHERE schooldrive_lead_id LIKE 'SD-DEMO-%'")
+        conn.execute("DELETE FROM app_metadata WHERE key = 'demo_seed_version'")
+    seed_initial_data()
+
+
+def _build_demo_scenarios(
+    now,
+    mihary_id: int,
+    setter2_id: int,
+    yasmine_id: int,
+    laura_id: int,
+    francois_id: int,
+    tiago_id: int,
+) -> list[dict[str, Any]]:
+    def message(direction: str, body: str, sender_user_id: int | None, delta: timedelta):
+        return (direction, body, sender_user_id, now + delta)
+
+    def task(
+        action_type: str,
+        title: str,
+        assignee_id: int,
+        due_delta: timedelta | None,
+        urgency: str = "normal",
+        status: str = "open",
+        description: str | None = None,
+        trigger_reason: str | None = None,
+        sequence_code: str | None = None,
+        sequence_step_index: int | None = None,
+        outcome: str | None = None,
+        completed_delta: timedelta | None = None,
+        blocked_reason: str | None = None,
+        template_request: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "type": action_type,
+            "title": title,
+            "assigned_to_user_id": assignee_id,
+            "created_by_user_id": assignee_id,
+            "due_at": iso_utc(now + due_delta) if due_delta is not None else None,
+            "urgency": urgency,
+            "status": status,
+            "description": description,
+            "trigger_reason": trigger_reason,
+            "sequence_code": sequence_code,
+            "sequence_step_index": sequence_step_index,
+            "outcome": outcome,
+            "completed_at": iso_utc(now + completed_delta) if completed_delta is not None else None,
+            "blocked_reason": blocked_reason,
+            "template_request": template_request,
+        }
+
+    def lead(
+        schooldrive_id: str,
+        first_name: str,
+        last_name: str,
+        phone_suffix: str,
+        course_id: str,
+        course_title: str,
+        lead_type: str,
+        lead_status: str,
+        contact_status: str,
+        sales_stage: str,
+        setter_user_id: int | None,
+        closer_user_id: int | None,
+        messages: list[tuple],
+        tasks: list[dict[str, Any]] | None = None,
+        conversation_status: str = "open",
+        resolution_reason: str | None = None,
+        resolution_note: str | None = None,
+        resolved_delta: timedelta | None = None,
+    ) -> dict[str, Any]:
+        inbound_times = [item[3] for item in messages if item[0] == "inbound"]
+        category = course_id.split()[0]
+        return {
+            "schooldrive_lead_id": schooldrive_id,
+            "first_name": first_name,
+            "last_name": last_name,
+            "email": f"{schooldrive_id.lower()}@example.com",
+            "phone_e164": f"+4179000{phone_suffix}",
+            "phone_raw": f"079 000 {phone_suffix[:2]} {phone_suffix[2:]}",
+            "course_id": course_id,
+            "course_category_short_title": category,
+            "course_title": course_title,
+            "lead_type": lead_type,
+            "lead_status": lead_status,
+            "contact_status": contact_status,
+            "sales_stage": sales_stage,
+            "temperature": "warm",
+            "setter_user_id": setter_user_id,
+            "closer_user_id": closer_user_id,
+            "last_inbound_at": iso_utc(max(inbound_times)) if inbound_times else None,
+            "conversation_status": conversation_status,
+            "resolution_reason": resolution_reason,
+            "resolution_note": resolution_note,
+            "resolved_at": iso_utc(now + resolved_delta) if resolved_delta is not None else None,
+            "messages": messages,
+            "tasks": tasks or [],
+        }
+
+    return [
+        lead(
+            "SD-DEMO-4001",
+            "Léa",
+            "Martin",
+            "4001",
+            "APP",
+            "Anatomie, Physiologie, Pathologie",
+            "lead",
+            "neutral",
+            "contact_allowed",
+            "setting",
+            mihary_id,
+            None,
+            [
+                message("outbound", "Bonjour Léa, merci pour votre demande APP. Yasmine", yasmine_id, -timedelta(days=1)),
+                message("inbound", "Bonjour, je suis disponible maintenant pour échanger.", None, -timedelta(minutes=5)),
+            ],
+            [
+                task(
+                    "reply",
+                    "Répondre à Léa Martin",
+                    mihary_id,
+                    -timedelta(minutes=5),
+                    "urgent",
+                    description="Le prospect attend une réponse maintenant.",
+                    trigger_reason="prospect_replied",
+                )
+            ],
+        ),
+        lead(
+            "SD-DEMO-4002",
+            "Marc",
+            "Dubois",
+            "4002",
+            "FSM",
+            "Formation en santé naturelle",
+            "lead",
+            "neutral",
+            "contact_allowed",
+            "setting",
+            mihary_id,
+            None,
+            [
+                message("inbound", "Merci, je veux bien les prochaines dates de rentrée.", None, -timedelta(hours=13)),
+                message("outbound", "Bonjour Marc, je vous envoie les informations utiles. Yasmine", mihary_id, -timedelta(hours=12)),
+            ],
+            [
+                task(
+                    "reply",
+                    "Répondre à Marc Dubois",
+                    mihary_id,
+                    -timedelta(hours=12),
+                    "high",
+                    "done",
+                    outcome="reply_no_appointment",
+                    completed_delta=-timedelta(hours=12),
+                ),
+                task(
+                    "follow_up",
+                    "Relancer Marc Dubois",
+                    setter2_id,
+                    timedelta(hours=60),
+                    "normal",
+                    description="Relance après échange setter sans RDV.",
+                    trigger_reason="reply_sent_no_setting_booked",
+                    sequence_code="setter_no_next_step",
+                    sequence_step_index=1,
+                ),
+            ],
+        ),
+        lead(
+            "SD-DEMO-4003",
+            "Sarah",
+            "Perrin",
+            "4003",
+            "APP",
+            "Anatomie, Physiologie, Pathologie",
+            "lead",
+            "neutral",
+            "contact_allowed",
+            "new",
+            mihary_id,
+            None,
+            [
+                message("outbound", "Bonjour Sarah, merci pour votre demande APP. Yasmine", yasmine_id, -timedelta(hours=73)),
+            ],
+            [
+                task(
+                    "follow_up",
+                    "Relancer Sarah Perrin",
+                    setter2_id,
+                    -timedelta(minutes=10),
+                    "high",
+                    description="Aucune réponse au premier WhatsApp automatique après 72h.",
+                    trigger_reason="initial_message_no_reply_after_72h",
+                    sequence_code="lead_no_reply",
+                    sequence_step_index=1,
+                )
+            ],
+        ),
+        lead(
+            "SD-DEMO-4004",
+            "Aline",
+            "Favre",
+            "4004",
+            "AS",
+            "AS GE E26 PM",
+            "presubscription",
+            "neutral",
+            "contact_allowed",
+            "setting",
+            mihary_id,
+            None,
+            [
+                message("inbound", "Je dois réfléchir à mon budget.", None, -timedelta(hours=76)),
+                message("outbound", "Bien reçu, je reste disponible si besoin. Yasmine", mihary_id, -timedelta(hours=75)),
+            ],
+            [
+                task(
+                    "follow_up",
+                    "Relancer Aline Favre",
+                    setter2_id,
+                    -timedelta(minutes=30),
+                    "normal",
+                    description="Fenêtre WhatsApp fermée, template obligatoire.",
+                    trigger_reason="follow_up_due",
+                    sequence_code="setter_no_next_step",
+                    sequence_step_index=2,
+                )
+            ],
+        ),
+        lead(
+            "SD-DEMO-4005",
+            "Thomas",
+            "Girard",
+            "4005",
+            "FSM",
+            "Formation en santé naturelle",
+            "lead",
+            "neutral",
+            "contact_allowed",
+            "setting",
+            mihary_id,
+            None,
+            [
+                message("inbound", "Je cherche une solution très spécifique pour un financement employeur.", None, -timedelta(days=4)),
+                message("outbound", "Je regarde quelle réponse est la plus adaptée. Yasmine", mihary_id, -timedelta(days=4, minutes=-20)),
+            ],
+            [
+                task(
+                    "follow_up",
+                    "Relancer Thomas Girard",
+                    setter2_id,
+                    -timedelta(hours=1),
+                    "high",
+                    "blocked",
+                    description="Aucun template adapté au financement employeur.",
+                    trigger_reason="follow_up_due_template_missing",
+                    sequence_code="setter_no_next_step",
+                    sequence_step_index=3,
+                    blocked_reason="template_missing",
+                    template_request={
+                        "status": "to_create",
+                        "reason": "Créer un template financement employeur",
+                        "context": "Le prospect demande si l'employeur peut prendre en charge la formation.",
+                    },
+                )
+            ],
+        ),
+        lead(
+            "SD-DEMO-4006",
+            "Nadia",
+            "Keller",
+            "4006",
+            "AS",
+            "AS GE E26 PM",
+            "presubscription",
+            "eligible",
+            "contact_allowed",
+            "appointment_booked",
+            mihary_id,
+            None,
+            [
+                message("inbound", "Oui, demain matin me convient pour un appel.", None, -timedelta(hours=4)),
+                message("outbound", "Parfait, mon collègue vous appelle demain matin. Yasmine", mihary_id, -timedelta(hours=3, minutes=50)),
+            ],
+            [
+                task(
+                    "setting_call",
+                    "Appeler Nadia Keller pour setting",
+                    mihary_id,
+                    timedelta(minutes=20),
+                    "high",
+                    description="RDV setting confirmé, mini note obligatoire après l'appel.",
+                    trigger_reason="setting_appointment_booked",
+                )
+            ],
+        ),
+        lead(
+            "SD-DEMO-4007",
+            "Romain",
+            "Blanc",
+            "4007",
+            "APP",
+            "Anatomie, Physiologie, Pathologie",
+            "lead",
+            "neutral",
+            "contact_allowed",
+            "setting",
+            mihary_id,
+            None,
+            [
+                message("inbound", "Vous pouvez m'appeler aujourd'hui.", None, -timedelta(hours=3)),
+                message("outbound", "Très bien, mon collègue vous appelle aujourd'hui. Yasmine", mihary_id, -timedelta(hours=2, minutes=50)),
+            ],
+            [
+                task(
+                    "setting_call",
+                    "Appeler Romain Blanc pour setting",
+                    mihary_id,
+                    -timedelta(hours=2),
+                    "high",
+                    "done",
+                    outcome="not_reached",
+                    completed_delta=-timedelta(hours=2),
+                ),
+                task(
+                    "setting_call",
+                    "Rappeler Romain Blanc pour setting",
+                    mihary_id,
+                    timedelta(hours=2),
+                    "high",
+                    description="Premier rappel après appel setting non joint.",
+                    trigger_reason="setting_call_not_reached",
+                    sequence_code="setting_call_not_reached",
+                    sequence_step_index=1,
+                ),
+            ],
+        ),
+        lead(
+            "SD-DEMO-4008",
+            "Nicolas",
+            "Meyer",
+            "4008",
+            "FSM",
+            "FSM GE P26",
+            "presubscription",
+            "neutral",
+            "contact_allowed",
+            "closing",
+            mihary_id,
+            yasmine_id,
+            [
+                message("inbound", "Je suis prêt à discuter de l'inscription.", None, -timedelta(hours=20)),
+                message("outbound", "Parfait, je vous appelle pour finaliser. Yasmine", yasmine_id, -timedelta(hours=19)),
+            ],
+            [
+                task(
+                    "closing_call",
+                    "Contacter Nicolas Meyer pour closing",
+                    yasmine_id,
+                    -timedelta(minutes=15),
+                    "urgent",
+                    description="Appel closing à réaliser, mini note obligatoire.",
+                    trigger_reason="setting_call_to_closing",
+                )
+            ],
+        ),
+        lead(
+            "SD-DEMO-4009",
+            "Émilie",
+            "Morel",
+            "4009",
+            "APP",
+            "Anatomie, Physiologie, Pathologie",
+            "lead",
+            "neutral",
+            "contact_allowed",
+            "closing",
+            mihary_id,
+            yasmine_id,
+            [
+                message("inbound", "Je préfère qu'on fasse le point au téléphone.", None, -timedelta(days=2)),
+                message("outbound", "Je vous appelle comme convenu. Yasmine", yasmine_id, -timedelta(days=2, minutes=-10)),
+            ],
+            [
+                task(
+                    "closing_call",
+                    "Contacter Émilie Morel pour closing",
+                    yasmine_id,
+                    -timedelta(hours=24),
+                    "high",
+                    "done",
+                    outcome="not_reached",
+                    completed_delta=-timedelta(hours=24),
+                ),
+                task(
+                    "closing_call",
+                    "Rappeler Émilie Morel pour closing",
+                    yasmine_id,
+                    timedelta(hours=24),
+                    "high",
+                    description="Deuxième rappel après closing non joint.",
+                    trigger_reason="closing_call_not_reached",
+                    sequence_code="closing_call_not_reached",
+                    sequence_step_index=2,
+                ),
+            ],
+        ),
+        lead(
+            "SD-DEMO-4010",
+            "Mathieu",
+            "Garnier",
+            "4010",
+            "APP",
+            "Anatomie, Physiologie, Pathologie",
+            "lead",
+            "will_sign",
+            "contact_allowed",
+            "closing",
+            mihary_id,
+            yasmine_id,
+            [
+                message("inbound", "Je pense signer, il me manque seulement le dernier lien.", None, -timedelta(days=3)),
+                message("outbound", "Je vous aide à finaliser. Yasmine", yasmine_id, -timedelta(days=3, minutes=-30)),
+            ],
+            [
+                task(
+                    "closing_call",
+                    "Contacter Mathieu Garnier pour closing",
+                    yasmine_id,
+                    -timedelta(days=3),
+                    "high",
+                    "done",
+                    outcome="will_sign",
+                    completed_delta=-timedelta(days=3),
+                ),
+                task(
+                    "follow_up",
+                    "Relancer Mathieu Garnier",
+                    setter2_id,
+                    -timedelta(minutes=20),
+                    "high",
+                    description="Relance post-closing Va signer.",
+                    trigger_reason="closing_call_will_sign",
+                    sequence_code="closer_will_sign",
+                    sequence_step_index=1,
+                ),
+            ],
+        ),
+        lead(
+            "SD-DEMO-4011",
+            "Océane",
+            "Petit",
+            "4011",
+            "APP",
+            "APP GE P26",
+            "presubscription",
+            "neutral",
+            "contact_allowed",
+            "setting",
+            mihary_id,
+            None,
+            [
+                message("inbound", "Je ne suis pas encore inscrite mais la rentrée approche.", None, -timedelta(days=5)),
+                message("outbound", "Je vous garde informée des prochaines possibilités. Yasmine", mihary_id, -timedelta(days=5, minutes=-20)),
+            ],
+            [
+                task(
+                    "follow_up",
+                    "Relancer Océane Petit avant début de cours",
+                    setter2_id,
+                    -timedelta(minutes=25),
+                    "urgent",
+                    description="Relance liée au début de cours, prioritaire sur les relances liées au lead.",
+                    trigger_reason="course_start_approaching",
+                    sequence_code="course_start",
+                    sequence_step_index=3,
+                )
+            ],
+        ),
+        lead(
+            "SD-DEMO-4012",
+            "Hugo",
+            "Muller",
+            "4012",
+            "FSM",
+            "Formation en santé naturelle",
+            "lead",
+            "neutral",
+            "do_not_contact",
+            "setting",
+            mihary_id,
+            None,
+            [
+                message("inbound", "Ne me contactez plus.", None, -timedelta(days=8)),
+                message("outbound", "Bien reçu, nous ne vous recontacterons plus. Yasmine", mihary_id, -timedelta(days=8, minutes=-5)),
+                message("inbound", "Finalement j'ai une question sur les dates.", None, -timedelta(minutes=20)),
+            ],
+            [
+                task(
+                    "contact_review",
+                    "Revoir le statut de contact de Hugo Muller",
+                    mihary_id,
+                    -timedelta(minutes=20),
+                    "urgent",
+                    description="Le prospect était Ne plus contacter mais vient de réécrire.",
+                    trigger_reason="do_not_contact_prospect_replied",
+                )
+            ],
+        ),
+        lead(
+            "SD-DEMO-4013",
+            "Irina",
+            "Lopes",
+            "4013",
+            "AS",
+            "AS GE E26 PM",
+            "presubscription",
+            "signed",
+            "contact_allowed",
+            "won",
+            mihary_id,
+            yasmine_id,
+            [
+                message("inbound", "C'est bon, je viens de signer.", None, -timedelta(days=1)),
+                message("outbound", "Merci Irina, votre inscription est confirmée. Yasmine", yasmine_id, -timedelta(days=1, minutes=-10)),
+            ],
+            [
+                task(
+                    "closing_call",
+                    "Contacter Irina Lopes pour closing",
+                    yasmine_id,
+                    -timedelta(days=1),
+                    "high",
+                    "done",
+                    outcome="signed",
+                    completed_delta=-timedelta(days=1),
+                )
+            ],
+            "resolved",
+            "signed",
+            "Vente gagnée.",
+            -timedelta(days=1, minutes=-20),
+        ),
+        lead(
+            "SD-DEMO-4014",
+            "Chloé",
+            "Schmid",
+            "4014",
+            "FSM",
+            "Formation en santé naturelle",
+            "lead",
+            "neutral",
+            "contact_allowed",
+            "lost",
+            mihary_id,
+            None,
+            [
+                message("outbound", "Bonjour Chloé, je clôture votre demande pour le moment. Yasmine", yasmine_id, -timedelta(days=30)),
+            ],
+            [],
+            "resolved",
+            "sequence_completed_no_reply",
+            "Dernière relance envoyée sans réponse.",
+            -timedelta(days=30),
+        ),
+        lead(
+            "SD-DEMO-4015",
+            "Philippe",
+            "Aubert",
+            "4015",
+            "NUTRI",
+            "Nutrition",
+            "lead",
+            "not_relevant",
+            "contact_allowed",
+            "lost",
+            mihary_id,
+            None,
+            [
+                message("inbound", "Je ne parle pas français et je vis hors zone compatible.", None, -timedelta(days=2)),
+                message("manual_note", "Qualification : non pertinent, pas de suite commerciale.", mihary_id, -timedelta(days=2, minutes=-15)),
+            ],
+            [],
+            "resolved",
+            "not_relevant",
+            "Prospect non pertinent.",
+            -timedelta(days=2),
+        ),
+        lead(
+            "SD-DEMO-4016",
+            "",
+            "",
+            "4016",
+            "APP",
+            "Anatomie, Physiologie, Pathologie",
+            "lead",
+            "neutral",
+            "contact_allowed",
+            "new",
+            mihary_id,
+            None,
+            [
+                message("inbound", "Bonjour, pouvez-vous m'envoyer les informations ?", None, -timedelta(minutes=3)),
+            ],
+            [
+                task(
+                    "reply",
+                    "Répondre à Inconnu(e)",
+                    mihary_id,
+                    -timedelta(minutes=3),
+                    "urgent",
+                    description="Prospect sans nom identifié, téléphone uniquement.",
+                    trigger_reason="prospect_replied",
+                )
+            ],
+        ),
+        lead(
+            "SD-DEMO-4017",
+            "Laura",
+            "Admin Démo",
+            "4017",
+            "FSM",
+            "Formation en santé naturelle",
+            "lead",
+            "neutral",
+            "contact_allowed",
+            "setting",
+            mihary_id,
+            None,
+            [
+                message("manual_note", "Démo admin : valider un modèle de message avant publication.", laura_id, -timedelta(hours=2)),
+            ],
+            [
+                task(
+                    "other",
+                    "Valider le wording du modèle financement",
+                    laura_id,
+                    timedelta(hours=1),
+                    "normal",
+                    description="Tâche admin de démonstration pour vérifier la file personnelle de Laura.",
+                    trigger_reason="demo_admin_task",
+                )
+            ],
+        ),
+        lead(
+            "SD-DEMO-4018",
+            "François",
+            "Admin Démo",
+            "4018",
+            "APP",
+            "Anatomie, Physiologie, Pathologie",
+            "lead",
+            "neutral",
+            "contact_allowed",
+            "setting",
+            mihary_id,
+            None,
+            [
+                message("manual_note", "Démo admin : relire la logique de transitions.", francois_id, -timedelta(hours=1)),
+            ],
+            [
+                task(
+                    "other",
+                    "Relire la logique de transitions",
+                    francois_id,
+                    -timedelta(minutes=5),
+                    "normal",
+                    description="Tâche admin de démonstration pour vérifier la file personnelle de François.",
+                    trigger_reason="demo_admin_task",
+                )
+            ],
+        ),
+        lead(
+            "SD-DEMO-4019",
+            "Tiago",
+            "Admin Démo",
+            "4019",
+            "AS",
+            "AS GE E26 PM",
+            "presubscription",
+            "neutral",
+            "contact_allowed",
+            "setting",
+            mihary_id,
+            None,
+            [
+                message("manual_note", "Démo admin : vérifier le mapping SchoolDrive.", tiago_id, -timedelta(hours=1)),
+            ],
+            [
+                task(
+                    "other",
+                    "Vérifier le mapping SchoolDrive",
+                    tiago_id,
+                    timedelta(hours=2),
+                    "normal",
+                    description="Tâche admin de démonstration pour vérifier la file personnelle de Tiago.",
+                    trigger_reason="demo_admin_task",
+                )
+            ],
+        ),
+    ]
+
+
 def seed_initial_data() -> None:
     init_db()
     settings = get_settings()
@@ -812,144 +1512,30 @@ def seed_initial_data() -> None:
         yasmine_id = conn.execute(
             "SELECT id FROM users WHERE email = ?", ("yasmine@essr.ch",)
         ).fetchone()["id"]
+        setter2_id = conn.execute(
+            "SELECT id FROM users WHERE email = ?", ("setter2@essr.ch",)
+        ).fetchone()["id"]
+        laura_id = conn.execute(
+            "SELECT id FROM users WHERE email = ?", ("laura.escariz@essr.ch",)
+        ).fetchone()["id"]
+        francois_id = conn.execute(
+            "SELECT id FROM users WHERE email = ?", ("francois.dupuis@essr.ch",)
+        ).fetchone()["id"]
+        tiago_id = conn.execute(
+            "SELECT id FROM users WHERE email = ?", ("tiago.jacobs@gmail.com",)
+        ).fetchone()["id"]
 
-        demo_leads = [
-            {
-                "schooldrive_lead_id": "SD-DEMO-1001",
-                "first_name": "Camille",
-                "last_name": "Roux",
-                "email": "camille.roux@example.com",
-                "phone_e164": "+41790000001",
-                "phone_raw": "079 000 00 01",
-                "course_id": "APP",
-                "course_category_short_title": "APP",
-                "course_title": "Anatomie, Physiologie, Pathologie",
-                "lead_type": "lead",
-                "lead_status": "neutral",
-                "contact_status": "contact_allowed",
-                "sales_stage": "setting",
-                "temperature": "hot",
-                "setter_user_id": mihary_id,
-                "closer_user_id": yasmine_id,
-                "last_inbound_at": iso_utc(now - timedelta(hours=2)),
-                "messages": [
-                    ("inbound", "Bonjour, je souhaite recevoir des informations sur la formation APP.", None, now - timedelta(hours=2)),
-                    ("outbound", "Bonjour Camille, merci pour votre demande. Je regarde cela avec vous.", mihary_id, now - timedelta(hours=1, minutes=45)),
-                ],
-                "task": ("Appeler Camille pour proposer un rendez-vous", "urgent"),
-            },
-            {
-                "schooldrive_lead_id": "SD-DEMO-1002",
-                "first_name": "Nicolas",
-                "last_name": "Meyer",
-                "email": "nicolas.meyer@example.com",
-                "phone_e164": "+41790000002",
-                "phone_raw": "079 000 00 02",
-                "course_id": "FSM",
-                "course_category_short_title": "FSM",
-                "course_title": "FSM GE P26",
-                "lead_type": "presubscription",
-                "lead_status": "neutral",
-                "contact_status": "contact_allowed",
-                "sales_stage": "closing",
-                "temperature": "warm",
-                "setter_user_id": mihary_id,
-                "closer_user_id": yasmine_id,
-                "last_inbound_at": iso_utc(now - timedelta(hours=31)),
-                "messages": [
-                    ("inbound", "Je dois encore réfléchir au financement.", None, now - timedelta(hours=31)),
-                    ("outbound", "Bien reçu, je reste à disposition.", yasmine_id, now - timedelta(hours=30, minutes=20)),
-                ],
-                "task": ("Relancer Nicolas avec le bon modèle WhatsApp", "high"),
-            },
-            {
-                "schooldrive_lead_id": "SD-DEMO-1003",
-                "first_name": "Sarah",
-                "last_name": "Perrin",
-                "email": "sarah.perrin@example.com",
-                "phone_e164": "+41790000003",
-                "phone_raw": "079 000 00 03",
-                "course_id": "AS",
-                "course_category_short_title": "AS",
-                "course_title": "AS GE E26 PM",
-                "lead_type": "presubscription",
-                "lead_status": "neutral",
-                "contact_status": "contact_allowed",
-                "sales_stage": "new",
-                "temperature": "cold",
-                "setter_user_id": mihary_id,
-                "closer_user_id": None,
-                "last_inbound_at": None,
-                "messages": [
-                    ("manual_note", "Conversation informelle à reporter si le prospect répond sur le canal privé.", mihary_id, now - timedelta(days=1)),
-                ],
-                "task": ("Premier appel de qualification", "normal"),
-            },
-        ]
+        _reset_demo_dataset_if_needed(conn, now)
 
-        extra_open = [
-            ("SD-DEMO-2001", "Léa", "Martin", "APP", "Anatomie, Physiologie, Pathologie", "Je suis disponible cet après-midi pour un appel.", 1, "hot", "setting", "urgent"),
-            ("SD-DEMO-2002", "Marc", "Dubois", "FSM", "Formation en santé naturelle", "Merci, je veux bien les prochaines dates de rentrée.", 3, "warm", "setting", "high"),
-            ("SD-DEMO-2003", "Aline", "Favre", "AS", "Assistant médical", "Est-ce que la formation est compatible avec un emploi à 80 % ?", 5, "warm", "setting", "normal"),
-            ("SD-DEMO-2004", "Julien", "Mercier", "NUTRI", "Nutrition", "Je compare encore deux écoles, pouvez-vous m'expliquer la différence ?", 7, "hot", "closing", "high"),
-            ("SD-DEMO-2005", "Sofia", "Bernard", "APP", "Anatomie, Physiologie, Pathologie", "J'ai rempli le formulaire et j'aimerais parler à quelqu'un.", 9, "hot", "setting", "urgent"),
-            ("SD-DEMO-2006", "Thomas", "Girard", "FSM", "Formation en santé naturelle", "La reconnaissance ASCA est-elle incluse dans ce parcours ?", 11, "warm", "setting", "normal"),
-            ("SD-DEMO-2007", "Nadia", "Keller", "AS", "Assistant médical", "Je peux être rappelée demain matin si possible.", 13, "warm", "appointment_booked", "normal"),
-            ("SD-DEMO-2008", "Romain", "Blanc", "APP", "Anatomie, Physiologie, Pathologie", "Je suis intéressé, mais j'ai une question sur les horaires.", 15, "hot", "setting", "high"),
-            ("SD-DEMO-2009", "Émilie", "Morel", "FSM", "Formation en santé naturelle", "J'ai vu l'offre de lancement, est-elle encore valable ?", 18, "hot", "closing", "urgent"),
-            ("SD-DEMO-2010", "Karim", "Berset", "NUTRI", "Nutrition", "Pouvez-vous m'envoyer le programme détaillé ?", 22, "warm", "setting", "normal"),
-        ]
-        extra_closed = [
-            ("SD-DEMO-3001", "Manon", "Richard", "APP", "Anatomie, Physiologie, Pathologie", "Je dois vérifier mon budget avant de confirmer.", 26, "warm", "closing", "high"),
-            ("SD-DEMO-3002", "Hugo", "Muller", "FSM", "Formation en santé naturelle", "Je reviens vers vous après discussion avec mon employeur.", 30, "warm", "closing", "normal"),
-            ("SD-DEMO-3003", "Chloé", "Schmid", "AS", "Assistant médical", "Merci, je vais réfléchir encore un peu.", 34, "cold", "setting", "normal"),
-            ("SD-DEMO-3004", "Bastien", "Robert", "NUTRI", "Nutrition", "Je ne suis pas certain de pouvoir commencer cette année.", 38, "warm", "closing", "high"),
-            ("SD-DEMO-3005", "Irina", "Lopes", "APP", "Anatomie, Physiologie, Pathologie", "J'attends votre retour sur les modalités de paiement.", 43, "hot", "closing", "urgent"),
-            ("SD-DEMO-3006", "David", "Nguyen", "FSM", "Formation en santé naturelle", "Je n'ai pas encore lu tous les documents.", 49, "cold", "setting", "normal"),
-            ("SD-DEMO-3007", "Océane", "Petit", "AS", "Assistant médical", "Je préfère être rappelée la semaine prochaine.", 54, "warm", "appointment_booked", "high"),
-            ("SD-DEMO-3008", "Mathieu", "Garnier", "APP", "Anatomie, Physiologie, Pathologie", "Je suis presque décidé, il me manque le planning exact.", 61, "hot", "closing", "urgent"),
-            ("SD-DEMO-3009", "Elena", "Rossi", "FSM", "Formation en santé naturelle", "J'aimerais savoir s'il reste des places.", 72, "warm", "setting", "high"),
-            ("SD-DEMO-3010", "Philippe", "Aubert", "NUTRI", "Nutrition", "Je dois reporter mon projet de formation.", 96, "cold", "lost", "normal"),
-        ]
-
-        for index, (sd_id, first_name, last_name, course_id, course_title, inbound_body, hours_ago, temperature, stage, urgency) in enumerate(extra_open + extra_closed, start=1):
-            setter_id = mihary_id
-            closer_id = yasmine_id if stage in {"closing", "appointment_booked", "won", "lost"} else None
-            inbound_at = now - timedelta(hours=hours_ago)
-            outbound_at = inbound_at + timedelta(minutes=18)
-            lead_type = "presubscription" if index % 3 == 0 else "lead"
-            stored_course_title = f"{course_id} GE P26" if lead_type == "presubscription" else course_title
-            demo_leads.append(
-                {
-                    "schooldrive_lead_id": sd_id,
-                    "first_name": first_name,
-                    "last_name": last_name,
-                    "email": f"{first_name.lower()}.{last_name.lower()}@example.com",
-                    "phone_e164": f"+4179000{index + 10:04d}",
-                    "phone_raw": f"079 000 {index + 10:02d} {index + 10:02d}",
-                    "course_id": course_id,
-                    "course_category_short_title": course_id,
-                    "course_title": stored_course_title,
-                    "lead_type": lead_type,
-                    "lead_status": "neutral",
-                    "contact_status": "contact_allowed",
-                    "sales_stage": stage,
-                    "temperature": temperature,
-                    "setter_user_id": setter_id,
-                    "closer_user_id": closer_id,
-                    "last_inbound_at": iso_utc(inbound_at),
-                    "messages": [
-                        ("inbound", inbound_body, None, inbound_at),
-                        (
-                            "outbound",
-                            f"Bonjour {first_name}, merci pour votre message. Je regarde cela et je reviens vers vous.",
-                            setter_id if closer_id is None else closer_id,
-                            outbound_at,
-                        ),
-                    ],
-                    "task": (f"Relancer {first_name} {last_name}", urgency),
-                }
-            )
+        demo_leads = _build_demo_scenarios(
+            now,
+            mihary_id,
+            setter2_id,
+            yasmine_id,
+            laura_id,
+            francois_id,
+            tiago_id,
+        )
 
         for lead in demo_leads:
             existing = conn.execute(
@@ -1011,8 +1597,9 @@ def seed_initial_data() -> None:
             conv_cursor = conn.execute(
                 """
                 INSERT INTO conversations (
-                    lead_id, recipient_phone_e164, whatsapp_sender, last_inbound_at, last_outbound_at
-                ) VALUES (?, ?, ?, ?, ?)
+                    lead_id, recipient_phone_e164, whatsapp_sender, last_inbound_at, last_outbound_at,
+                    status, resolution_reason, resolution_note, resolved_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     lead_id,
@@ -1020,6 +1607,10 @@ def seed_initial_data() -> None:
                     "whatsapp:+14155238886",
                     lead["last_inbound_at"],
                     None,
+                    lead.get("conversation_status", "open"),
+                    lead.get("resolution_reason"),
+                    lead.get("resolution_note"),
+                    lead.get("resolved_at"),
                 ),
             )
             conversation_id = conv_cursor.lastrowid
@@ -1052,48 +1643,66 @@ def seed_initial_data() -> None:
                 "UPDATE conversations SET last_outbound_at = ? WHERE id = ?",
                 (last_outbound, conversation_id),
             )
-            conn.execute(
-                """
-                INSERT INTO tasks (
-                    lead_id, conversation_id, type, title, assigned_to_user_id, created_by_user_id,
-                    due_at, urgency, status
-                ) VALUES (?, ?, 'setting_call', ?, ?, ?, ?, ?, 'open')
-                """,
-                (
-                    lead_id,
-                    conversation_id,
-                    lead["task"][0],
-                    lead["setter_user_id"] or yasmine_id,
-                    lead["setter_user_id"] or yasmine_id,
-                    iso_utc(now + timedelta(hours=3)),
-                    lead["task"][1],
-                ),
-            )
-            insert_event(conn, lead_id, "lead_seeded", metadata={"source": "mock"})
-
-        resolved_count = conn.execute(
-            "SELECT COUNT(*) AS count FROM conversations WHERE status = 'resolved'"
-        ).fetchone()["count"]
-        if resolved_count == 0:
-            for schooldrive_id in ["SD-DEMO-3003", "SD-DEMO-3006", "SD-DEMO-3010"]:
-                conn.execute(
+            for lead_task in lead.get("tasks", []):
+                metadata = lead_task.get("metadata")
+                task_cursor = conn.execute(
                     """
-                    UPDATE conversations
-                    SET status = 'resolved',
-                        resolution_reason = 'sequence_completed_no_reply',
-                        resolved_at = ?,
-                        updated_at = ?
-                    WHERE lead_id = (
-                        SELECT id FROM leads WHERE schooldrive_lead_id = ?
-                    )
+                    INSERT INTO tasks (
+                        lead_id, conversation_id, type, title, description,
+                        assigned_to_user_id, created_by_user_id, due_at, urgency, status,
+                        outcome, trigger_reason, sequence_code, sequence_step_index,
+                        blocked_reason, metadata_json, completed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (iso_utc(now), iso_utc(now), schooldrive_id),
+                    (
+                        lead_id,
+                        conversation_id,
+                        lead_task["type"],
+                        lead_task["title"],
+                        lead_task.get("description"),
+                        lead_task.get("assigned_to_user_id"),
+                        lead_task.get("created_by_user_id"),
+                        lead_task.get("due_at"),
+                        lead_task.get("urgency", "normal"),
+                        lead_task.get("status", "open"),
+                        lead_task.get("outcome"),
+                        lead_task.get("trigger_reason"),
+                        lead_task.get("sequence_code"),
+                        lead_task.get("sequence_step_index"),
+                        lead_task.get("blocked_reason"),
+                        json.dumps(metadata, ensure_ascii=False) if metadata else None,
+                        lead_task.get("completed_at"),
+                    ),
                 )
+                template_request = lead_task.get("template_request")
+                if template_request:
+                    conn.execute(
+                        """
+                        INSERT INTO template_requests (
+                            lead_id, conversation_id, task_id, sequence_code, sequence_step_index,
+                            course_id, requested_by_user_id, status, reason, context, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            lead_id,
+                            conversation_id,
+                            task_cursor.lastrowid,
+                            lead_task.get("sequence_code"),
+                            lead_task.get("sequence_step_index"),
+                            lead["course_id"],
+                            lead_task.get("assigned_to_user_id"),
+                            template_request.get("status", "to_create"),
+                            template_request["reason"],
+                            template_request.get("context"),
+                            iso_utc(now),
+                            iso_utc(now),
+                        ),
+                    )
+            insert_event(conn, lead_id, "lead_seeded", metadata={"source": "mock"})
 
         _normalize_lead_business_fields(conn)
         _normalize_seeded_demo_actions(conn, now, mihary_id, yasmine_id)
         _ensure_demo_task_for_each_user(conn, now)
-        _ensure_demo_waiting_reply_signal(conn, now, mihary_id)
 
         templates = [
             (

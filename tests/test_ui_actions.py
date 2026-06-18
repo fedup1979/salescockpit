@@ -3,11 +3,25 @@ from uuid import uuid4
 from streamlit.testing.v1 import AppTest
 
 from sales_cockpit.db import seed_initial_data
-from sales_cockpit.store import authenticate, get_next_action_for_lead, record_inbound_message
+from sales_cockpit.store import (
+    authenticate,
+    get_next_action_for_lead,
+    list_conversations,
+    record_inbound_message,
+)
 
 
 def unique_phone() -> str:
     return "+4179" + uuid4().hex[:7]
+
+
+def render_selected_action(action_id: int, user_email: str = "service.etudiants@essr.ch") -> AppTest:
+    user = authenticate(user_email, "ChangeMe!2026")
+    app = AppTest.from_file("sales_cockpit/ui/app.py")
+    app.session_state["user"] = user
+    app.session_state["selected_action_id"] = action_id
+    app.run(timeout=10)
+    return app
 
 
 def test_reply_action_guides_to_conversation_send_without_generic_completion() -> None:
@@ -26,8 +40,40 @@ def test_reply_action_guides_to_conversation_send_without_generic_completion() -
     info_texts = [item.value for item in app.info]
     button_labels = [item.label for item in app.button]
     caption_texts = [item.value for item in app.caption]
+    tab_labels = [item.label for item in app.tabs]
 
     assert any("Le client attend une réponse" in text for text in info_texts)
-    assert any("Choisis la suite après envoi" in text for text in caption_texts)
+    assert any("Sélectionnez la suite après envoi" in text for text in caption_texts)
+    assert any(label.startswith("À traiter") for label in tab_labels)
+    assert any(label.startswith("En suspens") for label in tab_labels)
+    assert any(label.startswith("Terminées") for label in tab_labels)
+    assert any(label.startswith("Toutes") for label in tab_labels)
+    assert "Voir" in button_labels
+    assert "Ouvrir" not in button_labels
     assert "Envoyer le message libre" in button_labels
     assert "Terminer l'action" not in button_labels
+
+
+def test_window_and_unknown_labels_render_in_french() -> None:
+    seed_initial_data()
+    unknown = next(item for item in list_conversations(search="+41790004016"))
+    open_window = render_selected_action(unknown["next_action_id"])
+    open_markup = "\n".join(item.value for item in open_window.markdown)
+    assert len(open_window.exception) == 0
+    assert "Inconnu(e)" in open_markup
+    assert "Ferme le" in open_markup
+    assert "Ferme :" not in open_markup
+    assert "WhatsApp Unknown" not in open_markup
+
+    closed = next(item for item in list_conversations(search="+41790004004"))
+    closed_window = render_selected_action(closed["next_action_id"], "setter2@essr.ch")
+    closed_markup = "\n".join(item.value for item in closed_window.markdown)
+    assert len(closed_window.exception) == 0
+    assert "Fermée le" in closed_markup
+    assert "Ferme :" not in closed_markup
+
+    never_opened = next(item for item in list_conversations(search="+41790004003"))
+    never_opened_window = render_selected_action(never_opened["next_action_id"], "setter2@essr.ch")
+    never_opened_markup = "\n".join(item.value for item in never_opened_window.markdown)
+    assert len(never_opened_window.exception) == 0
+    assert "Jamais ouverte" in never_opened_markup

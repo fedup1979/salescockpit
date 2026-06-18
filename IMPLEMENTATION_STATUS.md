@@ -22,9 +22,9 @@ V1 local mock build is runnable.
 - Streamlit smoke test for login and inbox.
 - French display labels for dropdowns.
 - Operational conversation status separate from WhatsApp window state.
-- Mark conversation resolved / reopen conversation.
+- Close or reactivate conversations in the UI while keeping internal `open` / `resolved` values.
 - Inbound messages reopen resolved conversations.
-- Inbox work queues: `À faire`, `À venir`, `Résolues`; follow-ups due now are included in `À faire`.
+- Work queue labels: `À traiter`, `En suspens`, `Terminées`, `Toutes`; follow-ups due now are included in `À traiter`.
 - Next-action model on top of the existing `tasks` table.
 - Inbound WhatsApp messages create/update a setter `reply` action.
 - Follow-up scheduling and setter-to-closer handoff from the conversation detail.
@@ -56,15 +56,32 @@ V1 local mock build is runnable.
 - The Actions tab is contextual by action type: WhatsApp actions guide users to the Conversation composer, calls use result + mandatory note, contact reviews show explicit do-not-contact decisions, and exceptions live in Actions avancées.
 - Setting/closing calls can be completed with business outcomes that create the next action.
 - Added tests for resolution/reopen guards, do-not-contact inbound review, template requests, reply-to-follow-up chaining, send-time reply outcomes, call retry chaining, and Streamlit action guidance.
+- Unknown WhatsApp prospects display as `Inconnu(e)` instead of `WhatsApp Unknown`.
+- WhatsApp window labels now read `Ferme le ... à ...`, `Fermée le ... à ...`, or `Jamais ouverte`.
+- Streamlit developer toolbar options are hidden with `client.toolbarMode = "viewer"` to avoid exposing the clear-cache command in the UI.
+- Demo scenarios are versioned and rebuilt for `SD-DEMO-*` only, with coherent cases covering reply, follow-up, blocked template, setting call, closing call, do-not-contact review, terminal conversations, course-date reminders, and admin queues.
+- Manual test plan added in `docs/TEST_PLAN.md`.
+- Pytest now runs against an isolated temporary SQLite database, so tests do not pollute the local app database.
+- Added `Mode d'emploi` page and persistent user guide in `docs/USER_GUIDE.md`.
+- Replaced the `Mode d'emploi` expanders with a prose guide intended for first-time sales users.
+- Added sidebar `Bug` reporting with `bug_reports` storage and `user_activity_log` entries.
+- Replaced the sidebar Bug popover with a large Streamlit dialog to avoid viewport overflow.
+- Business events are mirrored into `user_activity_log` for usage analysis.
+- Added Admin `Bugs & logs` tab.
+- Admin user table is sorted by ID. Page access by role is visible; non-admin users do not see the Admin page.
+- Human and company schedule rules now include provisional V1 hours and backup rules, still to validate with Laura.
+- Obsolete legacy demo scenario code and the old next-action renderer were removed.
+- Added `scripts/reset_demo.py` to reset local demo scenarios before manual validation.
+- Scenario-first manual validation path added to `docs/TEST_PLAN.md`.
 
 ## Next Checkpoints
 
-1. Manual review of local mock UI by François, especially action outcomes, resolution/reopen popovers, template requests, and Admin rules.
-2. Improve UX based on review.
-3. Add read-only connectors for SchoolDrive and Notion.
-4. Add Twilio sandbox integration.
-5. Prepare GitHub repo and DigitalOcean staging.
-6. Define backup policy for SQLite and attachments.
+1. Run the focused scenario validation in `docs/TEST_PLAN.md` after `scripts/reset_demo.py`.
+2. Fix any scenario failures before adding new features.
+3. Only after scenario validation, do a moderate refactor of the large files into UI pages/components, workflow services, seed/reset, and repositories.
+4. Add read-only connectors for SchoolDrive and Notion.
+5. Add Twilio sandbox integration.
+6. Prepare GitHub repo, DigitalOcean staging, SQLite backup, and attachment policy.
 
 ## Integration Policy
 
