@@ -106,7 +106,8 @@ def startup() -> None:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "version": __version__, "mode": "mock"}
+    settings = get_settings()
+    return {"status": "ok", "version": __version__, "mode": settings.twilio_mode}
 
 
 @app.get("/leads")
