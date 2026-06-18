@@ -86,15 +86,15 @@ CALL_ACTION_TYPES = {"setting_call", "closing_call"}
 
 DISPLAY_LABELS = {
     "all": "Toutes",
-    "new": "Nouveau",
-    "setting": "Setting",
-    "appointment_booked": "RDV pris",
-    "closing": "Closing",
-    "won": "Gagné",
-    "lost": "Perdu",
-    "not_interesting": "Pas intéressant",
-    "no_show": "No-show",
-    "blacklist": "Blacklist",
+    "new": "Nouveau prospect",
+    "setting": "Échange avec setter",
+    "appointment_booked": "Entretien setting prévu",
+    "closing": "Entretien closing",
+    "won": "Inscription confirmée",
+    "lost": "Parcours perdu",
+    "not_interesting": "Non pertinent",
+    "no_show": "Absent au rendez-vous",
+    "blacklist": "Bloqué",
     "cold": "Froid",
     "warm": "Tiède",
     "hot": "Chaud",
@@ -178,14 +178,14 @@ DISPLAY_LABELS = {
 
 HELP_TEXTS = {
     "sales_stage": (
-        "Étape du processus commercial. En usage normal, elle suit les actions du cockpit. "
-        "Modifiez-la seulement pour corriger une information externe ou un cas traité hors cockpit."
+        "Étape du parcours commercial. En usage normal, elle suit les actions du cockpit. "
+        "À modifier seulement pour forcer le prospect vers une autre étape après une correction externe."
     ),
     "lead_status": (
-        "Qualification commerciale. Non pertinent et A signé arrêtent les relances."
+        "Qualification commerciale : probabilité que le prospect s'inscrive. Non pertinent et A signé arrêtent les relances."
     ),
     "contact_status": (
-        "Statut de contact séparé. Ne plus contacter bloque les relances, mais une réponse entrante crée une revue humaine."
+        "Statut de contact : le prospect accepte-t-il encore qu'on lui écrive ? Ne plus contacter bloque les relances."
     ),
 }
 
@@ -437,7 +437,7 @@ def render_conversation_detail(user: dict, conversation_id: int) -> None:
     render_compact_lead_state(conv)
     render_next_action_summary(conv)
 
-    tabs = st.tabs(["Conversation", "Actions", "Qualification", "Notes privées"])
+    tabs = st.tabs(["Conversation", "Actions", "Statuts", "Notes privées"])
     with tabs[0]:
         render_messages(conversation_id)
         st.markdown('<div class="sc-reply-anchor"></div>', unsafe_allow_html=True)
@@ -559,17 +559,40 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
                 st.rerun()
 
 
+def state_chip_html(label: str, value: str, help_text: str) -> str:
+    return (
+        f'<span title="{escape_html(help_text)}">'
+        f'<strong>{escape_html(label)}</strong> {escape_html(value)} '
+        f'<em class="sc-help-dot">?</em>'
+        f'</span>'
+    )
+
+
 def render_compact_lead_state(conv: dict) -> None:
     contact_html = ""
     if conv.get("contact_status") == "do_not_contact":
         contact_html = (
-            f'<span><strong>Contact</strong> {escape_html(labelize(conv["contact_status"]))}</span>'
+            state_chip_html(
+                "Contact",
+                labelize(conv["contact_status"]),
+                HELP_TEXTS["contact_status"],
+            )
         )
+    stage_html = state_chip_html(
+        "Parcours",
+        labelize(conv["sales_stage"]),
+        HELP_TEXTS["sales_stage"],
+    )
+    qualification_html = state_chip_html(
+        "Qualification",
+        labelize(conv["lead_status"]),
+        HELP_TEXTS["lead_status"],
+    )
     st.markdown(
         f"""
         <div class="sc-compact-state">
-          <span><strong>Qualification</strong> {escape_html(labelize(conv["lead_status"]))}</span>
-          <span><strong>Parcours</strong> {escape_html(labelize(conv["sales_stage"]))}</span>
+          {stage_html}
+          {qualification_html}
           {contact_html}
         </div>
         """,
@@ -611,7 +634,7 @@ def next_action_context(conv: dict) -> dict | None:
     return get_next_action_for_lead(conv["lead_id"])
 
 
-def reply_send_plan_inputs(
+def get_reply_send_plan(
     action: dict | None,
     key_prefix: str,
     users: list[dict],
@@ -619,7 +642,38 @@ def reply_send_plan_inputs(
     if not action or action.get("type") != "reply":
         return None, None, None, ""
 
-    st.markdown("**Suite après envoi**")
+    outcome = st.session_state.get(f"{key_prefix}_reply_outcome", "reply_no_appointment")
+    note = (st.session_state.get(f"{key_prefix}_reply_note") or "").strip()
+    next_due_at = None
+    assigned_to_user_id = None
+    if outcome == "setting_booked":
+        assigned_to_user_id = st.session_state.get(
+            f"{key_prefix}_reply_assignee_id",
+            action.get("assigned_to_user_id"),
+        )
+        appointment_date = st.session_state.get(
+            f"{key_prefix}_reply_date",
+            datetime.now().date(),
+        )
+        appointment_time = st.session_state.get(
+            f"{key_prefix}_reply_time",
+            time(9, 0),
+        )
+        next_due_at = local_due_at(appointment_date, appointment_time)
+        if not assigned_to_user_id and users:
+            assigned_to_user_id = users[0]["id"]
+    return outcome, next_due_at, assigned_to_user_id, note
+
+
+def render_reply_send_plan_controls(
+    action: dict | None,
+    key_prefix: str,
+    users: list[dict],
+) -> None:
+    if not action or action.get("type") != "reply":
+        return
+
+    st.markdown("**Suite après envoi du prochain WhatsApp**")
     outcome = st.selectbox(
         "Résultat de la réponse",
         REPLY_SEND_OUTCOMES,
@@ -627,8 +681,6 @@ def reply_send_plan_inputs(
         key=f"{key_prefix}_reply_outcome",
     )
     note = st.text_area("Note interne", height=80, key=f"{key_prefix}_reply_note")
-    next_due_at = None
-    assigned_to_user_id = None
     if outcome == "setting_booked":
         assignee = st.selectbox(
             "Responsable de l'appel",
@@ -637,6 +689,7 @@ def reply_send_plan_inputs(
             format_func=format_user,
             key=f"{key_prefix}_reply_assignee",
         )
+        st.session_state[f"{key_prefix}_reply_assignee_id"] = assignee["id"]
         appointment_date = st.date_input(
             "Date du rendez-vous",
             value=datetime.now().date(),
@@ -647,19 +700,17 @@ def reply_send_plan_inputs(
             value=time(9, 0),
             key=f"{key_prefix}_reply_time",
         )
-        next_due_at = local_due_at(appointment_date, appointment_time)
-        assigned_to_user_id = assignee["id"]
+        st.caption(f"Après l'envoi, un entretien Setting sera créé le {appointment_date.strftime('%d.%m.%Y')} à {appointment_time.strftime('%H:%M')}.")
     elif outcome in {"not_relevant", "do_not_contact"}:
         st.warning("Cette réponse résoudra la conversation et annulera les relances futures.")
     else:
         st.caption("Après l'envoi, une relance Setter 2 sera planifiée à +72h si le prospect ne répond pas.")
-    return outcome, next_due_at, assigned_to_user_id, note.strip()
 
 
 def render_composer(user: dict, conv: dict) -> None:
     action = next_action_context(conv)
     users = list_users()
-    action_outcome, next_due_at, assigned_to_user_id, action_note = reply_send_plan_inputs(
+    action_outcome, next_due_at, assigned_to_user_id, action_note = get_reply_send_plan(
         action,
         f"reply_plan_{conv['id']}",
         users,
@@ -692,35 +743,12 @@ def render_composer(user: dict, conv: dict) -> None:
     template_search = st.session_state.get(search_key, "")
     templates = list_templates(template_search, approved_only=True)
     if not templates:
-        st.info("Aucun modèle approuvé ne correspond. Créez un nouveau modèle dans l'onglet Modèles.")
+        st.info("Aucun modèle approuvé ne correspond. La demande de nouveau modèle se fait dans l'onglet Actions.")
         st.text_input(
             "Recherche de modèles",
             placeholder="Mot dans le nom ou le contenu",
             key=search_key,
         )
-        with st.form(f"missing_template_request_{conv['id']}"):
-            reason = st.text_input(
-                "Demande de modèle",
-                placeholder="Ex. relance financement pour APP",
-            )
-            context = st.text_area(
-                "Contexte pour le modèle",
-                value=conv.get("last_message_body") or "",
-                height=90,
-            )
-            submitted = st.form_submit_button("Créer la demande de modèle")
-        if submitted:
-            action = get_next_action_for_lead(conv["lead_id"])
-            ok, message = create_template_request(
-                conv["id"],
-                user["id"],
-                reason,
-                context,
-                task_id=action["id"] if action else None,
-            )
-            show_result(ok, message)
-            if ok:
-                st.rerun()
         return
 
     selected = st.selectbox(
@@ -763,50 +791,25 @@ def render_composer(user: dict, conv: dict) -> None:
         if ok:
             st.rerun()
 
-    with st.expander("Aucun modèle ne convient"):
-        with st.form(f"template_request_{conv['id']}"):
-            reason = st.text_input(
-                "Modèle manquant",
-                placeholder="Ex. relance financement pour APP",
-            )
-            context = st.text_area(
-                "Contexte pour le modèle",
-                value=conv.get("last_message_body") or "",
-                height=90,
-            )
-            submitted = st.form_submit_button("Créer la demande de modèle")
-        if submitted:
-            action = get_next_action_for_lead(conv["lead_id"])
-            ok, message = create_template_request(
-                conv["id"],
-                user["id"],
-                reason,
-                context,
-                task_id=action["id"] if action else None,
-            )
-            show_result(ok, message)
-            if ok:
-                st.rerun()
-
 
 def render_qualification(user: dict, conv: dict) -> None:
     with st.form(f"qualification_{conv['lead_id']}"):
         lead_status = st.selectbox(
-            "Qualification",
+            "Qualification (probabilité que le client s'inscrive)",
             LEAD_STATUSES,
             index=safe_index(LEAD_STATUSES, conv["lead_status"]),
             format_func=labelize,
             help=HELP_TEXTS["lead_status"],
         )
         contact_status = st.selectbox(
-            "Statut de contact",
+            "Statut de contact (le prospect refuse-t-il qu'on lui écrive ?)",
             CONTACT_STATUS_VALUES,
             index=safe_index(CONTACT_STATUS_VALUES, conv.get("contact_status")),
             format_func=labelize,
             help=HELP_TEXTS["contact_status"],
         )
         sales_stage = st.selectbox(
-            "Parcours (forçage)",
+            "Étape du parcours (pour forcer le client vers une autre étape)",
             SALES_STAGES,
             index=safe_index(SALES_STAGES, conv["sales_stage"]),
             format_func=labelize,
@@ -927,10 +930,39 @@ def render_blocked_action(user: dict, conv: dict, action: dict) -> None:
             st.rerun()
 
 
+def render_template_request_action(user: dict, conv: dict, action: dict | None) -> None:
+    with st.expander("Demander un nouveau modèle WhatsApp"):
+        st.caption("À utiliser quand aucun modèle approuvé ne convient à la situation.")
+        with st.form(f"action_template_request_{conv['id']}_{action['id'] if action else 'none'}"):
+            reason = st.text_input(
+                "Modèle manquant",
+                placeholder="Ex. relance financement pour APP",
+            )
+            context = st.text_area(
+                "Contexte pour le modèle",
+                value=conv.get("last_message_body") or "",
+                height=90,
+            )
+            submitted = st.form_submit_button("Créer la demande de modèle")
+        if submitted:
+            ok, message = create_template_request(
+                conv["id"],
+                user["id"],
+                reason,
+                context,
+                task_id=action["id"] if action else None,
+            )
+            show_result(ok, message)
+            if ok:
+                st.rerun()
+
+
 def render_whatsapp_action_guidance(user: dict, conv: dict, action: dict) -> None:
     if action["type"] == "reply":
         st.info("Le client attend une réponse. Cette action sera clôturée quand le message sera envoyé dans l'onglet Conversation.")
-        st.caption("Sélectionnez la suite après envoi directement sous le message libre ou le modèle : relance +72h, RDV setting, Non pertinent ou Ne plus contacter.")
+        st.caption("L'envoi se fait dans l'onglet Conversation. Sélectionnez la suite après envoi ici.")
+        render_reply_send_plan_controls(action, f"reply_plan_{conv['id']}", list_users())
+        render_template_request_action(user, conv, action)
         return
 
     if action["type"] == "follow_up":
@@ -942,6 +974,7 @@ def render_whatsapp_action_guidance(user: dict, conv: dict, action: dict) -> Non
         else:
             st.warning("Relance à envoyer. Fenêtre WhatsApp fermée : modèle approuvé obligatoire.")
         st.caption("L'action sera clôturée uniquement quand le message ou le modèle aura été envoyé dans l'onglet Conversation.")
+        render_template_request_action(user, conv, action)
 
 
 def render_call_action_form(user: dict, action: dict) -> None:
