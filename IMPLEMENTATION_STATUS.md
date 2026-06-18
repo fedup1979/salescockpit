@@ -76,14 +76,17 @@ V1 local mock build is runnable.
 - Added deployment scaffold for GitHub + DigitalOcean with PROD/STAGING/DEV Streamlit ports `8501` / `8502` / `8503`.
 - Added systemd templates for Streamlit UI and FastAPI backend.
 - Added per-environment `.env` examples and deployment notes in `docs/DEPLOYMENT.md`.
+- GitHub repository created and pushed: `https://github.com/fedup1979/salescockpit`.
+- DigitalOcean staging deployed on `http://139.59.158.77:8502`.
+- Staging services running: `sales-cockpit-ui@staging.service` and `sales-cockpit-api@staging.service`.
 
 ## Next Checkpoints
 
 1. Run the focused scenario validation in `docs/TEST_PLAN.md` after `scripts/reset_demo.py`.
 2. Fix any scenario failures before adding new features.
 3. Only after scenario validation, do a moderate refactor of the large files into UI pages/components, workflow services, seed/reset, and repositories.
-4. Create/push the private GitHub repository once GitHub repo creation permission is available.
-5. Create the DigitalOcean droplet and install the deployment scaffold.
+4. Add a read-only GitHub deploy key on the DigitalOcean droplet.
+5. Validate staging manually on `http://139.59.158.77:8502`.
 6. Add read-only connectors for SchoolDrive and Notion.
 7. Add Twilio sandbox integration.
 8. Define and automate SQLite backups before PROD.

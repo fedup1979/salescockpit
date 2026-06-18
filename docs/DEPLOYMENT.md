@@ -4,6 +4,33 @@
 
 Publish Sales Cockpit quickly without touching Front.io, production Twilio, SchoolDrive writes, or Notion writes.
 
+## Current DigitalOcean Status
+
+Staging is deployed and reachable:
+
+```text
+http://139.59.158.77:8502
+```
+
+Server:
+
+```text
+salescockpit-prod-01
+Ubuntu 24.04 LTS
+Public IPv4: 139.59.158.77
+```
+
+Running services:
+
+```text
+sales-cockpit-ui@staging.service
+sales-cockpit-api@staging.service
+```
+
+PROD and DEV are intentionally not started yet. The scaffold supports them, but staging should be validated first so that we do not expose multiple mock copies of the cockpit.
+
+The first staging deployment was made from a local `git archive` because the GitHub repository is private and the droplet does not yet have a GitHub deploy key.
+
 The deployment target is one DigitalOcean droplet running three isolated environments:
 
 | Environment | UI port | API port | Database |
@@ -16,7 +43,17 @@ The UI ports are the ones François requested. The API ports are separate becaus
 
 ## GitHub
 
-The local machine already has GitHub CLI installed and authenticated, but the current token cannot create repositories.
+The GitHub repository exists:
+
+```text
+https://github.com/fedup1979/salescockpit
+```
+
+Local `main` tracks `origin/main`.
+
+The droplet still needs a read-only GitHub deploy key before it can pull future updates directly from GitHub.
+
+Historical note: the local GitHub CLI token could push to the repository, but could not create the repository because it lacked `createRepository`.
 
 Two valid options:
 

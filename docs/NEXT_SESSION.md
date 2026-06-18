@@ -9,6 +9,12 @@ Local URLs:
 - Streamlit UI: `http://localhost:8501`
 - FastAPI health: `http://127.0.0.1:8000/health`
 
+DigitalOcean staging:
+
+- Staging UI: `http://139.59.158.77:8502`
+- Host: `salescockpit-prod-01`
+- Services: `sales-cockpit-ui@staging.service`, `sales-cockpit-api@staging.service`
+
 The app has been iteratively reviewed by François and is currently in a good mock-prototype state.
 
 ## Important Recent Decisions
@@ -145,9 +151,10 @@ Stop-Process -Id <PID> -Force
 - Twilio is mock only.
 - Attachments UI exists but persistence/send is not implemented.
 - Auth is local password-based only.
-- No GitHub remote yet.
-- No DigitalOcean staging yet.
-- Deployment scaffold exists in `deploy/` and `docs/DEPLOYMENT.md`, but it has not been executed on a server.
+- GitHub remote exists: `https://github.com/fedup1979/salescockpit`.
+- DigitalOcean staging exists on `http://139.59.158.77:8502`.
+- Deployment scaffold exists in `deploy/` and `docs/DEPLOYMENT.md`.
+- The droplet still needs a read-only GitHub deploy key for future pull-based deploys.
 - No backup strategy implemented yet.
 
 ## Recommended Next Work
@@ -155,8 +162,8 @@ Stop-Process -Id <PID> -Force
 1. Run the focused manual scenario validation in `docs/TEST_PLAN.md`, starting with `scripts/reset_demo.py`.
 2. Fix any UX or workflow failures discovered by the scenario pass.
 3. After scenario behavior is validated, do a moderate refactor of the largest files without changing behavior.
-4. Add GitHub remote once the private GitHub repo exists or the GitHub CLI token can create repositories.
-5. Create DigitalOcean droplet and deploy staging using `docs/DEPLOYMENT.md`.
+4. Add a read-only GitHub deploy key for the droplet.
+5. Validate DigitalOcean staging on `http://139.59.158.77:8502`.
 6. Implement SchoolDrive read-only lead lookup.
 7. Implement Notion historical enrichment.
 8. Implement Twilio sandbox mode.
