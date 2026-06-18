@@ -258,7 +258,7 @@ Règle : une relance de cours gagne toujours contre une relance relative au lead
 À implémenter ensuite :
 
 1. Continuer à durcir les statuts persistés `planned`, `cancelled`, `blocked`, `in_progress`.
-2. Ne pas stocker `due` comme statut ; calculer `À traiter` depuis `due_at`.
+2. Ne pas stocker `due` comme statut ; calculer `À faire` depuis `due_at`.
 3. Continuer à créer l'action suivante à partir de la table de transitions.
 4. Historiser toutes les transitions dans `lead_events`.
 5. Afficher un historique lisible qui mélange actions, messages, qualifications et notes.

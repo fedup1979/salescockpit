@@ -10,6 +10,7 @@ from sales_cockpit.store import (
     get_conversation,
     get_next_action_for_lead,
     handoff_to_closer,
+    list_actions_for_lead,
     list_conversations,
     list_template_requests,
     list_templates,
@@ -156,6 +157,29 @@ def test_followup_scheduled_moves_conversation_to_waiting() -> None:
     assert conversation["work_queue"] == "waiting"
 
 
+def test_due_followup_is_todo_not_separate_followup_queue() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Pouvez-vous me rappeler ?")
+    action = get_next_action_for_lead(result["lead_id"])
+
+    ok, _ = schedule_followup(
+        result["conversation_id"],
+        admin["id"],
+        action["assigned_to_user_id"],
+        iso_utc(utc_now() - timedelta(minutes=5)),
+    )
+
+    assert ok is True
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "follow_up"
+    conversation = next(
+        item for item in list_conversations()
+        if item["conversation_id"] == result["conversation_id"]
+    )
+    assert conversation["work_queue"] == "todo"
+
+
 def test_reply_send_closes_reply_and_schedules_followup() -> None:
     seed_initial_data()
     result = record_inbound_message(unique_phone(), "Bonjour, je veux des informations.")
@@ -168,6 +192,103 @@ def test_reply_send_closes_reply_and_schedules_followup() -> None:
     next_action = get_next_action_for_lead(result["lead_id"])
     assert next_action["type"] == "follow_up"
     assert next_action["sequence_code"] == "setter_no_next_step"
+
+
+def test_reply_send_with_setting_booked_creates_setting_call_with_proof() -> None:
+    seed_initial_data()
+    result = record_inbound_message(unique_phone(), "Je suis disponible pour un appel.")
+    action = get_next_action_for_lead(result["lead_id"])
+    due_at = iso_utc(utc_now() + timedelta(hours=2))
+
+    ok, _ = send_freeform_message(
+        result["conversation_id"],
+        action["assigned_to_user_id"],
+        "Parfait, mon collègue vous appelle.",
+        action_outcome="setting_booked",
+        next_due_at=due_at,
+        assigned_to_user_id=action["assigned_to_user_id"],
+        note="RDV setting confirmé.",
+    )
+
+    assert ok is True
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "setting_call"
+    assert next_action["due_at"] == due_at
+    actions = list_actions_for_lead(result["lead_id"], "all")
+    completed_reply = next(item for item in actions if item["type"] == "reply")
+    assert completed_reply["outcome"] == "setting_booked"
+    assert completed_reply["proof_message_id"] is not None
+
+
+def test_reply_send_with_do_not_contact_resolves_without_followup() -> None:
+    seed_initial_data()
+    result = record_inbound_message(unique_phone(), "Ne me contactez plus.")
+    action = get_next_action_for_lead(result["lead_id"])
+
+    ok, _ = send_freeform_message(
+        result["conversation_id"],
+        action["assigned_to_user_id"],
+        "Bien reçu, nous ne vous recontacterons plus.",
+        action_outcome="do_not_contact",
+        note="Demande explicite du prospect.",
+    )
+
+    assert ok is True
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["status"] == "resolved"
+    assert conversation["contact_status"] == "do_not_contact"
+    assert get_next_action_for_lead(result["lead_id"]) is None
+
+
+def test_followup_send_closes_with_proof_and_creates_next_sequence_step() -> None:
+    seed_initial_data()
+    result = record_inbound_message(unique_phone(), "Bonjour.")
+    action = get_next_action_for_lead(result["lead_id"])
+    send_freeform_message(result["conversation_id"], action["assigned_to_user_id"], "Bonjour.")
+    followup = get_next_action_for_lead(result["lead_id"])
+
+    ok, _ = send_freeform_message(
+        result["conversation_id"],
+        followup["assigned_to_user_id"],
+        "Je reviens vers vous.",
+    )
+
+    assert ok is True
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "follow_up"
+    assert next_action["sequence_step_index"] == 2
+    actions = list_actions_for_lead(result["lead_id"], "all")
+    completed_followup = next(
+        item for item in actions
+        if item["type"] == "follow_up" and item["sequence_step_index"] == 1
+    )
+    assert completed_followup["proof_message_id"] is not None
+
+
+def test_call_completion_requires_note() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je suis disponible pour un appel.")
+    action = get_next_action_for_lead(result["lead_id"])
+    complete_action_with_workflow(
+        action["id"],
+        admin["id"],
+        "setting_booked",
+        note="RDV setting fixé.",
+        next_due_at=iso_utc(utc_now()),
+        assigned_to_user_id=action["assigned_to_user_id"],
+    )
+    setting_action = get_next_action_for_lead(result["lead_id"])
+
+    ok, message = complete_action_with_workflow(
+        setting_action["id"],
+        admin["id"],
+        "not_reached",
+        note="",
+    )
+
+    assert ok is False
+    assert "mini note" in message
 
 
 def test_template_request_blocks_followup_action() -> None:

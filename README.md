@@ -58,8 +58,9 @@ Seeded accounts:
 - Template requests linked to blocked follow-up actions.
 - Structured follow-up sequences and sequence steps.
 - Template creation in local draft or approved mock status.
-- Work queues: `À traiter`, `À relancer`, `En attente`, `Résolues`.
+- Work queues: `À faire`, `À venir`, `Résolues`. `Relancer` is an action type, not a separate main queue.
 - Next-action creation, scheduling, completion, and setter-to-closer handoff.
+- Contextual Actions tab where WhatsApp actions are normally completed by sent-message proof, while calls require result and note.
 - Lead qualification.
 - Formal business rules visible in Admin.
 - Manual private WhatsApp notes.

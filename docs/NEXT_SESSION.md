@@ -26,10 +26,10 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - The transition table is partially implemented in the local mock system: resolution/reopen guards, contact review, template requests, outbound message chaining, and call outcome chaining are now active.
 - Inbox tabs are not WhatsApp API window tabs.
 - Inbox tabs are operational work queues:
-  - `À traiter`
-  - `À relancer`
-  - `En attente`
+  - `À faire`
+  - `À venir`
   - `Résolues`
+- `Relancer` is an action type, not a separate top-level Inbox queue.
 - WhatsApp API window state remains a separate badge:
   - `Fenêtre ouverte`
   - `Fenêtre fermée`
@@ -50,6 +50,9 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - Missing templates create `template_requests` linked to the blocked follow-up action.
 - Follow-up sequences and sequence steps are stored structurally in SQLite and displayed in Admin.
 - Outbound WhatsApp messages close the active `reply` or `follow_up` action and create the next follow-up when applicable.
+- `reply` and `follow_up` should not be manually marked as sent in the main Actions flow. The normal proof is the outbound WhatsApp message from the Conversation composer.
+- The Conversation composer can capture the send-time outcome for a `reply`: no appointment, setting appointment booked, non pertinent, or ne plus contacter.
+- The Actions tab is contextual: WhatsApp actions explain where to send, call actions collect result + mandatory note, blocked relances show template-request state, and manual overrides are inside `Actions avancées`.
 - Setting and closing calls can be completed with business outcomes that create the next action.
 - Lead-relative reminders follow `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
 - Course-date reminders win over lead-relative reminders. The losing lead-relative reminder is cancelled.
@@ -76,7 +79,8 @@ The app has been iteratively reviewed by François and is currently in a good mo
 
 Latest known validation:
 
-- `pytest`: 19 tests passing.
+- `pytest`: 25 tests passing.
+- Streamlit AppTest smoke covers reply-action guidance and absence of the generic `Terminer l'action` button in the main Actions flow.
 - Streamlit smoke tests passed during the session.
 - Streamlit and FastAPI were restarted after a stale import issue.
 

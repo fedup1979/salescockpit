@@ -65,7 +65,7 @@ LEAD_STATUSES = [item["value"] for item in QUALIFICATION_STATUSES]
 CONTACT_STATUS_VALUES = [item["value"] for item in CONTACT_STATUSES]
 RESOLUTION_REASON_VALUES = [item["value"] for item in RESOLUTION_REASONS]
 URGENCIES = ["low", "normal", "high", "urgent"]
-WORK_QUEUES = ["todo", "follow_up", "waiting", "resolved"]
+WORK_QUEUES = ["todo", "waiting", "resolved"]
 INBOX_QUEUES = ["all"] + WORK_QUEUES
 ACTION_QUEUES = ["due", "future", "completed", "all"]
 ACTION_TYPES = ["reply", "follow_up", "setting_call", "closing_call", "contact_review", "other"]
@@ -78,6 +78,8 @@ ACTION_OUTCOMES = {
     "contact_review": ["maintain_do_not_contact", "lift_do_not_contact"],
     "other": ["done"],
 }
+REPLY_SEND_OUTCOMES = ["reply_no_appointment", "setting_booked", "not_relevant", "do_not_contact"]
+CALL_ACTION_TYPES = {"setting_call", "closing_call"}
 
 DISPLAY_LABELS = {
     "all": "Tous",
@@ -119,12 +121,12 @@ DISPLAY_LABELS = {
     "done": "Terminée",
     "cancelled": "Annulée",
     "blocked": "Bloquée",
-    "todo": "À traiter",
-    "due": "À traiter",
+    "todo": "À faire",
+    "due": "À faire",
     "future": "À venir",
     "completed": "Terminées",
-    "follow_up": "À relancer",
-    "waiting": "En attente",
+    "follow_up": "Relancer",
+    "waiting": "À venir",
     "reply": "Répondre",
     "call": "Appeler",
     "closing_call": "Appel closing",
@@ -546,7 +548,63 @@ def render_messages(conversation_id: int) -> None:
         )
 
 
+def next_action_context(conv: dict) -> dict | None:
+    return get_next_action_for_lead(conv["lead_id"])
+
+
+def reply_send_plan_inputs(
+    action: dict | None,
+    key_prefix: str,
+    users: list[dict],
+) -> tuple[str | None, str | None, int | None, str]:
+    if not action or action.get("type") != "reply":
+        return None, None, None, ""
+
+    st.markdown("**Suite après envoi**")
+    outcome = st.selectbox(
+        "Résultat de la réponse",
+        REPLY_SEND_OUTCOMES,
+        format_func=labelize,
+        key=f"{key_prefix}_reply_outcome",
+    )
+    note = st.text_area("Note interne", height=80, key=f"{key_prefix}_reply_note")
+    next_due_at = None
+    assigned_to_user_id = None
+    if outcome == "setting_booked":
+        assignee = st.selectbox(
+            "Responsable de l'appel",
+            users,
+            index=safe_user_index(users, action.get("assigned_to_user_id")),
+            format_func=format_user,
+            key=f"{key_prefix}_reply_assignee",
+        )
+        appointment_date = st.date_input(
+            "Date du rendez-vous",
+            value=datetime.now().date(),
+            key=f"{key_prefix}_reply_date",
+        )
+        appointment_time = st.time_input(
+            "Heure",
+            value=time(9, 0),
+            key=f"{key_prefix}_reply_time",
+        )
+        next_due_at = local_due_at(appointment_date, appointment_time)
+        assigned_to_user_id = assignee["id"]
+    elif outcome in {"not_relevant", "do_not_contact"}:
+        st.warning("Cette réponse résoudra la conversation et annulera les relances futures.")
+    else:
+        st.caption("Après l'envoi, une relance Setter 2 sera planifiée à +72h si le prospect ne répond pas.")
+    return outcome, next_due_at, assigned_to_user_id, note.strip()
+
+
 def render_composer(user: dict, conv: dict) -> None:
+    action = next_action_context(conv)
+    users = list_users()
+    action_outcome, next_due_at, assigned_to_user_id, action_note = reply_send_plan_inputs(
+        action,
+        f"reply_plan_{conv['id']}",
+        users,
+    )
     if conv["window_is_open"]:
         st.success("Fenêtre WhatsApp ouverte : message libre autorisé.")
         with st.form(f"freeform_{conv['id']}"):
@@ -554,7 +612,15 @@ def render_composer(user: dict, conv: dict) -> None:
             st.file_uploader("Pièces jointes, mock UI", accept_multiple_files=True)
             submitted = st.form_submit_button("Envoyer le message libre")
         if submitted:
-            ok, message = send_freeform_message(conv["id"], user["id"], body.strip())
+            ok, message = send_freeform_message(
+                conv["id"],
+                user["id"],
+                body.strip(),
+                action_outcome=action_outcome,
+                next_due_at=next_due_at,
+                assigned_to_user_id=assigned_to_user_id,
+                note=action_note,
+            )
             show_result(ok, message)
             if ok:
                 st.rerun()
@@ -624,7 +690,16 @@ def render_composer(user: dict, conv: dict) -> None:
     )
 
     if st.button("Envoyer le modèle approuvé"):
-        ok, message = send_template_message(conv["id"], user["id"], template["id"], variables)
+        ok, message = send_template_message(
+            conv["id"],
+            user["id"],
+            template["id"],
+            variables,
+            action_outcome=action_outcome,
+            next_due_at=next_due_at,
+            assigned_to_user_id=assigned_to_user_id,
+            note=action_note,
+        )
         show_result(ok, message)
         if ok:
             st.rerun()
@@ -730,7 +805,7 @@ def render_next_action_summary(conv: dict) -> None:
     )
 
 
-def render_next_action_box(user: dict, conv: dict) -> None:
+def _render_next_action_box_legacy(user: dict, conv: dict) -> None:
     action = get_next_action_for_lead(conv["lead_id"])
     users = list_users()
     active_assignee_id = default_assignee_id(conv, action, user)
@@ -933,6 +1008,344 @@ def render_next_action_box(user: dict, conv: dict) -> None:
             st.caption(
                 f"{item['title']} · {labelize(item['type'])} · {labelize(item['status'])} · "
                 f"{item.get('assigned_to_name') or 'Non assigné'} · {format_due(item.get('due_at'))}"
+            )
+
+
+def action_consequence(action_type: str, outcome: str) -> str:
+    consequences = {
+        ("setting_call", "to_closing"): "Crée un appel de closing pour le closer et passe le parcours en Closing.",
+        ("setting_call", "not_reached"): "Crée un rappel d'appel, puis une relance Setter 2 si les rappels sont épuisés.",
+        ("setting_call", "not_ready"): "Crée une relance Setter 2 à +72h.",
+        ("setting_call", "not_relevant"): "Résout la conversation et annule les relances futures.",
+        ("setting_call", "do_not_contact"): "Passe le contact en Ne plus contacter, résout la conversation et bloque les relances.",
+        ("closing_call", "signed"): "Marque la vente comme signée, résout la conversation et annule les relances.",
+        ("closing_call", "will_sign"): "Crée une relance Setter 2 à +72h, puis suit la séquence Va signer.",
+        ("closing_call", "not_reached"): "Crée un rappel d'appel, puis une relance Setter 2 si les rappels sont épuisés.",
+        ("closing_call", "undecided"): "Crée une relance Setter 2 à +72h.",
+        ("closing_call", "not_relevant"): "Résout la conversation et annule les relances futures.",
+        ("contact_review", "maintain_do_not_contact"): "Maintient le blocage Ne plus contacter et résout la conversation.",
+        ("contact_review", "lift_do_not_contact"): "Lève le blocage et crée une action Répondre pour Setter 1.",
+    }
+    return consequences.get((action_type, outcome), "Le système appliquera la suite prévue par la règle métier.")
+
+
+def render_current_action_card(action: dict) -> None:
+    st.markdown(
+        f"""
+        <div class="sc-panel">
+          <div class="sc-action-title">{escape_html(action['title'])}</div>
+          <div class="sc-row-meta">
+            {escape_html(labelize(action['type']))} · {escape_html(action.get('assigned_to_name') or 'Non assigné')} ·
+            {escape_html(format_due(action.get('due_at')))} · {escape_html(labelize(action.get('status')))} ·
+            {escape_html(labelize(action.get('urgency')))}
+          </div>
+          {f"<div class='sc-action-description'>{escape_html(action['description'])}</div>" if action.get('description') else ""}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_blocked_action(user: dict, conv: dict, action: dict) -> None:
+    st.warning("Relance bloquée : modèle WhatsApp manquant.")
+    requests = [
+        item for item in list_template_requests()
+        if item.get("task_id") == action["id"]
+    ]
+    if requests:
+        for request in requests:
+            st.caption(
+                f"Demande #{request['id']} · {labelize(request['status'])} · "
+                f"{request.get('reason') or 'Sans motif'}"
+            )
+        return
+
+    with st.form(f"blocked_template_request_{action['id']}"):
+        reason = st.text_input("Modèle manquant", placeholder="Ex. relance financement pour APP")
+        context = st.text_area(
+            "Contexte pour le modèle",
+            value=conv.get("last_message_body") or "",
+            height=90,
+        )
+        submitted = st.form_submit_button("Créer la demande de modèle")
+    if submitted:
+        ok, message = create_template_request(
+            conv["id"],
+            user["id"],
+            reason,
+            context,
+            task_id=action["id"],
+        )
+        show_result(ok, message)
+        if ok:
+            st.rerun()
+
+
+def render_whatsapp_action_guidance(user: dict, conv: dict, action: dict) -> None:
+    if action["type"] == "reply":
+        st.info("Le client attend une réponse. Cette action sera clôturée quand le message sera envoyé dans l'onglet Conversation.")
+        st.caption("Choisis la suite après envoi directement sous le message libre ou le modèle : relance +72h, RDV setting, Non pertinent ou Ne plus contacter.")
+        return
+
+    if action["type"] == "follow_up":
+        if action.get("status") == "blocked":
+            render_blocked_action(user, conv, action)
+            return
+        if conv["window_is_open"]:
+            st.info("Relance à envoyer. La fenêtre WhatsApp est ouverte : message libre ou modèle approuvé possible.")
+        else:
+            st.warning("Relance à envoyer. Fenêtre WhatsApp fermée : modèle approuvé obligatoire.")
+        st.caption("L'action sera clôturée uniquement quand le message ou le modèle aura été envoyé dans l'onglet Conversation.")
+
+
+def render_call_action_form(user: dict, action: dict) -> None:
+    users = list_users()
+    outcomes = ACTION_OUTCOMES[action["type"]]
+    with st.form(f"call_action_form_{action['id']}"):
+        outcome = st.selectbox(
+            "Résultat de l'appel",
+            outcomes,
+            format_func=labelize,
+            key=f"call_outcome_{action['id']}",
+        )
+        st.caption(action_consequence(action["type"], outcome))
+        note = st.text_area("Note d'appel obligatoire", height=100, key=f"call_note_{action['id']}")
+        assigned_to_user_id = None
+        next_due_at = None
+        if outcome == "to_closing":
+            closers = [item for item in users if item["role"] == "closer"]
+            if closers:
+                closer = st.selectbox(
+                    "Closer",
+                    closers,
+                    format_func=format_user,
+                    key=f"call_closer_{action['id']}",
+                )
+                assigned_to_user_id = closer["id"]
+            next_date = st.date_input("Date du rendez-vous", value=datetime.now().date(), key=f"call_date_{action['id']}")
+            next_time = st.time_input("Heure", value=time(9, 0), key=f"call_time_{action['id']}")
+            next_due_at = local_due_at(next_date, next_time)
+        submitted = st.form_submit_button("Enregistrer le résultat")
+    if submitted:
+        ok, message = complete_action_with_workflow(
+            action["id"],
+            user["id"],
+            outcome,
+            note=note,
+            next_due_at=next_due_at,
+            assigned_to_user_id=assigned_to_user_id,
+        )
+        show_result(ok, message)
+        if ok:
+            st.rerun()
+
+
+def render_contact_review_action(user: dict, action: dict) -> None:
+    st.warning("Ce prospect est marqué Ne plus contacter, mais il a réécrit. Lis le message avant de décider.")
+    note = st.text_area("Note de revue", height=80, key=f"contact_review_note_{action['id']}")
+    cols = st.columns(2)
+    if cols[0].button("Maintenir Ne plus contacter", use_container_width=True, key=f"maintain_dnc_{action['id']}"):
+        ok, message = complete_action_with_workflow(
+            action["id"],
+            user["id"],
+            "maintain_do_not_contact",
+            note=note,
+        )
+        show_result(ok, message)
+        if ok:
+            st.rerun()
+    if cols[1].button("Lever et répondre", use_container_width=True, key=f"lift_dnc_{action['id']}"):
+        ok, message = complete_action_with_workflow(
+            action["id"],
+            user["id"],
+            "lift_do_not_contact",
+            note=note,
+        )
+        show_result(ok, message)
+        if ok:
+            st.rerun()
+
+
+def render_manual_completion_advanced(user: dict, action: dict | None) -> None:
+    if not action or action.get("type") not in {"reply", "follow_up"}:
+        return
+    st.markdown("**Message fait hors cockpit**")
+    st.caption("À utiliser seulement si le message a réellement été envoyé ailleurs. Une note est obligatoire.")
+    outcomes = (
+        ["reply_no_appointment", "setting_booked", "not_relevant", "do_not_contact"]
+        if action["type"] == "reply"
+        else ["follow_up_sent", "sequence_completed_no_reply"]
+    )
+    with st.form(f"manual_complete_{action['id']}"):
+        outcome = st.selectbox("Résultat", outcomes, format_func=labelize, key=f"manual_complete_outcome_{action['id']}")
+        note = st.text_area("Preuve / note obligatoire", height=90, key=f"manual_complete_note_{action['id']}")
+        next_due_at = None
+        assigned_to_user_id = None
+        if outcome == "setting_booked":
+            users = list_users()
+            assignee = st.selectbox("Responsable de l'appel", users, format_func=format_user, key=f"manual_complete_assignee_{action['id']}")
+            next_date = st.date_input("Date du rendez-vous", value=datetime.now().date(), key=f"manual_complete_date_{action['id']}")
+            next_time = st.time_input("Heure", value=time(9, 0), key=f"manual_complete_time_{action['id']}")
+            next_due_at = local_due_at(next_date, next_time)
+            assigned_to_user_id = assignee["id"]
+        submitted = st.form_submit_button("Enregistrer hors cockpit")
+    if submitted:
+        if not note.strip():
+            st.error("Ajoute une note pour documenter l'action faite hors cockpit.")
+            return
+        ok, message = complete_action_with_workflow(
+            action["id"],
+            user["id"],
+            outcome,
+            note=note,
+            next_due_at=next_due_at,
+            assigned_to_user_id=assigned_to_user_id,
+        )
+        show_result(ok, message)
+        if ok:
+            st.rerun()
+
+
+def render_advanced_actions(user: dict, conv: dict, action: dict | None, users: list[dict], active_assignee_id: int) -> None:
+    with st.expander("Actions avancées"):
+        render_manual_completion_advanced(user, action)
+        st.divider()
+        st.markdown("**Planifier une relance exceptionnelle**")
+        with st.form(f"schedule_followup_{conv['lead_id']}"):
+            assignee = st.selectbox(
+                "Assigné à",
+                users,
+                index=safe_user_index(users, active_assignee_id),
+                format_func=format_user,
+            )
+            followup_date = st.date_input("Date", value=(datetime.now().date() + timedelta(days=1)))
+            followup_time = st.time_input("Heure", value=time(9, 0))
+            urgency = st.selectbox("Urgence", URGENCIES, index=1, format_func=labelize)
+            notes = st.text_area("Note interne", height=90)
+            submitted = st.form_submit_button("Planifier la relance")
+        if submitted:
+            ok, message = schedule_followup(
+                conv["id"],
+                user["id"],
+                assignee["id"],
+                local_due_at(followup_date, followup_time),
+                urgency=urgency,
+                notes=notes.strip() or None,
+            )
+            show_result(ok, message)
+            if ok:
+                st.rerun()
+
+        st.divider()
+        st.markdown("**Passer au closer hors flux normal**")
+        closers = [item for item in users if item["role"] == "closer"]
+        if not closers:
+            st.warning("Aucun closer actif.")
+        else:
+            with st.form(f"handoff_closer_{conv['lead_id']}"):
+                closer = st.selectbox("Closer", closers, format_func=format_user)
+                appointment_note = st.text_input("RDV / contexte", placeholder="Ex. disponible demain à 14h")
+                notes = st.text_area("Remarques pour le closer", height=90)
+                submitted = st.form_submit_button("Passer au closer")
+            if submitted:
+                ok, message = handoff_to_closer(
+                    conv["id"],
+                    user["id"],
+                    closer["id"],
+                    appointment_note.strip(),
+                    notes.strip(),
+                )
+                show_result(ok, message)
+                if ok:
+                    st.rerun()
+
+        st.divider()
+        st.markdown("**Résoudre manuellement**")
+        with st.form(f"resolve_action_{conv['id']}"):
+            reason = st.selectbox("Motif", RESOLUTION_REASON_VALUES, format_func=labelize)
+            note = st.text_area("Note", height=80)
+            submitted = st.form_submit_button("Marquer résolue")
+        if submitted:
+            ok, message = set_conversation_status(
+                conv["id"],
+                user["id"],
+                "resolved",
+                resolution_reason=reason,
+                resolution_note=note.strip(),
+            )
+            show_result(ok, message)
+            if ok:
+                st.rerun()
+
+        st.divider()
+        st.markdown("**Créer une action manuelle**")
+        with st.form(f"manual_action_{conv['lead_id']}"):
+            assignee = st.selectbox(
+                "Responsable",
+                users,
+                index=safe_user_index(users, active_assignee_id),
+                format_func=format_user,
+            )
+            action_type = st.selectbox("Type d'action", ACTION_TYPES, format_func=labelize)
+            title = st.text_input("Titre", value=f"Contacter {conv['first_name']} {conv['last_name']}")
+            action_date = st.date_input("Échéance", value=datetime.now().date())
+            action_time = st.time_input("Heure", value=time(9, 0), key=f"manual_action_time_{conv['lead_id']}")
+            urgency = st.selectbox("Urgence", URGENCIES, index=1, format_func=labelize, key=f"manual_action_urgency_{conv['lead_id']}")
+            description = st.text_area("Description", height=90)
+            submitted = st.form_submit_button("Créer l'action")
+        if submitted:
+            create_next_action(
+                conv["lead_id"],
+                conv["id"],
+                action_type,
+                title.strip(),
+                assignee["id"],
+                user["id"],
+                urgency=urgency,
+                due_at=local_due_at(action_date, action_time),
+                description=description.strip() or None,
+            )
+            st.success("Action créée.")
+            st.rerun()
+
+
+def render_next_action_box(user: dict, conv: dict) -> None:
+    action = get_next_action_for_lead(conv["lead_id"])
+    users = list_users()
+    active_assignee_id = default_assignee_id(conv, action, user)
+
+    if action:
+        st.markdown("**Action actuelle**")
+        render_current_action_card(action)
+        if action.get("status") == "blocked":
+            render_blocked_action(user, conv, action)
+        elif action["type"] in {"reply", "follow_up"}:
+            render_whatsapp_action_guidance(user, conv, action)
+        elif action["type"] in CALL_ACTION_TYPES:
+            render_call_action_form(user, action)
+        elif action["type"] == "contact_review":
+            render_contact_review_action(user, action)
+        else:
+            st.info("Action personnalisée. Utilise les actions avancées pour la documenter ou créer la suite.")
+    elif conv["status"] == "open":
+        st.warning("Anomalie : cette conversation est ouverte sans prochaine action.")
+        st.caption("Crée immédiatement une action principale dans Actions avancées.")
+    else:
+        st.info("Aucune action ouverte pour cette conversation.")
+
+    render_advanced_actions(user, conv, action, users, active_assignee_id)
+
+    actions = list_actions_for_lead(conv["lead_id"], "all")
+    if actions:
+        st.divider()
+        st.markdown("**Historique des actions**")
+        for item in actions:
+            proof = " · preuve message" if item.get("proof_message_id") else ""
+            outcome = f" · {item['outcome']}" if item.get("outcome") else ""
+            st.caption(
+                f"{item['title']} · {labelize(item['type'])} · {labelize(item['status'])} · "
+                f"{item.get('assigned_to_name') or 'Non assigné'} · {format_due(item.get('due_at'))}"
+                f"{outcome}{proof}"
             )
 
 
@@ -1367,8 +1780,6 @@ def detail_work_queue(conv: dict, action: dict | None) -> str:
     due_at = parse_dt(action.get("due_at"))
     if due_at and due_at > datetime.now(timezone.utc):
         return "waiting"
-    if action.get("type") == "follow_up":
-        return "follow_up"
     return "todo"
 
 

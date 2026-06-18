@@ -75,10 +75,11 @@ Qualification, contact status, manual notes, and template creation are support a
 
 Work queues:
 
-- `À traiter`: action due now or overdue, usually reply, setting call, or closing call.
-- `À relancer`: follow-up action due now or overdue.
-- `En attente`: future follow-up or no immediate action.
+- `À faire`: action due now or overdue, including reply, call, contact review, blocked template work, or follow-up.
+- `À venir`: future follow-up or future action.
 - `Résolues`: conversation is resolved.
+
+`Relancer` is an action type, not a separate Inbox queue.
 
 Operational rules:
 
@@ -115,7 +116,7 @@ Refreshes every 10 seconds while visible.
 Left panel:
 
 - Responsible-person filter.
-- Operational tabs: `À traiter`, `À venir`, `Terminées`, `Tous`.
+- Operational tabs: `À faire`, `À venir`, `Terminées`, `Tous`.
 - Rows represent people/actions, not abstract standalone tasks.
 - The responsible-person filter defaults to the connected user's own queue. Users can switch to another person or `Tous`, and the choice persists while navigating between pages.
 - Mock data keeps at least one open task per active user for visual checks.
@@ -133,7 +134,7 @@ Refreshes every 10 seconds while visible.
 Left panel:
 
 - Search.
-- Tabs: `Tous`, `À traiter`, `À relancer`, `En attente`, `Résolues`.
+- Tabs: `Tous`, `À faire`, `À venir`, `Résolues`.
 - Conversation rows with prospect name, course, responsible person, next action, due date, and last message.
 - If the latest prospect message is inbound and unanswered, the row shows the same waiting-reply signal as `Tâches`.
 - `Ouvrir` button per row.
@@ -170,13 +171,15 @@ Dropdown labels are displayed in French. Internal values remain in English.
 
 ### Actions Tab
 
-- Current next action.
-- Completion with outcome.
-- Quick decisions: follow up tomorrow, follow up in three days, resolve.
-- Follow-up scheduling with custom date/time.
-- Setter-to-closer handoff.
-- Manual action creation.
-- Action history.
+- Current next action with type, owner, due date, status, urgency, and expected proof.
+- Contextual action body by action type.
+- `reply`: guides the user to send the WhatsApp message from `Conversation`; the send form captures the business outcome and creates the next action.
+- `follow_up`: guides the user to send the relance from `Conversation`; closed WhatsApp windows require an approved template.
+- `blocked follow_up`: shows the linked missing-template request or lets the user create one.
+- `setting_call` and `closing_call`: completed from Actions with result and mandatory call note.
+- `contact_review`: shows only the explicit do-not-contact review decisions.
+- `Actions avancées`: exceptional manual completion, custom follow-up scheduling, out-of-flow closer handoff, manual resolution, and manual action creation.
+- Action history includes outcome and message proof when available.
 
 ### Private Note Tab
 

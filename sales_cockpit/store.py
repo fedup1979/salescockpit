@@ -207,9 +207,6 @@ def classify_work_queue(conv: dict[str, Any]) -> str:
     if due_at and due_at > utc_now():
         return "waiting"
 
-    if conv.get("next_action_type") == "follow_up":
-        return "follow_up"
-
     if conv.get("next_action_id"):
         return "todo"
 
@@ -827,6 +824,10 @@ def _close_outbound_action_and_chain(
     user_id: int,
     message_id: int,
     sent_at: str,
+    action_outcome: str | None = None,
+    next_due_at: str | None = None,
+    assigned_to_user_id: int | None = None,
+    note: str = "",
 ) -> None:
     action = _first_active_action_for_lead(
         conn,
@@ -836,17 +837,27 @@ def _close_outbound_action_and_chain(
     if not action:
         return
 
+    note = note.strip()
+    persisted_outcome = action_outcome or "Message WhatsApp envoyé"
     conn.execute(
         """
         UPDATE tasks
         SET status = 'done',
-            outcome = 'Message WhatsApp envoyé',
+            outcome = ?,
             proof_message_id = ?,
             completed_at = ?,
-            updated_at = ?
+            updated_at = ?,
+            metadata_json = ?
         WHERE id = ?
         """,
-        (message_id, sent_at, sent_at, action["id"]),
+        (
+            persisted_outcome,
+            message_id,
+            sent_at,
+            sent_at,
+            json.dumps({"completion_note": note}, ensure_ascii=False),
+            action["id"],
+        ),
     )
     insert_event(
         conn,
@@ -854,11 +865,73 @@ def _close_outbound_action_and_chain(
         "action_completed_by_outbound_message",
         user_id=user_id,
         previous={"task_id": action["id"], "type": action["type"]},
-        new={"status": "done", "proof_message_id": message_id},
+        new={
+            "status": "done",
+            "outcome": persisted_outcome,
+            "proof_message_id": message_id,
+            "note": note,
+        },
     )
 
     full_name = f"{conv['first_name']} {conv['last_name']}"
     if action["type"] == "reply":
+        if action_outcome == "setting_booked":
+            assignee_id = assigned_to_user_id or action.get("assigned_to_user_id") or user_id
+            next_action_id = _insert_next_action(
+                conn,
+                lead_id=conv["lead_id"],
+                conversation_id=conv["id"],
+                action_type="setting_call",
+                title=f"Appeler {full_name} pour setting",
+                assigned_to_user_id=assignee_id,
+                created_by_user_id=user_id,
+                urgency="high",
+                due_at=next_due_at or sent_at,
+                description=note or None,
+                trigger_reason="setting_appointment_booked",
+                previous_action_id=action["id"],
+            )
+            conn.execute("UPDATE tasks SET next_action_id = ? WHERE id = ?", (next_action_id, action["id"]))
+            return
+
+        if action_outcome in {"not_relevant", "do_not_contact"}:
+            if action_outcome == "do_not_contact":
+                conn.execute(
+                    "UPDATE leads SET contact_status = 'do_not_contact', updated_at = ? WHERE id = ?",
+                    (sent_at, conv["lead_id"]),
+                )
+            else:
+                conn.execute(
+                    "UPDATE leads SET lead_status = 'not_relevant', updated_at = ? WHERE id = ?",
+                    (sent_at, conv["lead_id"]),
+                )
+            _complete_open_actions_for_lead(
+                conn,
+                conv["lead_id"],
+                user_id,
+                outcome=f"Statut terminal : {action_outcome}",
+            )
+            conn.execute(
+                """
+                UPDATE conversations
+                SET status = 'resolved',
+                    resolution_reason = ?,
+                    resolution_note = ?,
+                    resolved_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (action_outcome, note or None, sent_at, sent_at, conv["id"]),
+            )
+            insert_event(
+                conn,
+                conv["lead_id"],
+                "conversation_resolved_by_reply_outcome",
+                user_id=user_id,
+                metadata={"outcome": action_outcome, "message_id": message_id},
+            )
+            return
+
         assignee_id = setter2_user_id(conn) or user_id
         next_action_id = _insert_next_action(
             conn,
@@ -1441,7 +1514,15 @@ def update_lead_qualification(
         )
 
 
-def send_freeform_message(conversation_id: int, user_id: int, body: str) -> tuple[bool, str]:
+def send_freeform_message(
+    conversation_id: int,
+    user_id: int,
+    body: str,
+    action_outcome: str | None = None,
+    next_due_at: str | None = None,
+    assigned_to_user_id: int | None = None,
+    note: str = "",
+) -> tuple[bool, str]:
     conv = get_conversation(conversation_id)
     if not conv:
         return False, "Conversation introuvable."
@@ -1477,7 +1558,17 @@ def send_freeform_message(conversation_id: int, user_id: int, body: str) -> tupl
             "UPDATE conversations SET last_outbound_at = ?, updated_at = ? WHERE id = ?",
             (now, now, conversation_id),
         )
-        _close_outbound_action_and_chain(conn, conv, user_id, message_id, now)
+        _close_outbound_action_and_chain(
+            conn,
+            conv,
+            user_id,
+            message_id,
+            now,
+            action_outcome=action_outcome,
+            next_due_at=next_due_at,
+            assigned_to_user_id=assigned_to_user_id,
+            note=note,
+        )
         insert_event(
             conn,
             conv["lead_id"],
@@ -1489,7 +1580,14 @@ def send_freeform_message(conversation_id: int, user_id: int, body: str) -> tupl
 
 
 def send_template_message(
-    conversation_id: int, user_id: int, template_id: int, variables: dict[str, str]
+    conversation_id: int,
+    user_id: int,
+    template_id: int,
+    variables: dict[str, str],
+    action_outcome: str | None = None,
+    next_due_at: str | None = None,
+    assigned_to_user_id: int | None = None,
+    note: str = "",
 ) -> tuple[bool, str]:
     conv = get_conversation(conversation_id)
     template = get_template(template_id)
@@ -1545,7 +1643,17 @@ def send_template_message(
             "UPDATE conversations SET last_outbound_at = ?, updated_at = ? WHERE id = ?",
             (now, now, conversation_id),
         )
-        _close_outbound_action_and_chain(conn, conv, user_id, message_id, now)
+        _close_outbound_action_and_chain(
+            conn,
+            conv,
+            user_id,
+            message_id,
+            now,
+            action_outcome=action_outcome,
+            next_due_at=next_due_at,
+            assigned_to_user_id=assigned_to_user_id,
+            note=note,
+        )
         insert_event(
             conn,
             conv["lead_id"],

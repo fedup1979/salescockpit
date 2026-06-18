@@ -70,10 +70,11 @@ There are two different concepts. Do not merge them:
 
 Inbox tabs are work queues:
 
-- `À traiter`: a setter/closer must act now.
-- `À relancer`: a follow-up action is due now or overdue.
-- `En attente`: no immediate action, usually a future follow-up.
-- `Résolues`: conversation manually marked as resolved.
+- `À faire`: someone must act now, including reply, call, contact review, blocked template work, or due follow-up.
+- `À venir`: the next action is planned later.
+- `Résolues`: conversation manually or automatically marked as resolved.
+
+`Relancer` is an action type, not a separate top-level Inbox queue.
 
 Operational rule:
 
@@ -87,6 +88,9 @@ Operational rule:
 - Resolving a conversation requires a controlled reason. Some reasons require a note.
 - Reopening a resolved conversation requires creating the next action immediately.
 - Missing WhatsApp templates are tracked as `template_requests` linked to the blocked follow-up action.
+- In the main Actions tab, `reply` and `follow_up` are not closed by a generic completion button. The normal proof is the outbound WhatsApp message sent from the Conversation composer.
+- The Conversation composer captures the business outcome for `reply` at send time and creates the next action from that outcome.
+- Call actions are completed in Actions with result plus mandatory note. Manual WhatsApp completion belongs only in `Actions avancées`.
 - Course-date reminders always win over lead-relative reminders. If both conflict, cancel the lead-relative reminder.
 - Minimum delay between outbound WhatsApp follow-ups is 24h.
 - Business rules are centralized in `sales_cockpit/business_rules.py` and displayed in Admin.

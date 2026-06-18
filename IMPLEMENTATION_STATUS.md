@@ -24,7 +24,7 @@ V1 local mock build is runnable.
 - Operational conversation status separate from WhatsApp window state.
 - Mark conversation resolved / reopen conversation.
 - Inbound messages reopen resolved conversations.
-- Inbox work queues: `À traiter`, `À relancer`, `En attente`, `Résolues`.
+- Inbox work queues: `À faire`, `À venir`, `Résolues`; follow-ups due now are included in `À faire`.
 - Next-action model on top of the existing `tasks` table.
 - Inbound WhatsApp messages create/update a setter `reply` action.
 - Follow-up scheduling and setter-to-closer handoff from the conversation detail.
@@ -52,8 +52,10 @@ V1 local mock build is runnable.
 - Follow-up sequences and sequence steps are stored structurally in SQLite and visible in Admin.
 - Missing templates create `template_requests` linked to the blocked action.
 - Outbound WhatsApp messages close the active `reply` or `follow_up` action and create the next follow-up when applicable.
+- WhatsApp `reply` actions can now choose the business outcome at send time, so the sent message is the proof and the selected outcome creates the next action.
+- The Actions tab is contextual by action type: WhatsApp actions guide users to the Conversation composer, calls use result + mandatory note, contact reviews show explicit do-not-contact decisions, and exceptions live in Actions avancées.
 - Setting/closing calls can be completed with business outcomes that create the next action.
-- Added tests for resolution/reopen guards, do-not-contact inbound review, template requests, reply-to-follow-up chaining, and call retry chaining.
+- Added tests for resolution/reopen guards, do-not-contact inbound review, template requests, reply-to-follow-up chaining, send-time reply outcomes, call retry chaining, and Streamlit action guidance.
 
 ## Next Checkpoints
 
