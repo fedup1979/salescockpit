@@ -53,7 +53,6 @@ from sales_cockpit.store import (
     list_bug_reports,
     list_user_activity_log,
     list_users,
-    normalize_user_display_name,
     schedule_followup,
     send_freeform_message,
     send_template_message,
@@ -1160,10 +1159,22 @@ def render_advanced_actions(user: dict, conv: dict, action: dict | None, users: 
         st.divider()
         st.markdown("**Résoudre manuellement**")
         st.caption("Effet : termine la conversation et clôt les actions ouvertes. À utiliser seulement quand il n'y a plus rien à faire.")
-        with st.form(f"resolve_action_{conv['id']}"):
-            reason = st.selectbox("Motif", RESOLUTION_REASON_VALUES, format_func=labelize)
-            note = st.text_area("Note", height=80)
-            submitted = st.form_submit_button("Clore la conversation")
+        reason = st.selectbox(
+            "Motif",
+            RESOLUTION_REASON_VALUES,
+            format_func=labelize,
+            key=f"resolve_action_reason_{conv['id']}",
+        )
+        note = st.text_area(
+            "Note obligatoire",
+            height=80,
+            key=f"resolve_action_note_{conv['id']}",
+        )
+        submitted = st.button(
+            "Clore la conversation",
+            key=f"resolve_action_submit_{conv['id']}",
+            disabled=not note.strip(),
+        )
         if submitted:
             ok, message = set_conversation_status(
                 conv["id"],
@@ -1929,6 +1940,14 @@ def refresh_current_user(user: dict) -> dict:
             refreshed = {**user, **item}
             return refreshed
     return user
+
+
+def normalize_user_display_name(email: str | None, full_name: str | None) -> str:
+    if (email or "").lower() == "setter2@essr.ch":
+        return "Tanjona"
+    if (full_name or "").strip().lower() == "setter 2":
+        return "Tanjona"
+    return (full_name or "").strip() or "Non assigné"
 
 
 def display_user_name(user: dict) -> str:
