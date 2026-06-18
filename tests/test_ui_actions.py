@@ -126,3 +126,46 @@ def test_admin_users_table_formats_setter2_role() -> None:
     row = users_df.loc[users_df["Email"] == "setter2@essr.ch"].iloc[0]
     assert row["Nom"] == "Tanjona"
     assert row["Rôle"] == "Setter II"
+
+
+def test_status_tab_no_longer_exposes_parcours_selector() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je veux des informations.")
+
+    app = AppTest.from_file("sales_cockpit/ui/app.py")
+    app.session_state["user"] = admin
+    app.session_state["selected_conversation_id"] = result["conversation_id"]
+    app.run(timeout=10)
+    app.radio[0].set_value("Inbox")
+    app.run(timeout=10)
+
+    assert len(app.exception) == 0
+    selectbox_labels = [item.label for item in app.selectbox]
+    markup = "\n".join(item.value for item in app.markdown)
+    assert "Qualification (probabilité que le client s'inscrive)" in selectbox_labels
+    assert "Statut de contact (le prospect refuse-t-il qu'on lui écrive ?)" in selectbox_labels
+    assert all("parcours" not in label.lower() for label in selectbox_labels)
+    assert "Forçage admin du parcours" not in markup
+
+
+def test_advanced_actions_only_show_off_cockpit_message_flow() -> None:
+    seed_initial_data()
+    user = authenticate("service.etudiants@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je veux des informations.")
+    action = get_next_action_for_lead(result["lead_id"])
+
+    app = AppTest.from_file("sales_cockpit/ui/app.py")
+    app.session_state["user"] = user
+    app.session_state["selected_action_id"] = action["id"]
+    app.run(timeout=10)
+
+    assert len(app.exception) == 0
+    markdown = "\n".join(item.value for item in app.markdown)
+    button_labels = [item.label for item in app.button]
+    assert "Message fait hors cockpit" in markdown
+    assert "Créer une action manuelle" not in markdown
+    assert "Passer au closer hors flux normal" not in markdown
+    assert "Planifier une relance exceptionnelle" not in markdown
+    assert "Créer l'action" not in button_labels
+    assert "Passer au closer" not in button_labels

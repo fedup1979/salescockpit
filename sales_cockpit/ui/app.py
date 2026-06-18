@@ -32,16 +32,15 @@ from sales_cockpit.services.whatsapp_rules import parse_dt, utc_now
 from sales_cockpit.services.schooldrive import SchoolDriveConnector
 from sales_cockpit.store import (
     add_manual_note,
+    assign_standard_next_action,
     authenticate,
     complete_action_with_workflow,
     create_bug_report,
-    create_next_action,
     create_template_request,
     create_template,
     get_conversation,
     get_next_action_for_lead,
     get_template,
-    handoff_to_closer,
     list_actions_for_lead,
     list_conversations,
     list_messages,
@@ -53,7 +52,6 @@ from sales_cockpit.store import (
     list_bug_reports,
     list_user_activity_log,
     list_users,
-    schedule_followup,
     send_freeform_message,
     send_template_message,
     set_conversation_status,
@@ -63,7 +61,6 @@ from sales_cockpit.store import (
 from sales_cockpit.ui.styles import APP_CSS
 
 
-SALES_STAGES = ["new", "setting", "appointment_booked", "closing", "won", "lost", "not_interesting", "no_show", "blacklist"]
 LEAD_STATUSES = [item["value"] for item in QUALIFICATION_STATUSES]
 CONTACT_STATUS_VALUES = [item["value"] for item in CONTACT_STATUSES]
 RESOLUTION_REASON_VALUES = [item["value"] for item in RESOLUTION_REASONS]
@@ -71,7 +68,7 @@ URGENCIES = ["low", "normal", "high", "urgent"]
 WORK_QUEUES = ["todo", "waiting", "resolved"]
 INBOX_QUEUES = WORK_QUEUES + ["all"]
 ACTION_QUEUES = ["due", "future", "completed", "all"]
-ACTION_TYPES = ["reply", "follow_up", "setting_call", "closing_call", "contact_review", "other"]
+STANDARD_NEXT_ACTION_TYPES = ["reply", "follow_up", "setting_call", "closing_call"]
 WORK_SORTS = ["assignee_name", "lead_name", "due_at"]
 ACTION_OUTCOMES = {
     "reply": ["reply_no_appointment", "setting_booked", "closing_booked", "not_relevant", "do_not_contact"],
@@ -95,8 +92,8 @@ DISPLAY_LABELS = {
     "all": "Toutes",
     "new": "Nouveau prospect",
     "setting": "Échange avec setter",
-    "appointment_booked": "Entretien setting prévu",
-    "closing": "Entretien closing",
+    "appointment_booked": "Appel setting prévu",
+    "closing": "Appel closing",
     "won": "Inscription confirmée",
     "lost": "Sans suite",
     "not_interesting": "Hors cible",
@@ -139,8 +136,8 @@ DISPLAY_LABELS = {
     "waiting": "En suspens",
     "reply": "Répondre au message",
     "call": "Appeler",
-    "closing_call": "Entretien Closing",
-    "setting_call": "Entretien Setting",
+    "closing_call": "Appel closing",
+    "setting_call": "Appel setting",
     "contact_review": "Revue contact",
     "other": "Autre",
     "assignee_name": "Responsable",
@@ -664,6 +661,36 @@ def reply_call_assignee_options(users: list[dict], outcome: str) -> list[dict]:
     return users
 
 
+def standard_action_assignee_options(users: list[dict], action_type: str) -> list[dict]:
+    if action_type in {"reply", "setting_call"}:
+        options = [
+            user for user in users
+            if user.get("role") == "setter" and (user.get("email") or "").lower() != "setter2@essr.ch"
+        ]
+        return options or users
+    if action_type == "follow_up":
+        tanjona = [
+            user for user in users
+            if (user.get("email") or "").lower() == "setter2@essr.ch"
+        ]
+        setters = [user for user in users if user.get("role") == "setter"]
+        return tanjona or setters or users
+    if action_type == "closing_call":
+        closers = [user for user in users if user.get("role") == "closer"]
+        return closers or users
+    return users
+
+
+def standard_action_button_label(action_type: str) -> str:
+    labels = {
+        "reply": "Attribuer une réponse",
+        "follow_up": "Planifier une relance",
+        "setting_call": "Programmer un appel setting",
+        "closing_call": "Programmer un appel closing",
+    }
+    return labels.get(action_type, labelize(action_type))
+
+
 def get_reply_send_plan(
     action: dict | None,
     key_prefix: str,
@@ -736,8 +763,8 @@ def render_reply_send_plan_controls(
             value=time(9, 0),
             key=f"{key_prefix}_reply_time",
         )
-        call_label = "Setting" if outcome == "setting_booked" else "Closing"
-        st.caption(f"Après l'envoi, un entretien {call_label} sera créé le {appointment_date.strftime('%d.%m.%Y')} à {appointment_time.strftime('%H:%M')}.")
+        call_label = "setting" if outcome == "setting_booked" else "closing"
+        st.caption(f"Après l'envoi, un appel {call_label} sera créé le {appointment_date.strftime('%d.%m.%Y')} à {appointment_time.strftime('%H:%M')}.")
     elif outcome in {"not_relevant", "do_not_contact"}:
         st.warning("Cette réponse résoudra la conversation et annulera les relances futures.")
     else:
@@ -891,28 +918,12 @@ def render_qualification(user: dict, conv: dict) -> None:
             format_func=labelize,
             help=HELP_TEXTS["contact_status"],
         )
-        sales_stage = conv["sales_stage"]
-        st.markdown(
-            f"**Étape du parcours** : {labelize(conv['sales_stage'])}"
-        )
-        if user.get("role") == "admin":
-            with st.expander("Forçage admin du parcours"):
-                sales_stage = st.selectbox(
-                    "Étape du parcours (pour forcer le client vers une autre étape)",
-                    SALES_STAGES,
-                    index=safe_index(SALES_STAGES, conv["sales_stage"]),
-                    format_func=labelize,
-                    help=HELP_TEXTS["sales_stage"],
-                )
-                st.caption("À utiliser seulement pour corriger un parcours incohérent.")
-        else:
-            st.caption("Le parcours est piloté par les actions. Un admin peut le corriger si nécessaire.")
         submitted = st.form_submit_button("Mettre à jour")
     if submitted:
         update_lead_qualification(
             conv["lead_id"],
             user["id"],
-            sales_stage,
+            conv["sales_stage"],
             lead_status,
             contact_status=contact_status,
         )
@@ -954,7 +965,7 @@ def render_next_action_summary(conv: dict) -> None:
 
 def action_consequence(action_type: str, outcome: str) -> str:
     consequences = {
-        ("setting_call", "to_closing"): "Le système crée un entretien Closing pour le closer et passe le parcours en Closing.",
+        ("setting_call", "to_closing"): "Le système crée un appel closing pour le closer et passe le parcours en Closing.",
         ("setting_call", "not_reached"): "Le système crée un rappel d'appel, puis une relance Tanjona si les rappels sont épuisés.",
         ("setting_call", "not_ready"): "Le système crée une relance Tanjona à +72h.",
         ("setting_call", "not_relevant"): "Résout la conversation et annule les relances futures.",
@@ -1097,7 +1108,7 @@ def render_manual_completion_advanced(user: dict, action: dict | None) -> None:
     st.markdown("**Message fait hors cockpit**")
     st.caption("À utiliser seulement si le message a réellement été envoyé ailleurs. Une note est obligatoire.")
     outcomes = (
-        ["reply_no_appointment", "setting_booked", "not_relevant", "do_not_contact"]
+        ["reply_no_appointment", "setting_booked", "closing_booked", "not_relevant", "do_not_contact"]
         if action["type"] == "reply"
         else ["follow_up_sent", "sequence_completed_no_reply"]
     )
@@ -1106,9 +1117,10 @@ def render_manual_completion_advanced(user: dict, action: dict | None) -> None:
         note = st.text_area("Preuve / note obligatoire", height=90, key=f"manual_complete_note_{action['id']}")
         next_due_at = None
         assigned_to_user_id = None
-        if outcome == "setting_booked":
+        if outcome in {"setting_booked", "closing_booked"}:
             users = list_users()
-            assignee = st.selectbox("Responsable de l'appel", users, format_func=format_user, key=f"manual_complete_assignee_{action['id']}")
+            assignee_options = reply_call_assignee_options(users, outcome)
+            assignee = st.selectbox("Responsable de l'appel", assignee_options, format_func=format_user, key=f"manual_complete_assignee_{action['id']}")
             next_date = st.date_input("Date du rendez-vous", value=datetime.now().date(), key=f"manual_complete_date_{action['id']}")
             next_time = st.time_input("Heure", value=time(9, 0), key=f"manual_complete_time_{action['id']}")
             next_due_at = local_due_at(next_date, next_time)
@@ -1131,128 +1143,77 @@ def render_manual_completion_advanced(user: dict, action: dict | None) -> None:
             st.rerun()
 
 
-def render_advanced_actions(user: dict, conv: dict, action: dict | None, users: list[dict], active_assignee_id: int) -> None:
+def render_standard_action_planner(user: dict, conv: dict, users: list[dict], active_assignee_id: int) -> None:
+    if conv.get("status") != "open":
+        return
+
+    st.markdown("**Programmer / attribuer une action**")
+    st.caption("Choisissez la prochaine action standard. Elle remplace l'action ouverte actuelle et garde une note dans le fil.")
+    action_type = st.selectbox(
+        "Action",
+        STANDARD_NEXT_ACTION_TYPES,
+        format_func=standard_action_button_label,
+        key=f"standard_action_type_{conv['id']}",
+    )
+    assignee_options = standard_action_assignee_options(users, action_type)
+    if not assignee_options:
+        st.warning("Aucun responsable compatible avec cette action.")
+        return
+
+    default_assignee = active_assignee_id
+    if not any(item["id"] == default_assignee for item in assignee_options):
+        default_assignee = assignee_options[0]["id"]
+
+    assignee = st.selectbox(
+        "Responsable",
+        assignee_options,
+        index=safe_user_index(assignee_options, default_assignee),
+        format_func=format_user,
+        key=f"standard_action_assignee_{conv['id']}_{action_type}",
+    )
+    action_date = st.date_input(
+        "Date",
+        value=datetime.now().date(),
+        key=f"standard_action_date_{conv['id']}",
+    )
+    action_time = st.time_input(
+        "Heure",
+        value=time(9, 0),
+        key=f"standard_action_time_{conv['id']}",
+    )
+    note = st.text_area(
+        "Note obligatoire",
+        height=80,
+        key=f"standard_action_note_{conv['id']}",
+        placeholder="Ex. RDV confirmé demain à 14h, relance à faire après lecture de la conversation.",
+    )
+    submitted = st.button(
+        standard_action_button_label(action_type),
+        key=f"standard_action_submit_{conv['id']}",
+        disabled=not note.strip(),
+    )
+    if submitted:
+        ok, message = assign_standard_next_action(
+            conv["id"],
+            user["id"],
+            action_type,
+            assignee["id"],
+            local_due_at(action_date, action_time),
+            note,
+        )
+        show_result(ok, message)
+        if ok:
+            st.rerun()
+
+
+def render_advanced_actions(user: dict, conv: dict, action: dict | None) -> None:
     if conv.get("status") != "open":
         return
     with st.expander("Actions avancées"):
         st.caption(
-            "Ces actions servent aux exceptions. Utilisez le flux principal quand l'action est réellement faite dans le cockpit."
+            "À utiliser seulement si le message a réellement été envoyé hors du cockpit."
         )
         render_manual_completion_advanced(user, action)
-        st.divider()
-        st.markdown("**Planifier une relance exceptionnelle**")
-        st.caption("Effet : clôt les actions ouvertes du lead et crée une relance Tanjona à la date choisie.")
-        with st.form(f"schedule_followup_{conv['lead_id']}"):
-            assignee = st.selectbox(
-                "Assigné à",
-                users,
-                index=safe_user_index(users, active_assignee_id),
-                format_func=format_user,
-            )
-            followup_date = st.date_input("Date", value=(datetime.now().date() + timedelta(days=1)))
-            followup_time = st.time_input("Heure", value=time(9, 0))
-            urgency = st.selectbox("Urgence", URGENCIES, index=1, format_func=labelize)
-            notes = st.text_area("Note interne", height=90)
-            submitted = st.form_submit_button("Planifier la relance")
-        if submitted:
-            ok, message = schedule_followup(
-                conv["id"],
-                user["id"],
-                assignee["id"],
-                local_due_at(followup_date, followup_time),
-                urgency=urgency,
-                notes=notes.strip() or None,
-            )
-            show_result(ok, message)
-            if ok:
-                st.rerun()
-
-        st.divider()
-        st.markdown("**Passer au closer hors flux normal**")
-        st.caption("Effet : clôt les actions ouvertes, passe le parcours en Closing et crée un entretien Closing pour le closer.")
-        closers = [item for item in users if item["role"] == "closer"]
-        if not closers:
-            st.warning("Aucun closer actif.")
-        else:
-            with st.form(f"handoff_closer_{conv['lead_id']}"):
-                closer = st.selectbox("Closer", closers, format_func=format_user)
-                appointment_note = st.text_input("RDV / contexte", placeholder="Ex. disponible demain à 14h")
-                notes = st.text_area("Remarques pour le closer", height=90)
-                submitted = st.form_submit_button("Passer au closer")
-            if submitted:
-                ok, message = handoff_to_closer(
-                    conv["id"],
-                    user["id"],
-                    closer["id"],
-                    appointment_note.strip(),
-                    notes.strip(),
-                )
-                show_result(ok, message)
-                if ok:
-                    st.rerun()
-
-        st.divider()
-        st.markdown("**Résoudre manuellement**")
-        st.caption("Effet : termine la conversation et clôt les actions ouvertes. À utiliser seulement quand il n'y a plus rien à faire.")
-        reason = st.selectbox(
-            "Motif",
-            RESOLUTION_REASON_VALUES,
-            format_func=labelize,
-            key=f"resolve_action_reason_{conv['id']}",
-        )
-        note = st.text_area(
-            "Note obligatoire",
-            height=80,
-            key=f"resolve_action_note_{conv['id']}",
-        )
-        submitted = st.button(
-            "Clore la conversation",
-            key=f"resolve_action_submit_{conv['id']}",
-            disabled=not note.strip(),
-        )
-        if submitted:
-            ok, message = set_conversation_status(
-                conv["id"],
-                user["id"],
-                "resolved",
-                resolution_reason=reason,
-                resolution_note=note.strip(),
-            )
-            show_result(ok, message)
-            if ok:
-                st.rerun()
-
-        st.divider()
-        st.markdown("**Créer une action manuelle**")
-        st.caption("Effet : ajoute une action. Cette option ne clôt pas automatiquement les actions existantes.")
-        with st.form(f"manual_action_{conv['lead_id']}"):
-            assignee = st.selectbox(
-                "Responsable",
-                users,
-                index=safe_user_index(users, active_assignee_id),
-                format_func=format_user,
-            )
-            action_type = st.selectbox("Type d'action", ACTION_TYPES, format_func=labelize)
-            title = st.text_input("Titre", value=f"Contacter {lead_display_name(conv)}")
-            action_date = st.date_input("Échéance", value=datetime.now().date())
-            action_time = st.time_input("Heure", value=time(9, 0), key=f"manual_action_time_{conv['lead_id']}")
-            urgency = st.selectbox("Urgence", URGENCIES, index=1, format_func=labelize, key=f"manual_action_urgency_{conv['lead_id']}")
-            description = st.text_area("Description", height=90)
-            submitted = st.form_submit_button("Créer l'action")
-        if submitted:
-            create_next_action(
-                conv["lead_id"],
-                conv["id"],
-                action_type,
-                title.strip(),
-                assignee["id"],
-                user["id"],
-                urgency=urgency,
-                due_at=local_due_at(action_date, action_time),
-                description=description.strip() or None,
-            )
-            st.success("Action créée.")
-            st.rerun()
 
 
 def render_next_action_box(user: dict, conv: dict) -> None:
@@ -1281,7 +1242,9 @@ def render_next_action_box(user: dict, conv: dict) -> None:
         st.info("Aucune action ouverte pour cette conversation.")
 
     if conv["status"] == "open":
-        render_advanced_actions(user, conv, action, users, active_assignee_id)
+        st.divider()
+        render_standard_action_planner(user, conv, users, active_assignee_id)
+        render_advanced_actions(user, conv, action)
     else:
         st.caption("Conversation terminée : utilisez Réactiver en haut de la fiche pour créer une nouvelle action.")
 
@@ -1474,17 +1437,17 @@ def render_user_guide() -> None:
 
         ### Par où commencer
 
-        La page **Tâches** est la page principale. Quand vous vous connectez, vous devez d'abord regarder cette page. Elle montre les actions qui vous sont attribuées : répondre à un message, envoyer une relance, faire un entretien de setting, faire un entretien de closing ou revoir un contact particulier. Par défaut, la page affiche votre propre file. Vous pouvez consulter la file d'une autre personne si nécessaire.
+        La page **Tâches** est la page principale. Quand vous vous connectez, vous devez d'abord regarder cette page. Elle montre les actions qui vous sont attribuées : répondre à un message, envoyer une relance, faire un appel setting, faire un appel closing ou revoir un contact particulier. Par défaut, la page affiche votre propre file. Vous pouvez consulter la file d'une autre personne si nécessaire.
 
         La page **Inbox** sert à retrouver les conversations WhatsApp. Elle est utile pour lire l'historique complet, chercher un prospect, vérifier une conversation terminée ou comprendre ce qui s'est passé avant une action. Dans **Tâches**, on travaille par action. Dans **Inbox**, on consulte par conversation.
 
         ### Les rôles commerciaux
 
-        **Setter 1** répond aux messages entrants, mène les échanges écrits actifs et réalise les entretiens de setting. Dans le cockpit, ce rôle correspond principalement aux actions de réponse immédiate et aux appels de setting.
+        **Setter 1** répond aux messages entrants, mène les échanges écrits actifs et réalise les appels de setting. Dans le cockpit, ce rôle correspond principalement aux actions de réponse immédiate et aux appels de setting.
 
         **Tanjona, Setter II** gère les relances structurées. Elle relit la conversation, choisit le bon modèle WhatsApp quand la fenêtre est fermée, et crée une demande de modèle si aucun modèle existant ne convient.
 
-        **Closer** gère les entretiens de closing. Après l'appel, il indique le résultat : signé, va signer, indécis, non joint ou non pertinent. Cette décision détermine la suite du parcours.
+        **Closer** gère les appels de closing. Après l'appel, il indique le résultat : signé, va signer, indécis, non joint ou non pertinent. Cette décision détermine la suite du parcours.
 
         ### Fenêtre WhatsApp et modèles
 
@@ -1504,15 +1467,17 @@ def render_user_guide() -> None:
 
         ### Actions, statuts et preuves
 
-        Une action est l'unité de travail du cockpit. Elle dit qui doit faire quoi, pour quel prospect, et à quel moment. Les actions principales sont : répondre au message, envoyer une relance, faire un entretien de setting, faire un entretien de closing et revoir un contact.
+        Une action est l'unité de travail du cockpit. Elle dit qui doit faire quoi, pour quel prospect, et à quel moment. Les actions principales sont : répondre au message, envoyer une relance, faire un appel setting, faire un appel closing et revoir un contact.
 
         Une action peut être planifiée, ouverte, en cours, terminée, annulée ou bloquée. Quand elle est terminée, elle doit laisser une preuve : message WhatsApp envoyé, résultat d'appel, mini-note, qualification ou demande de modèle.
 
         Pour les appels, la mini-note est obligatoire. Elle permet au prochain utilisateur de comprendre rapidement ce qui s'est passé et pourquoi la suite a été créée.
 
+        Dans l'onglet **Actions**, utilisez **Programmer / attribuer une action** pour créer une prochaine action standard : répondre, relancer, programmer un appel setting ou programmer un appel closing. Le cockpit demande toujours l'action concernée, le responsable, la date et une note. Le parcours affiché en haut de la fiche est mis à jour par ces actions et ne se modifie pas manuellement.
+
         ### Chaînage des actions
 
-        Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous, l'action de réponse est terminée et une relance est planifiée pour Tanjona. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un entretien de setting est créé. Si vous fixez directement un rendez-vous de closing, l'action de réponse est terminée et un entretien de closing est créé pour le closer. Si un entretien de setting doit passer au closing, une action de closing est créée pour le closer.
+        Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous, l'action de réponse est terminée et une relance est planifiée pour Tanjona. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un appel setting est créé. Si vous fixez directement un rendez-vous de closing, l'action de réponse est terminée et un appel closing est créé pour le closer. Si un appel setting doit passer au closing, une action de closing est créée pour le closer.
 
         Le chaînage peut être interrompu. Si le prospect répond, la conversation remonte avec une action de réponse immédiate. Si le prospect est marqué **Non pertinent**, **Ne plus contacter** ou **A signé**, les relances s'arrêtent. Si un prospect marqué **Ne plus contacter** écrit à nouveau, le cockpit crée une revue humaine au lieu de relancer automatiquement.
 

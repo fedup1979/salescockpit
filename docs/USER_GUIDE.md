@@ -4,17 +4,17 @@ Bienvenue dans Sales Cockpit. Cet outil sert à savoir très vite qui contacter,
 
 ## Par où commencer
 
-La page **Tâches** est la page principale. Quand vous vous connectez, vous devez d'abord regarder cette page. Elle montre les actions qui vous sont attribuées : répondre à un message, envoyer une relance, faire un entretien de setting, faire un entretien de closing ou revoir un contact particulier. Par défaut, la page affiche votre propre file. Vous pouvez consulter la file d'une autre personne si nécessaire.
+La page **Tâches** est la page principale. Quand vous vous connectez, vous devez d'abord regarder cette page. Elle montre les actions qui vous sont attribuées : répondre à un message, envoyer une relance, faire un appel setting, faire un appel closing ou revoir un contact particulier. Par défaut, la page affiche votre propre file. Vous pouvez consulter la file d'une autre personne si nécessaire.
 
 La page **Inbox** sert à retrouver les conversations WhatsApp. Elle est utile pour lire l'historique complet, chercher un prospect, vérifier une conversation terminée ou comprendre ce qui s'est passé avant une action. Dans **Tâches**, on travaille par action. Dans **Inbox**, on consulte par conversation.
 
 ## Les rôles commerciaux
 
-**Setter 1** répond aux messages entrants, mène les échanges écrits actifs et réalise les entretiens de setting. Dans le cockpit, ce rôle correspond principalement aux actions de réponse immédiate et aux appels de setting.
+**Setter 1** répond aux messages entrants, mène les échanges écrits actifs et réalise les appels de setting. Dans le cockpit, ce rôle correspond principalement aux actions de réponse immédiate et aux appels de setting.
 
 **Tanjona, Setter II** gère les relances structurées. Elle relit la conversation, choisit le bon modèle WhatsApp quand la fenêtre est fermée, et crée une demande de modèle si aucun modèle existant ne convient.
 
-**Closer** gère les entretiens de closing. Après l'appel, il indique le résultat : signé, va signer, indécis, non joint ou non pertinent. Cette décision détermine la suite du parcours.
+**Closer** gère les appels de closing. Après l'appel, il indique le résultat : signé, va signer, indécis, non joint ou non pertinent. Cette décision détermine la suite du parcours.
 
 ## Fenêtre WhatsApp et modèles
 
@@ -34,15 +34,17 @@ La conversation active ou terminée est différente de la fenêtre WhatsApp ouve
 
 ## Actions, statuts et preuves
 
-Une action est l'unité de travail du cockpit. Elle dit qui doit faire quoi, pour quel prospect, et à quel moment. Les actions principales sont : répondre au message, envoyer une relance, faire un entretien de setting, faire un entretien de closing et revoir un contact.
+Une action est l'unité de travail du cockpit. Elle dit qui doit faire quoi, pour quel prospect, et à quel moment. Les actions principales sont : répondre au message, envoyer une relance, faire un appel setting, faire un appel closing et revoir un contact.
 
 Une action peut être planifiée, ouverte, en cours, terminée, annulée ou bloquée. Quand elle est terminée, elle doit laisser une preuve : message WhatsApp envoyé, résultat d'appel, mini-note, qualification ou demande de modèle.
 
 Pour les appels, la mini-note est obligatoire. Elle permet au prochain utilisateur de comprendre rapidement ce qui s'est passé et pourquoi la suite a été créée.
 
+Dans l'onglet **Actions**, utilisez **Programmer / attribuer une action** pour créer une prochaine action standard : répondre, relancer, programmer un appel setting ou programmer un appel closing. Le cockpit demande toujours l'action concernée, le responsable, la date et une note. Le parcours affiché en haut de la fiche est mis à jour par ces actions et ne se modifie pas manuellement.
+
 ## Chaînage des actions
 
-Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous, l'action de réponse est terminée et une relance est planifiée pour Tanjona. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un entretien de setting est créé. Si vous fixez directement un rendez-vous de closing, l'action de réponse est terminée et un entretien de closing est créé pour le closer. Si un entretien de setting doit passer au closing, une action de closing est créée pour le closer.
+Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous, l'action de réponse est terminée et une relance est planifiée pour Tanjona. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un appel setting est créé. Si vous fixez directement un rendez-vous de closing, l'action de réponse est terminée et un appel closing est créé pour le closer. Si un appel setting doit passer au closing, une action de closing est créée pour le closer.
 
 Le chaînage peut être interrompu. Si le prospect répond, la conversation remonte avec une action de réponse immédiate. Si le prospect est marqué **Non pertinent**, **Ne plus contacter** ou **A signé**, les relances s'arrêtent. Si un prospect marqué **Ne plus contacter** écrit à nouveau, le cockpit crée une revue humaine au lieu de relancer automatiquement.
 

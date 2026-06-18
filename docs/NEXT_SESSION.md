@@ -21,7 +21,7 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - Admin now includes a `Workflow` tab showing main action types, support actions, action statuses, and the transition table.
 - The main V1 action chain is `reply`, `follow_up`, `setting_call`, `closing_call`.
 - Qualification, manual notes, and template creation are support actions/proofs by default, not main workflow actions.
-- `setting_call` is the preferred internal term over generic `call`; UI may still show `Appel` or `Appel de setting`.
+- `setting_call` is the preferred internal term. The UI should say `Appel`, for example `Appel setting` and `Appel closing`, not `Entretien`.
 - Persisted action statuses should be `planned`, `open`, `in_progress`, `done`, `cancelled`, `blocked`; `due` should be calculated from `due_at`, not stored as a status.
 - The transition table is partially implemented in the local mock system: resolution/reopen guards, contact review, template requests, outbound message chaining, and call outcome chaining are now active.
 - Inbox tabs are not WhatsApp API window tabs.
@@ -45,8 +45,8 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - The old technical `tasks` table remains, but the UI should call these `actions` or `prochaines actions`.
 - Business rules are centralized in `sales_cockpit/business_rules.py` and shown in Admin.
 - `Température` is no longer shown in the UI. Keep the DB field for compatibility, but do not reintroduce it as a visible qualification field unless François explicitly asks.
-- `sales_stage` is displayed as `Parcours`.
-- `Parcours` is operationally dangerous because it can force the next action. It should be read-only for non-admin users and exposed only as an admin/supervision correction.
+- `sales_stage` is displayed as `Parcours` only in compact status chips. It must not appear as an editable field in `Statuts`.
+- `Parcours` is operationally dangerous because it can force the next action. In V1 it is not user-editable; if a case is missing, add a real workflow path instead of restoring manual forçage.
 - Updating qualification/contact status without changing `Parcours` must not replace the current next action. If `Parcours` is forced to `appointment_booked`, it creates a `setting_call`. If qualification changes to `will_sign` without that force, it creates a Tanjona follow-up.
 - Private notes are always included in the future learning base; there is no checkbox in the UI.
 - The global `Tâches` view filters by individual responsible people, not only by role.
@@ -59,7 +59,8 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - `reply` and `follow_up` should not be manually marked as sent in the main Actions flow. The normal proof is the outbound WhatsApp message from the Conversation composer.
 - The Conversation composer can capture the send-time outcome for a `reply`: no appointment, setting appointment booked, closing appointment booked, non pertinent, or ne plus contacter.
 - The `reply` outcome labels must explain the next action clearly. If the prospect accepts an appointment, the user should choose `RDV setting fixé : créer un appel` or `RDV closing fixé : créer un appel` before sending the WhatsApp reply.
-- The Actions tab is contextual: WhatsApp actions explain where to send, call actions collect result + mandatory note, blocked relances show template-request state, and manual overrides are inside `Actions avancées`.
+- The Actions tab is contextual: WhatsApp actions explain where to send, call actions collect result + mandatory note, blocked relances show template-request state, and the standard planner can create `reply`, `follow_up`, `setting_call`, or `closing_call`.
+- `Actions avancées` should stay minimal. In V1 it only contains `Message fait hors cockpit`. Do not reintroduce generic manual action creation, manual handoff to closer, manual data correction, or conversation reopen there.
 - Setting and closing calls can be completed with business outcomes that create the next action.
 - Lead-relative reminders follow `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
 - Course-date reminders win over lead-relative reminders. The losing lead-relative reminder is cancelled.
@@ -106,7 +107,7 @@ The app has been iteratively reviewed by François and is currently in a good mo
 
 Latest known validation:
 
-- `pytest`: 43 tests passing.
+- `pytest`: 48 tests passing.
 - `compileall`: passed for `sales_cockpit`, `scripts`, and `tests`.
 - `scripts/reset_demo.py`: verified on a temporary SQLite database and creates 19 `SD-DEMO-*` leads.
 - Streamlit AppTest smoke covers reply-action guidance and absence of the generic `Terminer l'action` button in the main Actions flow.

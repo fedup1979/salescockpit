@@ -671,6 +671,136 @@ def schedule_followup(
         )
     return True, "Relance planifiée."
 
+def assign_standard_next_action(
+    conversation_id: int,
+    user_id: int,
+    action_type: str,
+    assigned_to_user_id: int,
+    due_at: str,
+    note: str,
+) -> tuple[bool, str]:
+    allowed_types = {"reply", "follow_up", "setting_call", "closing_call"}
+    if action_type not in allowed_types:
+        return False, "Action standard invalide."
+
+    note = note.strip()
+    if not note:
+        return False, "Une note est obligatoire pour attribuer une action."
+
+    conv = get_conversation(conversation_id)
+    if not conv:
+        return False, "Conversation introuvable."
+    if conv.get("status") != "open":
+        return False, "Conversation terminée : réactivez-la avant de créer une action."
+    if conv.get("contact_status") in STOP_CONTACT_STATUSES:
+        return False, "Contact bloqué : le statut Ne plus contacter doit être levé avant de créer une action."
+    if action_type == "follow_up" and followups_are_blocked(conv):
+        return False, "Ce statut bloque les relances commerciales."
+
+    with connect() as conn:
+        assignee = row_to_dict(
+            conn.execute(
+                "SELECT id, full_name, role, email FROM users WHERE id = ? AND active = 1",
+                (assigned_to_user_id,),
+            ).fetchone()
+        )
+        if not assignee:
+            return False, "Responsable invalide."
+
+        assignee_role = assignee.get("role")
+        assignee_email = str(assignee.get("email") or "").lower()
+        if action_type in {"reply", "setting_call"} and (
+            assignee_role != "setter" or assignee_email == "setter2@essr.ch"
+        ):
+            return False, "Cette action doit être attribuée à Setter I."
+        if action_type == "follow_up" and assignee_role != "setter":
+            return False, "Une relance doit être attribuée à un setter."
+        if action_type == "closing_call" and assignee_role != "closer":
+            return False, "Un appel closing doit être attribué à un closer."
+
+        now = iso_utc()
+        full_name = lead_full_name(conv)
+        titles = {
+            "reply": f"Répondre à {full_name}",
+            "follow_up": f"Relancer {full_name}",
+            "setting_call": f"Appeler {full_name} pour setting",
+            "closing_call": f"Appeler {full_name} pour closing",
+        }
+        trigger_reasons = {
+            "reply": "standard_reply_assigned",
+            "follow_up": "standard_followup_scheduled",
+            "setting_call": "standard_setting_call_scheduled",
+            "closing_call": "standard_closing_call_scheduled",
+        }
+
+        _complete_open_actions_for_lead(
+            conn,
+            conv["lead_id"],
+            user_id,
+            outcome=f"Action remplacée par {action_type}",
+        )
+
+        if action_type in {"reply", "setting_call"}:
+            next_stage = "appointment_booked" if action_type == "setting_call" else conv.get("sales_stage")
+            conn.execute(
+                """
+                UPDATE leads
+                SET setter_user_id = ?,
+                    sales_stage = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (assigned_to_user_id, next_stage, now, conv["lead_id"]),
+            )
+        elif action_type == "closing_call":
+            conn.execute(
+                """
+                UPDATE leads
+                SET closer_user_id = ?,
+                    sales_stage = 'closing',
+                    lead_status = 'neutral',
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (assigned_to_user_id, now, conv["lead_id"]),
+            )
+
+        action_id = _insert_next_action(
+            conn,
+            lead_id=conv["lead_id"],
+            conversation_id=conversation_id,
+            action_type=action_type,
+            title=titles[action_type],
+            assigned_to_user_id=assigned_to_user_id,
+            created_by_user_id=user_id,
+            urgency="normal",
+            due_at=due_at,
+            description=note,
+            trigger_reason=trigger_reasons[action_type],
+        )
+        _insert_internal_note_message(
+            conn,
+            conv["lead_id"],
+            conversation_id,
+            user_id,
+            f"Action programmée ({action_type}) pour {assignee['full_name']} : {note}",
+            now,
+        )
+        insert_event(
+            conn,
+            conv["lead_id"],
+            "standard_next_action_assigned",
+            user_id=user_id,
+            new={
+                "task_id": action_id,
+                "type": action_type,
+                "assigned_to_user_id": assigned_to_user_id,
+                "due_at": due_at,
+                "note": note,
+            },
+        )
+    return True, "Action programmée."
+
 
 def handoff_to_closer(
     conversation_id: int,
@@ -2587,8 +2717,8 @@ def complete_action_with_workflow(
             action_note_labels = {
                 "reply": "Note de réponse",
                 "follow_up": "Note de relance",
-                "setting_call": "Note d'entretien setting",
-                "closing_call": "Note d'entretien closing",
+                "setting_call": "Note d'appel setting",
+                "closing_call": "Note d'appel closing",
                 "contact_review": "Note de revue contact",
                 "other": "Note d'action",
             }

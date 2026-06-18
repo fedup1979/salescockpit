@@ -4,6 +4,7 @@ from uuid import uuid4
 from sales_cockpit.db import seed_initial_data
 from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
 from sales_cockpit.store import (
+    assign_standard_next_action,
     authenticate,
     complete_action_with_workflow,
     create_bug_report,
@@ -431,6 +432,78 @@ def test_handoff_to_closer_creates_closing_action() -> None:
     assert action["assigned_to_user_id"] == closer["id"]
 
 
+def test_standard_action_assignment_creates_setting_call() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    setter = next(
+        user for user in list_users()
+        if user["role"] == "setter" and user["email"] != "setter2@essr.ch"
+    )
+    result = record_inbound_message(unique_phone(), "Je veux un appel setting.")
+
+    ok, message = assign_standard_next_action(
+        result["conversation_id"],
+        admin["id"],
+        "setting_call",
+        setter["id"],
+        iso_utc(utc_now()),
+        "RDV setting confirme.",
+    )
+
+    assert ok is True
+    assert "Action" in message
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["sales_stage"] == "appointment_booked"
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "setting_call"
+    assert action["assigned_to_user_id"] == setter["id"]
+    assert action["trigger_reason"] == "standard_setting_call_scheduled"
+
+
+def test_standard_action_assignment_rejects_wrong_role_for_setting_call() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    closer = next(user for user in list_users() if user["role"] == "closer")
+    result = record_inbound_message(unique_phone(), "Je veux un appel setting.")
+
+    ok, message = assign_standard_next_action(
+        result["conversation_id"],
+        admin["id"],
+        "setting_call",
+        closer["id"],
+        iso_utc(utc_now()),
+        "Mauvais responsable de test.",
+    )
+
+    assert ok is False
+    assert "Setter I" in message
+    assert get_next_action_for_lead(result["lead_id"])["type"] == "reply"
+
+
+def test_standard_action_assignment_creates_closing_call() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    closer = next(user for user in list_users() if user["role"] == "closer")
+    result = record_inbound_message(unique_phone(), "Je veux parler a Yasmine.")
+
+    ok, _ = assign_standard_next_action(
+        result["conversation_id"],
+        admin["id"],
+        "closing_call",
+        closer["id"],
+        iso_utc(utc_now()),
+        "RDV closing confirme.",
+    )
+
+    assert ok is True
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["sales_stage"] == "closing"
+    assert conversation["closer_user_id"] == closer["id"]
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "closing_call"
+    assert action["assigned_to_user_id"] == closer["id"]
+
+
 def test_setting_call_not_reached_creates_call_retry_before_followup() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
@@ -779,7 +852,7 @@ def test_call_completion_note_is_visible_in_conversation() -> None:
         for item in list_messages(result["conversation_id"])
         if item["direction"] == "manual_note"
     ]
-    assert any("Note d'entretien setting" in body for body in notes)
+    assert any("Note d'appel setting" in body for body in notes)
 
 
 def test_terminal_stage_resolves_and_clears_next_action() -> None:
