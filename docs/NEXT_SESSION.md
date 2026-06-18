@@ -32,7 +32,7 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - `Température` is no longer shown in the UI. Keep the DB field for compatibility, but do not reintroduce it as a visible qualification field unless François explicitly asks.
 - `sales_stage` is displayed as `Parcours`.
 - Private notes are always included in the future learning base; there is no checkbox in the UI.
-- The global `À faire` view filters by individual responsible people, not only by role.
+- The global `Tâches` view filters by individual responsible people, not only by role.
 - `Non pertinent` and `Ne plus contacter` are separate. Both stop follow-ups, but `Ne plus contacter` means strict do-not-contact.
 - Lead-relative reminders follow `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
 - Course-date reminders win over lead-relative reminders. The losing lead-relative reminder is cancelled.
@@ -45,6 +45,13 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - SchoolDrive lead types use SD terms internally: `lead` and `presubscription`.
 - Inbox conversation cards show `Lead` or `Préinscription` above the prospect name.
 - For `lead`, the course line shows the SD course category short title, e.g. `APP`; for `presubscription`, it shows the SD course short name, e.g. `APP GE P26`.
+- Checkpoint tag before the `Tâches` layout experiment: `checkpoint-before-a-faire-layout-2026-06-18-0829`.
+- Navigation now opens on `Tâches`, then `Inbox`, `Modèles`, `Admin`.
+- `Tâches` is being tested with the same split-screen pattern as Inbox: action/person list on the left, selected prospect detail on the right.
+- In `Tâches`, every user defaults to their own assigned actions, including admins. They can still switch to another user or `Tous`, and that choice persists while navigating between pages.
+- Mock seed creates at least one open task per active user so every responsible-person queue can be inspected.
+- The detail tabs are now `Conversation`, `Qualification`, `Actions`, `Notes privées`; on `Tâches`, `Actions` is shown first.
+- Inbox has a `Tous` tab before the operational queue tabs.
 
 ## Current Validation
 
@@ -90,7 +97,7 @@ Stop-Process -Id <PID> -Force
 
 ## Recommended Next Work
 
-1. Let François continue UX review on the mock UI, especially the `À faire` workflow.
+1. Let François continue UX review on the mock UI, especially the `Tâches` workflow.
 2. After the UI shape stabilizes, create first Git commit.
 3. Add GitHub remote.
 4. Implement SchoolDrive read-only lead lookup.

@@ -388,6 +388,67 @@ def _normalize_seeded_demo_actions(
         )
 
 
+def _ensure_demo_task_for_each_user(conn: sqlite3.Connection, now) -> None:
+    users = conn.execute(
+        """
+        SELECT id, full_name
+        FROM users
+        WHERE active = 1
+        ORDER BY id
+        """
+    ).fetchall()
+    targets = conn.execute(
+        """
+        SELECT
+            l.id AS lead_id,
+            l.first_name,
+            l.last_name,
+            c.id AS conversation_id
+        FROM leads l
+        JOIN conversations c ON c.lead_id = l.id
+        WHERE l.schooldrive_lead_id LIKE 'SD-DEMO-%'
+          AND c.status != 'resolved'
+        ORDER BY l.schooldrive_lead_id
+        """
+    ).fetchall()
+    if not targets:
+        return
+
+    for index, user in enumerate(users):
+        existing_task = conn.execute(
+            """
+            SELECT id
+            FROM tasks
+            WHERE assigned_to_user_id = ?
+              AND status IN ('open', 'in_progress')
+            LIMIT 1
+            """,
+            (user["id"],),
+        ).fetchone()
+        if existing_task:
+            continue
+
+        target = targets[index % len(targets)]
+        prospect_name = f"{target['first_name']} {target['last_name']}"
+        conn.execute(
+            """
+            INSERT INTO tasks (
+                lead_id, conversation_id, type, title, description,
+                assigned_to_user_id, created_by_user_id, due_at, urgency, status
+            ) VALUES (?, ?, 'call', ?, ?, ?, ?, ?, 'normal', 'open')
+            """,
+            (
+                target["lead_id"],
+                target["conversation_id"],
+                f"Vérifier la file de {user['full_name']}",
+                f"Tâche de démonstration liée à {prospect_name}.",
+                user["id"],
+                user["id"],
+                iso_utc(now + timedelta(minutes=20 + index * 10)),
+            ),
+        )
+
+
 def seed_initial_data() -> None:
     init_db()
     settings = get_settings()
@@ -689,6 +750,7 @@ def seed_initial_data() -> None:
                 )
 
         _normalize_seeded_demo_actions(conn, now, mihary_id, yasmine_id)
+        _ensure_demo_task_for_each_user(conn, now)
 
         templates = [
             (

@@ -1057,9 +1057,15 @@ def list_tasks(status: str = "open") -> list[dict[str, Any]]:
             f"""
             SELECT
                 t.*,
+                l.schooldrive_lead_id,
                 l.first_name,
                 l.last_name,
+                l.phone_e164,
+                l.course_id,
+                l.course_category_short_title,
                 l.course_title,
+                l.lead_type,
+                l.lead_status,
                 l.sales_stage,
                 u.full_name AS assigned_to_name,
                 u.role AS assigned_to_role,

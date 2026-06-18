@@ -86,14 +86,29 @@ This must be enforced in both UI and backend.
 
 ## Current UI
 
+### Tâches
+
+Default landing page after login.
+
+Left panel:
+
+- Responsible-person filter.
+- Operational tabs: `À traiter`, `À venir`, `Terminées`, `Tous`.
+- Rows represent people/actions, not abstract standalone tasks.
+- The responsible-person filter defaults to the connected user's own queue. Users can switch to another person or `Tous`, and the choice persists while navigating between pages.
+- Mock data keeps at least one open task per active user for visual checks.
+
+Right panel:
+
+- Same prospect detail pattern as Inbox.
+- `Actions` tab is shown first.
+
 ### Inbox
 
 Left panel:
 
 - Search.
-- Sales-stage filter.
-- Responsibility filter: all, setter, closer.
-- Tabs: `À traiter`, `À relancer`, `En attente`, `Résolues`.
+- Tabs: `Tous`, `À traiter`, `À relancer`, `En attente`, `Résolues`.
 - Conversation rows with prospect name, course, responsible person, next action, due date, and last message.
 - `Ouvrir` button per row.
 
@@ -103,9 +118,9 @@ Right panel:
 - Button to mark as resolved or reopen.
 - `Ouvrir SchoolDrive` link.
 - WhatsApp window badge.
-- Metrics for qualification status, parcours, and conversation status.
+- Compact chips for qualification and parcours.
 - Next-action summary panel.
-- Tabs: `Conversation`, `Qualification`, `À faire`, `Note privée`.
+- Tabs: `Conversation`, `Qualification`, `Actions`, `Notes privées`.
 
 ### Conversation Tab
 

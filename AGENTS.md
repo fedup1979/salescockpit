@@ -56,9 +56,12 @@ Core source-of-truth decisions:
 
 There are two different concepts. Do not merge them:
 
+- Main navigation order starts with `Tâches`, then `Inbox`, then `Modèles`, then `Admin`.
 - Conversation status: user-controlled operational state, `open` or `resolved`.
 - WhatsApp window state: technical 24-hour API window, `open` or `closed`. This drives whether free-form messages are allowed.
-- Next action: operational work item stored in the `tasks` table but displayed as `prochaine action` / `À faire`, not as an abstract task list.
+- Next action: operational work item stored in the `tasks` table but displayed as `prochaine action` / `Tâches`, not as an abstract task list.
+- `Tâches` is the default work page. It uses a split screen: assigned actions/persons on the left, selected prospect detail on the right.
+- `Tâches` defaults to the connected user's own queue. The user can switch to another person's queue or `Tous`; that choice must persist when navigating away and back during the same session.
 
 Inbox tabs are work queues:
 
@@ -78,7 +81,8 @@ Operational rule:
 - Business rules are centralized in `sales_cockpit/business_rules.py` and displayed in Admin.
 - Keep the UI simple: no visible `Température` field. Display `sales_stage` as `Parcours`.
 - Private notes are always included in the future learning base; do not show an inclusion checkbox.
-- In the global `À faire` view, filter responsibility by individual people, not only by role.
+- In the global `Tâches` view, filter responsibility by individual people, not only by role.
+- The mock seed must keep at least one open task per active user so each responsible-person queue can be visually checked.
 - Use SchoolDrive terms for lead source type: `lead` and `presubscription`. Show them in French as `Lead` and `Préinscription`.
 - In inbox cards, show the SD course category short title for `lead`, and the SD course short name for `presubscription`.
 

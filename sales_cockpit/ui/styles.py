@@ -22,8 +22,19 @@ APP_CSS = """
   border-right: 1px solid var(--sc-border);
 }
 
+header[data-testid="stHeader"] {
+  height: 0;
+  background: transparent;
+}
+
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"] {
+  display: none;
+}
+
 .block-container {
-  padding-top: 1.5rem;
+  padding-top: .85rem;
   padding-bottom: 2rem;
   max-width: 1440px;
 }
@@ -34,8 +45,8 @@ h1, h2, h3 {
 
 .sc-detail-title {
   color: var(--sc-text);
-  font-size: 1.08rem;
-  font-weight: 680;
+  font-size: 1.5rem;
+  font-weight: 600;
   line-height: 1.25;
 }
 
@@ -256,6 +267,8 @@ h1, h2, h3 {
 }
 
 .sc-conversation-title {
+  color: var(--sc-text);
+  font-size: .98rem;
   line-height: 1.28;
 }
 

@@ -20,7 +20,7 @@ from sales_cockpit.business_rules import (
     SEQUENCES,
 )
 from sales_cockpit.db import seed_initial_data
-from sales_cockpit.services.whatsapp_rules import parse_dt
+from sales_cockpit.services.whatsapp_rules import parse_dt, utc_now
 from sales_cockpit.services.schooldrive import SchoolDriveConnector
 from sales_cockpit.store import (
     add_manual_note,
@@ -51,6 +51,8 @@ SALES_STAGES = ["new", "setting", "appointment_booked", "closing", "won", "lost"
 LEAD_STATUSES = [item["value"] for item in QUALIFICATION_STATUSES]
 URGENCIES = ["low", "normal", "high", "urgent"]
 WORK_QUEUES = ["todo", "follow_up", "waiting", "resolved"]
+INBOX_QUEUES = ["all"] + WORK_QUEUES
+ACTION_QUEUES = ["due", "future", "completed", "all"]
 ACTION_TYPES = ["reply", "call", "follow_up", "closing_call", "other"]
 WORK_SORTS = ["assignee_name", "lead_name", "due_at"]
 OUTCOMES = ["Reached", "No answer", "Wrong number", "Callback requested", "Appointment booked", "Not interested", "Converted", "Other"]
@@ -89,6 +91,9 @@ DISPLAY_LABELS = {
     "done": "Terminée",
     "cancelled": "Annulée",
     "todo": "À traiter",
+    "due": "À traiter",
+    "future": "À venir",
+    "completed": "Terminées",
     "follow_up": "À relancer",
     "waiting": "En attente",
     "reply": "Répondre",
@@ -155,6 +160,10 @@ def render_login() -> None:
         user = authenticate(email.strip(), password)
         if user:
             st.session_state.user = user
+            st.session_state.pop("work_queue_assignee_widget", None)
+            st.session_state.pop("work_queue_assignee_selected_id", None)
+            st.session_state.pop("work_queue_assignee_user_id", None)
+            st.session_state.pop("selected_action_id", None)
             st.rerun()
         st.error("Identifiants invalides.")
 
@@ -168,17 +177,17 @@ def render_shell() -> None:
         st.caption(f"{user['full_name']} · {user['role']}")
         nav = st.radio(
             "Navigation",
-            ["Inbox", "À faire", "Modèles", "Admin"],
+            ["Tâches", "Inbox", "Modèles", "Admin"],
             label_visibility="collapsed",
         )
         if st.button("Déconnexion", use_container_width=True):
             st.session_state.pop("user", None)
             st.rerun()
 
-    if nav == "Inbox":
-        render_inbox(user)
-    elif nav == "À faire":
+    if nav == "Tâches":
         render_work_queue(user)
+    elif nav == "Inbox":
+        render_inbox(user)
     elif nav == "Modèles":
         render_templates(user)
     elif nav == "Admin":
@@ -200,8 +209,10 @@ def render_inbox(user: dict) -> None:
         return
 
     conversations_by_queue = {
-        queue: [conv for conv in conversations if conv["work_queue"] == queue]
-        for queue in WORK_QUEUES
+        queue: conversations if queue == "all" else [
+            conv for conv in conversations if conv["work_queue"] == queue
+        ]
+        for queue in INBOX_QUEUES
     }
     visible_ids = {conv["conversation_id"] for conv in conversations}
     if st.session_state.get("selected_conversation_id") not in visible_ids:
@@ -227,10 +238,10 @@ def render_inbox(user: dict) -> None:
         tabs = st.tabs(
             [
                 f"{labelize(queue)} ({len(conversations_by_queue[queue])})"
-                for queue in WORK_QUEUES
+                for queue in INBOX_QUEUES
             ]
         )
-        for index, queue in enumerate(WORK_QUEUES):
+        for index, queue in enumerate(INBOX_QUEUES):
             with tabs[index]:
                 render_conversation_rows(conversations_by_queue[queue], queue)
 
@@ -302,7 +313,11 @@ def conversation_course_label(conv: dict) -> str:
     )
 
 
-def render_conversation_detail(user: dict, conversation_id: int) -> None:
+def render_conversation_detail(
+    user: dict,
+    conversation_id: int,
+    actions_first: bool = False,
+) -> None:
     conv = get_conversation(conversation_id)
     if not conv:
         st.error("Conversation introuvable.")
@@ -312,17 +327,30 @@ def render_conversation_detail(user: dict, conversation_id: int) -> None:
     render_compact_lead_state(conv)
     render_next_action_summary(conv)
 
-    tabs = st.tabs(["Conversation", "Qualification", "À faire", "Note privée"])
-    with tabs[0]:
-        render_messages(conversation_id)
-        st.markdown('<div class="sc-reply-anchor"></div>', unsafe_allow_html=True)
-        render_composer(user, conv)
-    with tabs[1]:
-        render_qualification(user, conv)
-    with tabs[2]:
-        render_next_action_box(user, conv)
-    with tabs[3]:
-        render_manual_note_box(user, conv)
+    if actions_first:
+        tabs = st.tabs(["Actions", "Conversation", "Qualification", "Notes privées"])
+        with tabs[0]:
+            render_next_action_box(user, conv)
+        with tabs[1]:
+            render_messages(conversation_id)
+            st.markdown('<div class="sc-reply-anchor"></div>', unsafe_allow_html=True)
+            render_composer(user, conv)
+        with tabs[2]:
+            render_qualification(user, conv)
+        with tabs[3]:
+            render_manual_note_box(user, conv)
+    else:
+        tabs = st.tabs(["Conversation", "Qualification", "Actions", "Notes privées"])
+        with tabs[0]:
+            render_messages(conversation_id)
+            st.markdown('<div class="sc-reply-anchor"></div>', unsafe_allow_html=True)
+            render_composer(user, conv)
+        with tabs[1]:
+            render_qualification(user, conv)
+        with tabs[2]:
+            render_next_action_box(user, conv)
+        with tabs[3]:
+            render_manual_note_box(user, conv)
 
 
 def render_conversation_header(user: dict, conversation_id: int) -> None:
@@ -720,66 +748,151 @@ def render_manual_note_box(user: dict, conv: dict) -> None:
 
 
 def render_work_queue(user: dict) -> None:
-    st.title("À faire")
     users = list_users()
     assignee_options = [{"id": "all", "full_name": "Tous", "role": "all"}] + users
-    filters = st.columns([1, 1, 1, 1])
-    status = filters[0].selectbox(
-        "Statut",
-        ["open", "in_progress", "done", "cancelled", "all"],
-        format_func=labelize,
-    )
-    assignee_filter = filters[1].selectbox(
-        "Responsable",
-        assignee_options,
-        format_func=format_assignee_filter,
-        key="work_queue_responsibility",
-    )
-    action_type = filters[2].selectbox(
-        "Type d’action",
-        ["all"] + ACTION_TYPES,
-        format_func=labelize,
-    )
-    sort_by = filters[3].selectbox("Tri", WORK_SORTS, format_func=labelize)
-    tasks = list_tasks(status)
+    assignee_by_id = {
+        option["id"]: option
+        for option in assignee_options
+    }
+    default_assignee_id = user["id"]
+    if st.session_state.get("work_queue_assignee_user_id") != user["id"]:
+        st.session_state.work_queue_assignee_selected_id = default_assignee_id
+        st.session_state.pop("work_queue_assignee_widget", None)
+        st.session_state.work_queue_assignee_user_id = user["id"]
+
+    selected_assignee_id = st.session_state.get("work_queue_assignee_selected_id", default_assignee_id)
+    if selected_assignee_id not in assignee_by_id:
+        selected_assignee_id = default_assignee_id
+    assignee_ids = [option["id"] for option in assignee_options]
+    selected_assignee_index = assignee_ids.index(selected_assignee_id)
+
+    st.title("Tâches")
+    filter_col, header_col = st.columns([0.95, 1.45], gap="large")
+    with filter_col:
+        selected_assignee_id = st.selectbox(
+            "Responsable",
+            assignee_ids,
+            index=selected_assignee_index,
+            format_func=lambda assignee_id: format_assignee_filter(
+                assignee_by_id[assignee_id],
+                current_user_id=user["id"],
+            ),
+            key="work_queue_assignee_widget",
+        )
+    st.session_state.work_queue_assignee_selected_id = selected_assignee_id
+    assignee_filter = assignee_by_id[selected_assignee_id]
+
+    tasks = list_tasks("all")
     if assignee_filter["id"] != "all":
         tasks = [
             task for task in tasks
             if task.get("assigned_to_user_id") == assignee_filter["id"]
         ]
-    if action_type != "all":
-        tasks = [task for task in tasks if task["type"] == action_type]
-    tasks = sort_work_items(tasks, sort_by)
+    tasks = sort_work_items(tasks, "lead_name")
 
     if not tasks:
-        st.info("Aucune action.")
+        st.info("Aucune action pour ce filtre.")
         return
+
+    tasks_by_queue = {
+        queue: tasks if queue == "all" else [
+            task for task in tasks if classify_action_queue(task) == queue
+        ]
+        for queue in ACTION_QUEUES
+    }
+    visible_task_ids = {task["id"] for task in tasks}
+    if st.session_state.get("selected_action_id") not in visible_task_ids:
+        default = next(
+            (
+                queue_tasks[0]
+                for queue_tasks in tasks_by_queue.values()
+                if queue_tasks
+            ),
+            tasks[0],
+        )
+        st.session_state.selected_action_id = default["id"]
+    selected_task = next(
+        task for task in tasks
+        if task["id"] == st.session_state.selected_action_id
+    )
+
+    with header_col:
+        st.markdown('<div class="sc-search-field-offset"></div>', unsafe_allow_html=True)
+        if selected_task.get("conversation_id"):
+            render_conversation_header(user, selected_task["conversation_id"])
+
+    left, right = st.columns([0.95, 1.45], gap="large")
+    with left:
+        st.subheader("File de travail")
+        tabs = st.tabs(
+            [
+                f"{labelize(queue)} ({len(tasks_by_queue[queue])})"
+                for queue in ACTION_QUEUES
+            ]
+        )
+        for index, queue in enumerate(ACTION_QUEUES):
+            with tabs[index]:
+                render_action_rows(tasks_by_queue[queue], queue)
+
+    with right:
+        if selected_task.get("conversation_id"):
+            render_conversation_detail(user, selected_task["conversation_id"], actions_first=True)
+        else:
+            st.info("Cette action n'est liée à aucune conversation.")
+
+
+def render_action_rows(tasks: list[dict], bucket: str) -> None:
+    if not tasks:
+        st.info("Aucune action dans cette file.")
+        return
+
     for task in tasks:
+        selected = st.session_state.get("selected_action_id") == task["id"]
+        button_type = "primary" if selected else "secondary"
         with st.container(border=True):
-            title_col, meta_col, action_col = st.columns([0.48, 0.32, 0.2], vertical_alignment="center")
-            with title_col:
-                st.write(f"**{task['title']}**")
-                st.caption(
-                    f"{task['first_name']} {task['last_name']} · {task.get('course_title') or 'Sans cours'}"
-                )
-            with meta_col:
-                st.caption(
-                    f"{task.get('assigned_to_name') or 'Non assigné'} · {labelize(task['type'])} · "
-                    f"{labelize(task['urgency'])} · {format_due(task.get('due_at'))}"
-                )
-                st.caption(labelize(task["status"]))
+            text_col, action_col = st.columns([0.78, 0.22], vertical_alignment="center")
+            with text_col:
+                st.markdown(action_row_html(task), unsafe_allow_html=True)
             with action_col:
-                if task["status"] != "done":
-                    outcome = st.selectbox(
-                        "Résultat",
-                        OUTCOMES,
-                        key=f"task_page_outcome_{task['id']}",
-                        format_func=labelize,
-                        label_visibility="collapsed",
-                    )
-                    if st.button("Terminer", key=f"task_page_complete_{task['id']}", use_container_width=True):
-                        complete_task(task["id"], user["id"], outcome)
-                        st.rerun()
+                if st.button(
+                    "Ouvrir",
+                    key=f"open_action_{bucket}_{task['id']}",
+                    type=button_type,
+                    use_container_width=True,
+                ):
+                    st.session_state.selected_action_id = task["id"]
+                    if task.get("conversation_id"):
+                        st.session_state.selected_conversation_id = task["conversation_id"]
+                    st.rerun()
+
+
+def action_row_html(task: dict) -> str:
+    lead_type = escape_html(labelize(task.get("lead_type") or "lead"))
+    name = escape_html(f"{task['first_name']} {task['last_name']}")
+    course = escape_html(conversation_course_label(task))
+    owner = escape_html(task.get("assigned_to_name") or "Non assigné")
+    action_type = escape_html(labelize(task.get("type")))
+    title = escape_html(compact_text(task.get("title") or "Action sans titre", 92))
+    due = escape_html(format_due(task.get("due_at")))
+    urgency = escape_html(labelize(task.get("urgency") or "normal"))
+    return f"""
+        <div class="sc-conversation-row">
+          <div class="sc-lead-type-line">{lead_type}</div>
+          <div class="sc-conversation-title"><strong>{name}</strong></div>
+          <div class="sc-row-meta">{course} · {owner}</div>
+          <div class="sc-next-action-line"><span>{action_type}</span> · {title}</div>
+          <div class="sc-row-meta">{due} · {urgency}</div>
+        </div>
+    """
+
+
+def classify_action_queue(task: dict) -> str:
+    if task.get("status") in {"done", "cancelled"}:
+        return "completed"
+    due_at = parse_dt(task.get("due_at"))
+    if due_at and due_at > utc_now():
+        return "future"
+    return "due"
 
 
 def render_templates(user: dict) -> None:
@@ -962,9 +1075,11 @@ def format_user(user: dict) -> str:
     return f"{user['full_name']} · {labelize(user['role'])}"
 
 
-def format_assignee_filter(user: dict) -> str:
+def format_assignee_filter(user: dict, current_user_id: int | None = None) -> str:
     if user["id"] == "all":
         return "Tous"
+    if current_user_id is not None and user["id"] == current_user_id:
+        return f"Moi · {user['full_name']}"
     return f"{user['full_name']} · {labelize(user['role'])}"
 
 
