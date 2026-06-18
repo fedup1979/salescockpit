@@ -13,6 +13,14 @@ The app has been iteratively reviewed by François and is currently in a good mo
 
 ## Important Recent Decisions
 
+- The action is now explicitly validated as the central operational unit of the system.
+- A conversation with `open` status must always have one open next action.
+- The validated workflow model is documented in `docs/ACTION_WORKFLOW.md`; read it before changing `Tâches`, actions, follow-ups, calls, templates, qualification, or automation.
+- The main V1 action chain is `reply`, `follow_up`, `setting_call`, `closing_call`.
+- Qualification, manual notes, and template creation are support actions/proofs by default, not main workflow actions.
+- `setting_call` is the preferred internal term over generic `call`; UI may still show `Appel` or `Appel de setting`.
+- Persisted action statuses should be `planned`, `open`, `in_progress`, `done`, `cancelled`, `blocked`; `due` should be calculated from `due_at`, not stored as a status.
+- The next major design task is to implement the transition table: current action + event/outcome -> next action + owner + due date + support obligations.
 - Inbox tabs are not WhatsApp API window tabs.
 - Inbox tabs are operational work queues:
   - `À traiter`
@@ -50,7 +58,9 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - `Tâches` is being tested with the same split-screen pattern as Inbox: action/person list on the left, selected prospect detail on the right.
 - In `Tâches`, every user defaults to their own assigned actions, including admins. They can still switch to another user or `Tous`, and that choice persists while navigating between pages.
 - Mock seed creates at least one open task per active user so every responsible-person queue can be inspected.
-- The detail tabs are now `Conversation`, `Qualification`, `Actions`, `Notes privées`; on `Tâches`, `Actions` is shown first.
+- Inbound unanswered prospects show a restrained hot signal in Inbox and `Tâches`, sort above ordinary due actions, and the mock seed includes `Léa Martin` as a waiting-reply example.
+- Inbox and `Tâches` auto-refresh every 10 seconds while visible.
+- The right-side detail tabs use the same order in `Tâches` and Inbox: `Conversation`, `Actions`, `Qualification`, `Notes privées`.
 - Inbox has a `Tous` tab before the operational queue tabs.
 
 ## Current Validation

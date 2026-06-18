@@ -10,7 +10,7 @@ The app must help setters and closers manage:
 - WhatsApp 24-hour window constraints.
 - WhatsApp templates.
 - Lead qualification.
-- Next actions across reply, call, follow-up, and closing call.
+- Next actions across reply, setting call, follow-up, and closing call.
 - Manual private WhatsApp notes.
 - Complete transcript storage for future AI setter learning.
 
@@ -35,6 +35,7 @@ Seed password for local mock mode: `ChangeMe!2026`.
 - `sales_cockpit/services/mock_twilio.py`: mock message sending.
 - `sales_cockpit/services/schooldrive.py`: placeholder read-only connector.
 - `sales_cockpit/services/notion.py`: placeholder read-only connector.
+- `docs/ACTION_WORKFLOW.md`: source of truth for action workflow decisions and transition table.
 
 ## Core Concepts
 
@@ -57,9 +58,22 @@ Resolving a conversation completes open next actions for that lead.
 
 The `tasks` table remains the technical persistence layer, but the UI must call these records `actions` or `prochaines actions`.
 
+Action is the central operational unit of the system. A conversation with `open` status must always have one open next action.
+
+The detailed action model is defined in `docs/ACTION_WORKFLOW.md`.
+
+Main V1 action types:
+
+- `reply`: answer an inbound WhatsApp message.
+- `follow_up`: follow up with the prospect, usually by WhatsApp template.
+- `setting_call`: setting / qualification call.
+- `closing_call`: closing call.
+
+Qualification, manual notes, and template creation are support actions or proofs by default. They only become queue-visible work if they block the main action flow.
+
 Work queues:
 
-- `À traiter`: action due now or overdue, usually reply/call/closing call.
+- `À traiter`: action due now or overdue, usually reply, setting call, or closing call.
 - `À relancer`: follow-up action due now or overdue.
 - `En attente`: future follow-up or no immediate action.
 - `Résolues`: conversation is resolved.
@@ -90,6 +104,8 @@ This must be enforced in both UI and backend.
 
 Default landing page after login.
 
+Refreshes every 10 seconds while visible.
+
 Left panel:
 
 - Responsible-person filter.
@@ -97,19 +113,23 @@ Left panel:
 - Rows represent people/actions, not abstract standalone tasks.
 - The responsible-person filter defaults to the connected user's own queue. Users can switch to another person or `Tous`, and the choice persists while navigating between pages.
 - Mock data keeps at least one open task per active user for visual checks.
+- If the latest prospect message is inbound and unanswered, the row shows a hot but restrained waiting-reply signal and sorts above ordinary due actions.
 
 Right panel:
 
 - Same prospect detail pattern as Inbox.
-- `Actions` tab is shown first.
+- Tabs: `Conversation`, `Actions`, `Qualification`, `Notes privées`.
 
 ### Inbox
+
+Refreshes every 10 seconds while visible.
 
 Left panel:
 
 - Search.
 - Tabs: `Tous`, `À traiter`, `À relancer`, `En attente`, `Résolues`.
 - Conversation rows with prospect name, course, responsible person, next action, due date, and last message.
+- If the latest prospect message is inbound and unanswered, the row shows the same waiting-reply signal as `Tâches`.
 - `Ouvrir` button per row.
 
 Right panel:
@@ -120,7 +140,7 @@ Right panel:
 - WhatsApp window badge.
 - Compact chips for qualification and parcours.
 - Next-action summary panel.
-- Tabs: `Conversation`, `Qualification`, `Actions`, `Notes privées`.
+- Tabs: `Conversation`, `Actions`, `Qualification`, `Notes privées`.
 
 ### Conversation Tab
 
@@ -142,7 +162,7 @@ Fields:
 
 Dropdown labels are displayed in French. Internal values remain in English.
 
-### À Faire Tab
+### Actions Tab
 
 - Current next action.
 - Completion with outcome.
@@ -202,7 +222,7 @@ The seed creates:
 - A few conversations marked as resolved.
 - Approved and pending WhatsApp templates.
 - Demo WhatsApp templates for lead, setting, closer-will-sign, course-date, and out-of-hours sequences.
-- Next actions across reply, call, follow-up, and closing call.
+- Next actions across reply, setting call, follow-up, and closing call.
 
 Seed data is idempotent and should not duplicate existing demo leads.
 

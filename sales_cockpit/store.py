@@ -1069,11 +1069,22 @@ def list_tasks(status: str = "open") -> list[dict[str, Any]]:
                 l.sales_stage,
                 u.full_name AS assigned_to_name,
                 u.role AS assigned_to_role,
-                c.status AS conversation_status
+                c.status AS conversation_status,
+                c.last_inbound_at,
+                c.last_outbound_at,
+                last_msg.body AS last_message_body,
+                last_msg.direction AS last_message_direction,
+                last_msg.created_at AS last_message_at
             FROM tasks t
             JOIN leads l ON l.id = t.lead_id
             LEFT JOIN conversations c ON c.id = t.conversation_id
             LEFT JOIN users u ON u.id = t.assigned_to_user_id
+            LEFT JOIN messages last_msg ON last_msg.id = (
+                SELECT m.id FROM messages m
+                WHERE m.conversation_id = c.id
+                ORDER BY datetime(m.created_at) DESC, m.id DESC
+                LIMIT 1
+            )
             {where}
             ORDER BY
                 CASE t.urgency WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,

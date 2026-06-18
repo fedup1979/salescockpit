@@ -71,6 +71,7 @@ Before continuing work, read:
 - `IMPLEMENTATION_STATUS.md`
 - `docs/NEXT_SESSION.md`
 - `docs/BUILD_SPEC.md`
+- `docs/ACTION_WORKFLOW.md`
 - `PRODUCT.md`
 - `DESIGN.md`
 

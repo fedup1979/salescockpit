@@ -14,8 +14,9 @@ At the start of any new Codex session in this repo, read these files before edit
 2. `IMPLEMENTATION_STATUS.md`
 3. `docs/NEXT_SESSION.md`
 4. `docs/BUILD_SPEC.md`
-5. `PRODUCT.md`
-6. `DESIGN.md`
+5. `docs/ACTION_WORKFLOW.md`
+6. `PRODUCT.md`
+7. `DESIGN.md`
 
 The original longer PRD currently also exists at:
 
@@ -60,6 +61,8 @@ There are two different concepts. Do not merge them:
 - Conversation status: user-controlled operational state, `open` or `resolved`.
 - WhatsApp window state: technical 24-hour API window, `open` or `closed`. This drives whether free-form messages are allowed.
 - Next action: operational work item stored in the `tasks` table but displayed as `prochaine action` / `Tâches`, not as an abstract task list.
+- Action is the central operational unit of the system. A conversation with `open` status must always have one open next action.
+- The source of truth for action types, statuses, support actions, proofs, outcomes, triggers, and workflow transitions is `docs/ACTION_WORKFLOW.md`.
 - `Tâches` is the default work page. It uses a split screen: assigned actions/persons on the left, selected prospect detail on the right.
 - `Tâches` defaults to the connected user's own queue. The user can switch to another person's queue or `Tous`; that choice must persist when navigating away and back during the same session.
 
@@ -73,16 +76,20 @@ Inbox tabs are work queues:
 Operational rule:
 
 - New inbound WhatsApp messages reopen the conversation and create/update a `reply` next action assigned to the setter.
+- If the latest message is inbound and unanswered, the prospect is waiting. Show a visible but restrained hot signal in Inbox and `Tâches`, and sort that item above ordinary calls or follow-ups.
+- `Tâches` and Inbox auto-refresh every 10 seconds while visible, so Twilio webhook updates should appear without manual navigation.
 - Passing to closer completes current open actions, moves the lead to `closing`, and creates a `closing_call` action for the closer.
 - Resolving a conversation completes open actions for that lead.
 - `Non pertinent` and `Ne plus contacter` are separate statuses. Both stop follow-ups; `Ne plus contacter` is a strict do-not-contact policy.
 - Course-date reminders always win over lead-relative reminders. If both conflict, cancel the lead-relative reminder.
 - Minimum delay between outbound WhatsApp follow-ups is 24h.
 - Business rules are centralized in `sales_cockpit/business_rules.py` and displayed in Admin.
+- Main action types for V1 are `reply`, `follow_up`, `setting_call`, and `closing_call`. Qualification, manual notes, and template creation are support actions/proofs unless they block the main flow.
 - Keep the UI simple: no visible `Température` field. Display `sales_stage` as `Parcours`.
 - Private notes are always included in the future learning base; do not show an inclusion checkbox.
 - In the global `Tâches` view, filter responsibility by individual people, not only by role.
 - The mock seed must keep at least one open task per active user so each responsible-person queue can be visually checked.
+- The mock seed includes at least one inbound unanswered example to verify the hot waiting-reply state.
 - Use SchoolDrive terms for lead source type: `lead` and `presubscription`. Show them in French as `Lead` and `Préinscription`.
 - In inbox cards, show the SD course category short title for `lead`, and the SD course short name for `presubscription`.
 

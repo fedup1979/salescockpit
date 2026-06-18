@@ -284,6 +284,21 @@ h1, h2, h3 {
   font-weight: 650;
 }
 
+.sc-hot-signal {
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+  margin-top: .38rem;
+  color: oklch(0.42 0.095 42);
+  background: oklch(0.94 0.055 58);
+  border: 1px solid oklch(0.84 0.085 58);
+  border-radius: 999px;
+  padding: .12rem .48rem;
+  font-size: .78rem;
+  font-weight: 680;
+  line-height: 1.25;
+}
+
 .sc-compact-label {
   color: var(--sc-muted);
   font-size: .75rem;

@@ -39,16 +39,20 @@ V1 local mock build is runnable.
 - SchoolDrive lead source types use `lead` and `presubscription`; inbox cards display `Lead` / `Préinscription` and use course category vs course short name accordingly.
 - Experimental UX pass: `Tâches` is first in navigation and uses a split-screen action/person list with the selected prospect detail on the right.
 - Mock seed ensures at least one open task for each active user for visual queue checks.
+- Inbound unanswered prospects are highlighted with a restrained hot signal and sorted above ordinary due actions.
+- `Tâches` and Inbox auto-refresh every 10 seconds while visible.
+- Action workflow decisions documented in `docs/ACTION_WORKFLOW.md`: action as operational unit, main vs support actions, statuses, proofs, outcomes, triggers, and transition table.
 
 ## Next Checkpoints
 
 1. Manual review of local mock UI by François, especially the `Tâches` / next-action workflow.
-2. Improve UX based on first review.
-3. Create first Git commit after François approves the current checkpoint.
-4. Add read-only connectors for SchoolDrive and Notion.
-5. Add Twilio sandbox integration.
-6. Prepare GitHub repo and DigitalOcean staging.
-7. Define backup policy for SQLite and attachments.
+2. Implement the validated action workflow model from `docs/ACTION_WORKFLOW.md`.
+3. Improve UX based on first review.
+4. Create first Git commit after François approves the current checkpoint.
+5. Add read-only connectors for SchoolDrive and Notion.
+6. Add Twilio sandbox integration.
+7. Prepare GitHub repo and DigitalOcean staging.
+8. Define backup policy for SQLite and attachments.
 
 ## Integration Policy
 

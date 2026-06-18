@@ -194,6 +194,7 @@ def render_shell() -> None:
         render_admin(user)
 
 
+@st.fragment(run_every="10s")
 def render_inbox(user: dict) -> None:
     st.title("Inbox WhatsApp")
 
@@ -203,6 +204,7 @@ def render_inbox(user: dict) -> None:
     conversations = list_conversations(
         search=search,
     )
+    conversations = sort_conversations_for_attention(conversations)
 
     if not conversations:
         st.warning("Aucune conversation trouvée.")
@@ -290,11 +292,18 @@ def conversation_row_html(conv: dict) -> str:
     action_html = escape_html(compact_text(action, 92))
     due_html = escape_html(due)
     queue_html = escape_html(labelize(conv.get("work_queue")))
+    waiting = client_waiting_state(conv)
+    waiting_html = (
+        f'<div class="sc-hot-signal">🔥 {escape_html(waiting)}</div>'
+        if waiting
+        else ""
+    )
     return f"""
         <div class="sc-conversation-row">
           <div class="sc-lead-type-line">{lead_type}</div>
           <div class="sc-conversation-title"><strong>{name}</strong></div>
           <div class="sc-row-meta">{course} · {owner_html}</div>
+          {waiting_html}
           <div class="sc-next-action-line"><span>{queue_html}</span> · {action_html}</div>
           <div class="sc-row-meta">{due_html}</div>
           <div class="sc-preview">{preview_html}</div>
@@ -313,11 +322,7 @@ def conversation_course_label(conv: dict) -> str:
     )
 
 
-def render_conversation_detail(
-    user: dict,
-    conversation_id: int,
-    actions_first: bool = False,
-) -> None:
+def render_conversation_detail(user: dict, conversation_id: int) -> None:
     conv = get_conversation(conversation_id)
     if not conv:
         st.error("Conversation introuvable.")
@@ -327,30 +332,17 @@ def render_conversation_detail(
     render_compact_lead_state(conv)
     render_next_action_summary(conv)
 
-    if actions_first:
-        tabs = st.tabs(["Actions", "Conversation", "Qualification", "Notes privées"])
-        with tabs[0]:
-            render_next_action_box(user, conv)
-        with tabs[1]:
-            render_messages(conversation_id)
-            st.markdown('<div class="sc-reply-anchor"></div>', unsafe_allow_html=True)
-            render_composer(user, conv)
-        with tabs[2]:
-            render_qualification(user, conv)
-        with tabs[3]:
-            render_manual_note_box(user, conv)
-    else:
-        tabs = st.tabs(["Conversation", "Qualification", "Actions", "Notes privées"])
-        with tabs[0]:
-            render_messages(conversation_id)
-            st.markdown('<div class="sc-reply-anchor"></div>', unsafe_allow_html=True)
-            render_composer(user, conv)
-        with tabs[1]:
-            render_qualification(user, conv)
-        with tabs[2]:
-            render_next_action_box(user, conv)
-        with tabs[3]:
-            render_manual_note_box(user, conv)
+    tabs = st.tabs(["Conversation", "Actions", "Qualification", "Notes privées"])
+    with tabs[0]:
+        render_messages(conversation_id)
+        st.markdown('<div class="sc-reply-anchor"></div>', unsafe_allow_html=True)
+        render_composer(user, conv)
+    with tabs[1]:
+        render_next_action_box(user, conv)
+    with tabs[2]:
+        render_qualification(user, conv)
+    with tabs[3]:
+        render_manual_note_box(user, conv)
 
 
 def render_conversation_header(user: dict, conversation_id: int) -> None:
@@ -747,6 +739,7 @@ def render_manual_note_box(user: dict, conv: dict) -> None:
             st.rerun()
 
 
+@st.fragment(run_every="10s")
 def render_work_queue(user: dict) -> None:
     users = list_users()
     assignee_options = [{"id": "all", "full_name": "Tous", "role": "all"}] + users
@@ -788,7 +781,7 @@ def render_work_queue(user: dict) -> None:
             task for task in tasks
             if task.get("assigned_to_user_id") == assignee_filter["id"]
         ]
-    tasks = sort_work_items(tasks, "lead_name")
+    tasks = sort_work_items(tasks, "attention")
 
     if not tasks:
         st.info("Aucune action pour ce filtre.")
@@ -836,7 +829,7 @@ def render_work_queue(user: dict) -> None:
 
     with right:
         if selected_task.get("conversation_id"):
-            render_conversation_detail(user, selected_task["conversation_id"], actions_first=True)
+            render_conversation_detail(user, selected_task["conversation_id"])
         else:
             st.info("Cette action n'est liée à aucune conversation.")
 
@@ -875,11 +868,18 @@ def action_row_html(task: dict) -> str:
     title = escape_html(compact_text(task.get("title") or "Action sans titre", 92))
     due = escape_html(format_due(task.get("due_at")))
     urgency = escape_html(labelize(task.get("urgency") or "normal"))
+    waiting = client_waiting_state(task)
+    waiting_html = (
+        f'<div class="sc-hot-signal">🔥 {escape_html(waiting)}</div>'
+        if waiting
+        else ""
+    )
     return f"""
         <div class="sc-conversation-row">
           <div class="sc-lead-type-line">{lead_type}</div>
           <div class="sc-conversation-title"><strong>{name}</strong></div>
           <div class="sc-row-meta">{course} · {owner}</div>
+          {waiting_html}
           <div class="sc-next-action-line"><span>{action_type}</span> · {title}</div>
           <div class="sc-row-meta">{due} · {urgency}</div>
         </div>
@@ -1041,6 +1041,66 @@ def format_due(value: str | None) -> str:
     return local.strftime("%d.%m.%Y %H:%M")
 
 
+def client_waiting_since(item: dict) -> datetime | None:
+    if item.get("conversation_status") == "resolved":
+        return None
+    if item.get("last_message_direction") == "inbound":
+        return parse_dt(item.get("last_message_at") or item.get("last_inbound_at"))
+
+    last_inbound = parse_dt(item.get("last_inbound_at"))
+    if not last_inbound:
+        return None
+    last_outbound = parse_dt(item.get("last_outbound_at"))
+    if last_outbound and last_outbound >= last_inbound:
+        return None
+    return last_inbound
+
+
+def client_waiting_state(item: dict) -> str | None:
+    waiting_since = client_waiting_since(item)
+    if not waiting_since:
+        return None
+    elapsed = max(0, int((utc_now() - waiting_since).total_seconds() // 60))
+    if elapsed < 1:
+        return "Client attend maintenant"
+    if elapsed < 60:
+        return f"Client attend depuis {elapsed} min"
+    hours = elapsed // 60
+    minutes = elapsed % 60
+    if hours < 24:
+        if minutes:
+            return f"Client attend depuis {hours} h {minutes:02d}"
+        return f"Client attend depuis {hours} h"
+    days = hours // 24
+    return f"Client attend depuis {days} j"
+
+
+def attention_sort_key(item: dict) -> tuple:
+    waiting_since = client_waiting_since(item)
+    if waiting_since:
+        return (0, -waiting_since.timestamp())
+
+    due_at = parse_dt(item.get("due_at") or item.get("next_action_due_at"))
+    action_type = item.get("type") or item.get("next_action_type") or ""
+    action_rank = {
+        "reply": 0,
+        "closing_call": 1,
+        "call": 2,
+        "follow_up": 3,
+    }.get(action_type, 4)
+    future_rank = 1 if due_at and due_at > utc_now() else 0
+    due_rank = due_at.timestamp() if due_at else 9_999_999_999
+    name_rank = (
+        item.get("last_name") or "",
+        item.get("first_name") or "",
+    )
+    return (1, future_rank, action_rank, due_rank, *name_rank)
+
+
+def sort_conversations_for_attention(conversations: list[dict]) -> list[dict]:
+    return sorted(conversations, key=attention_sort_key)
+
+
 def detail_work_queue(conv: dict, action: dict | None) -> str:
     if conv["status"] == "resolved":
         return "resolved"
@@ -1084,6 +1144,8 @@ def format_assignee_filter(user: dict, current_user_id: int | None = None) -> st
 
 
 def sort_work_items(tasks: list[dict], sort_by: str) -> list[dict]:
+    if sort_by == "attention":
+        return sorted(tasks, key=attention_sort_key)
     if sort_by == "lead_name":
         return sorted(
             tasks,

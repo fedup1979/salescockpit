@@ -449,6 +449,99 @@ def _ensure_demo_task_for_each_user(conn: sqlite3.Connection, now) -> None:
         )
 
 
+def _ensure_demo_waiting_reply_signal(conn: sqlite3.Connection, now, setter_id: int) -> None:
+    demo_body = "Je suis disponible maintenant pour échanger si vous pouvez me répondre."
+    row = conn.execute(
+        """
+        SELECT l.id AS lead_id, l.first_name, l.last_name, c.id AS conversation_id
+        FROM leads l
+        JOIN conversations c ON c.lead_id = l.id
+        WHERE l.schooldrive_lead_id = 'SD-DEMO-2001'
+        LIMIT 1
+        """
+    ).fetchone()
+    if not row:
+        return
+
+    existing_message = conn.execute(
+        """
+        SELECT id, created_at
+        FROM messages
+        WHERE conversation_id = ?
+          AND body = ?
+        LIMIT 1
+        """,
+        (row["conversation_id"], demo_body),
+    ).fetchone()
+
+    received_at = existing_message["created_at"] if existing_message else iso_utc(now - timedelta(minutes=4))
+    current_time = iso_utc(now)
+    if not existing_message:
+        conn.execute(
+            """
+            INSERT INTO messages (
+                conversation_id, lead_id, direction, channel, body, received_at, created_at
+            ) VALUES (?, ?, 'inbound', 'whatsapp_twilio', ?, ?, ?)
+            """,
+            (row["conversation_id"], row["lead_id"], demo_body, received_at, received_at),
+        )
+    conn.execute(
+        """
+        UPDATE conversations
+        SET last_inbound_at = ?, status = 'open', updated_at = ?
+        WHERE id = ?
+        """,
+        (received_at, current_time, row["conversation_id"]),
+    )
+    conn.execute(
+        """
+        UPDATE tasks
+        SET status = 'done', outcome = 'Nouveau message reçu',
+            completed_at = ?, updated_at = ?
+        WHERE lead_id = ?
+          AND status IN ('open', 'in_progress')
+          AND type != 'reply'
+        """,
+        (current_time, current_time, row["lead_id"]),
+    )
+
+    title = f"Répondre à {row['first_name']} {row['last_name']}"
+    existing_reply = conn.execute(
+        """
+        SELECT id
+        FROM tasks
+        WHERE lead_id = ?
+          AND conversation_id = ?
+          AND type = 'reply'
+          AND status IN ('open', 'in_progress')
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (row["lead_id"], row["conversation_id"]),
+    ).fetchone()
+    if existing_reply:
+        conn.execute(
+            """
+            UPDATE tasks
+            SET title = ?, assigned_to_user_id = ?, due_at = ?,
+                urgency = 'urgent', updated_at = ?
+            WHERE id = ?
+            """,
+            (title, setter_id, received_at, current_time, existing_reply["id"]),
+        )
+        return
+
+    conn.execute(
+        """
+        INSERT INTO tasks (
+            lead_id, conversation_id, type, title, description,
+            assigned_to_user_id, created_by_user_id, due_at, urgency, status
+        ) VALUES (?, ?, 'reply', ?, 'Le client attend une réponse maintenant.', ?, NULL, ?, 'urgent', 'open')
+        """,
+        (row["lead_id"], row["conversation_id"], title, setter_id, received_at),
+    )
+
+
 def seed_initial_data() -> None:
     init_db()
     settings = get_settings()
@@ -751,6 +844,7 @@ def seed_initial_data() -> None:
 
         _normalize_seeded_demo_actions(conn, now, mihary_id, yasmine_id)
         _ensure_demo_task_for_each_user(conn, now)
+        _ensure_demo_waiting_reply_signal(conn, now, mihary_id)
 
         templates = [
             (
