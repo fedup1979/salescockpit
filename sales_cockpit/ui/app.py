@@ -74,17 +74,18 @@ ACTION_QUEUES = ["due", "future", "completed", "all"]
 ACTION_TYPES = ["reply", "follow_up", "setting_call", "closing_call", "contact_review", "other"]
 WORK_SORTS = ["assignee_name", "lead_name", "due_at"]
 ACTION_OUTCOMES = {
-    "reply": ["reply_no_appointment", "setting_booked", "not_relevant", "do_not_contact"],
+    "reply": ["reply_no_appointment", "setting_booked", "closing_booked", "not_relevant", "do_not_contact"],
     "follow_up": ["follow_up_sent", "template_missing", "sequence_completed_no_reply"],
     "setting_call": ["to_closing", "not_reached", "not_ready", "not_relevant", "do_not_contact"],
     "closing_call": ["signed", "will_sign", "not_reached", "undecided", "not_relevant"],
     "contact_review": ["maintain_do_not_contact", "lift_do_not_contact"],
     "other": ["done"],
 }
-REPLY_SEND_OUTCOMES = ["reply_no_appointment", "setting_booked", "not_relevant", "do_not_contact"]
+REPLY_SEND_OUTCOMES = ["reply_no_appointment", "setting_booked", "closing_booked", "not_relevant", "do_not_contact"]
 REPLY_SEND_OUTCOME_LABELS = {
     "reply_no_appointment": "Pas de RDV : relance Tanjona à +72h",
     "setting_booked": "RDV setting fixé : créer un appel",
+    "closing_booked": "RDV closing fixé : créer un appel",
     "not_relevant": "Hors cible : clore la conversation",
     "do_not_contact": "Ne plus contacter : clore et bloquer",
 }
@@ -167,6 +168,7 @@ DISPLAY_LABELS = {
     "Other": "Autre",
     "reply_no_appointment": "Réponse envoyée sans RDV",
     "setting_booked": "RDV setting fixé",
+    "closing_booked": "RDV closing fixé",
     "follow_up_sent": "Relance envoyée",
     "template_missing": "Modèle manquant",
     "to_closing": "Passer au closing",
@@ -649,6 +651,19 @@ def next_action_context(conv: dict) -> dict | None:
     return get_next_action_for_lead(conv["lead_id"])
 
 
+def reply_call_assignee_options(users: list[dict], outcome: str) -> list[dict]:
+    if outcome == "setting_booked":
+        options = [
+            user for user in users
+            if user.get("role") == "setter" and (user.get("email") or "").lower() != "setter2@essr.ch"
+        ]
+        return options or users
+    if outcome == "closing_booked":
+        options = [user for user in users if user.get("role") == "closer"]
+        return options or users
+    return users
+
+
 def get_reply_send_plan(
     action: dict | None,
     key_prefix: str,
@@ -661,11 +676,14 @@ def get_reply_send_plan(
     note = (st.session_state.get(f"{key_prefix}_reply_note") or "").strip()
     next_due_at = None
     assigned_to_user_id = None
-    if outcome == "setting_booked":
+    if outcome in {"setting_booked", "closing_booked"}:
+        assignee_options = reply_call_assignee_options(users, outcome)
         assigned_to_user_id = st.session_state.get(
             f"{key_prefix}_reply_assignee_id",
-            action.get("assigned_to_user_id"),
+            action.get("assigned_to_user_id") if outcome == "setting_booked" else None,
         )
+        if not any(user["id"] == assigned_to_user_id for user in assignee_options):
+            assigned_to_user_id = assignee_options[0]["id"] if assignee_options else None
         appointment_date = st.session_state.get(
             f"{key_prefix}_reply_date",
             datetime.now().date(),
@@ -675,8 +693,6 @@ def get_reply_send_plan(
             time(9, 0),
         )
         next_due_at = local_due_at(appointment_date, appointment_time)
-        if not assigned_to_user_id and users:
-            assigned_to_user_id = users[0]["id"]
     return outcome, next_due_at, assigned_to_user_id, note
 
 
@@ -697,13 +713,17 @@ def render_reply_send_plan_controls(
         key=f"{key_prefix}_reply_outcome",
     )
     note = st.text_area("Note interne, optionnelle", height=80, key=f"{key_prefix}_reply_note")
-    if outcome == "setting_booked":
+    if outcome in {"setting_booked", "closing_booked"}:
+        assignee_options = reply_call_assignee_options(users, outcome)
         assignee = st.selectbox(
             "Responsable de l'appel",
-            users,
-            index=safe_user_index(users, action.get("assigned_to_user_id")),
+            assignee_options,
+            index=safe_user_index(
+                assignee_options,
+                action.get("assigned_to_user_id") if outcome == "setting_booked" else None,
+            ),
             format_func=format_user,
-            key=f"{key_prefix}_reply_assignee",
+            key=f"{key_prefix}_{outcome}_reply_assignee",
         )
         st.session_state[f"{key_prefix}_reply_assignee_id"] = assignee["id"]
         appointment_date = st.date_input(
@@ -716,7 +736,8 @@ def render_reply_send_plan_controls(
             value=time(9, 0),
             key=f"{key_prefix}_reply_time",
         )
-        st.caption(f"Après l'envoi, un entretien Setting sera créé le {appointment_date.strftime('%d.%m.%Y')} à {appointment_time.strftime('%H:%M')}.")
+        call_label = "Setting" if outcome == "setting_booked" else "Closing"
+        st.caption(f"Après l'envoi, un entretien {call_label} sera créé le {appointment_date.strftime('%d.%m.%Y')} à {appointment_time.strftime('%H:%M')}.")
     elif outcome in {"not_relevant", "do_not_contact"}:
         st.warning("Cette réponse résoudra la conversation et annulera les relances futures.")
     else:
@@ -733,6 +754,9 @@ def render_composer(user: dict, conv: dict) -> None:
     )
     if conv.get("contact_status") == "do_not_contact":
         st.error("Contact bloqué : le prospect est marqué Ne plus contacter. Le statut doit être levé dans Actions avant tout envoi.")
+        return
+    if conv.get("status") == "resolved":
+        st.info("Conversation terminée : réactivez la conversation dans Actions avant tout nouvel envoi.")
         return
     if conv["window_is_open"]:
         st.success("Fenêtre WhatsApp ouverte : message libre autorisé.")
@@ -867,13 +891,22 @@ def render_qualification(user: dict, conv: dict) -> None:
             format_func=labelize,
             help=HELP_TEXTS["contact_status"],
         )
-        sales_stage = st.selectbox(
-            "Étape du parcours (pour forcer le client vers une autre étape)",
-            SALES_STAGES,
-            index=safe_index(SALES_STAGES, conv["sales_stage"]),
-            format_func=labelize,
-            help=HELP_TEXTS["sales_stage"],
+        sales_stage = conv["sales_stage"]
+        st.markdown(
+            f"**Étape du parcours** : {labelize(conv['sales_stage'])}"
         )
+        if user.get("role") == "admin":
+            with st.expander("Forçage admin du parcours"):
+                sales_stage = st.selectbox(
+                    "Étape du parcours (pour forcer le client vers une autre étape)",
+                    SALES_STAGES,
+                    index=safe_index(SALES_STAGES, conv["sales_stage"]),
+                    format_func=labelize,
+                    help=HELP_TEXTS["sales_stage"],
+                )
+                st.caption("À utiliser seulement pour corriger un parcours incohérent.")
+        else:
+            st.caption("Le parcours est piloté par les actions. Un admin peut le corriger si nécessaire.")
         submitted = st.form_submit_button("Mettre à jour")
     if submitted:
         update_lead_qualification(
@@ -1099,6 +1132,8 @@ def render_manual_completion_advanced(user: dict, action: dict | None) -> None:
 
 
 def render_advanced_actions(user: dict, conv: dict, action: dict | None, users: list[dict], active_assignee_id: int) -> None:
+    if conv.get("status") != "open":
+        return
     with st.expander("Actions avancées"):
         st.caption(
             "Ces actions servent aux exceptions. Utilisez le flux principal quand l'action est réellement faite dans le cockpit."
@@ -1245,7 +1280,10 @@ def render_next_action_box(user: dict, conv: dict) -> None:
     else:
         st.info("Aucune action ouverte pour cette conversation.")
 
-    render_advanced_actions(user, conv, action, users, active_assignee_id)
+    if conv["status"] == "open":
+        render_advanced_actions(user, conv, action, users, active_assignee_id)
+    else:
+        st.caption("Conversation terminée : utilisez Réactiver en haut de la fiche pour créer une nouvelle action.")
 
     actions = list_actions_for_lead(conv["lead_id"], "all")
     if actions:
@@ -1474,7 +1512,7 @@ def render_user_guide() -> None:
 
         ### Chaînage des actions
 
-        Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous, l'action de réponse est terminée et une relance est planifiée pour Tanjona. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un entretien de setting est créé. Si un entretien de setting doit passer au closing, une action de closing est créée pour le closer.
+        Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous, l'action de réponse est terminée et une relance est planifiée pour Tanjona. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un entretien de setting est créé. Si vous fixez directement un rendez-vous de closing, l'action de réponse est terminée et un entretien de closing est créé pour le closer. Si un entretien de setting doit passer au closing, une action de closing est créée pour le closer.
 
         Le chaînage peut être interrompu. Si le prospect répond, la conversation remonte avec une action de réponse immédiate. Si le prospect est marqué **Non pertinent**, **Ne plus contacter** ou **A signé**, les relances s'arrêtent. Si un prospect marqué **Ne plus contacter** écrit à nouveau, le cockpit crée une revue humaine au lieu de relancer automatiquement.
 
@@ -1631,7 +1669,17 @@ def render_admin(user: dict) -> None:
     with tabs[0]:
         st.subheader("Utilisateurs")
         users = sorted(list_users(active_only=False), key=lambda item: item["id"])
-        st.dataframe(users, hide_index=True, use_container_width=True)
+        user_rows = [
+            {
+                "ID": item["id"],
+                "Nom": display_user_name(item),
+                "Email": item["email"],
+                "Rôle": display_user_role(item),
+                "Actif": bool(item["active"]),
+            }
+            for item in users
+        ]
+        st.dataframe(user_rows, hide_index=True, use_container_width=True)
         st.subheader("Accès par rôle")
         st.dataframe(page_access_matrix(), hide_index=True, use_container_width=True)
         st.subheader("Rôles commerciaux")

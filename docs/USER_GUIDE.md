@@ -42,7 +42,7 @@ Pour les appels, la mini-note est obligatoire. Elle permet au prochain utilisate
 
 ## Chaînage des actions
 
-Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous, l'action de réponse est terminée et une relance est planifiée pour Tanjona. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un entretien de setting est créé. Si un entretien de setting doit passer au closing, une action de closing est créée pour le closer.
+Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous, l'action de réponse est terminée et une relance est planifiée pour Tanjona. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un entretien de setting est créé. Si vous fixez directement un rendez-vous de closing, l'action de réponse est terminée et un entretien de closing est créé pour le closer. Si un entretien de setting doit passer au closing, une action de closing est créée pour le closer.
 
 Le chaînage peut être interrompu. Si le prospect répond, la conversation remonte avec une action de réponse immédiate. Si le prospect est marqué **Non pertinent**, **Ne plus contacter** ou **A signé**, les relances s'arrêtent. Si un prospect marqué **Ne plus contacter** écrit à nouveau, le cockpit crée une revue humaine au lieu de relancer automatiquement.
 

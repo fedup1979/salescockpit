@@ -8,6 +8,7 @@ from sales_cockpit.store import (
     get_next_action_for_lead,
     list_conversations,
     record_inbound_message,
+    set_conversation_status,
 )
 
 
@@ -77,3 +78,51 @@ def test_window_and_unknown_labels_render_in_french() -> None:
     never_opened_markup = "\n".join(item.value for item in never_opened_window.markdown)
     assert len(never_opened_window.exception) == 0
     assert "Jamais ouverte" in never_opened_markup
+
+
+def test_resolved_conversation_hides_whatsapp_send_controls() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Conversation a clore.")
+
+    ok, _ = set_conversation_status(
+        result["conversation_id"],
+        admin["id"],
+        "resolved",
+        resolution_reason="other",
+        resolution_note="Cloture test.",
+    )
+    assert ok is True
+
+    app = AppTest.from_file("sales_cockpit/ui/app.py")
+    app.session_state["user"] = admin
+    app.session_state["selected_conversation_id"] = result["conversation_id"]
+    app.run(timeout=10)
+    app.radio[0].set_value("Inbox")
+    app.run(timeout=10)
+
+    assert len(app.exception) == 0
+    info_texts = [item.value for item in app.info]
+    button_labels = [item.label for item in app.button]
+
+    assert any("Conversation terminée" in text for text in info_texts)
+    assert "Envoyer le modèle approuvé" not in button_labels
+    assert "Envoyer le message libre" not in button_labels
+    assert "Réactiver" in button_labels
+
+
+def test_admin_users_table_formats_setter2_role() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+
+    app = AppTest.from_file("sales_cockpit/ui/app.py")
+    app.session_state["user"] = admin
+    app.run(timeout=10)
+    app.radio[0].set_value("Admin")
+    app.run(timeout=10)
+
+    assert len(app.exception) == 0
+    users_df = app.dataframe[0].value
+    row = users_df.loc[users_df["Email"] == "setter2@essr.ch"].iloc[0]
+    assert row["Nom"] == "Tanjona"
+    assert row["Rôle"] == "Setter II"

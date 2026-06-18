@@ -575,6 +575,25 @@ def test_forced_stage_overrides_will_sign_next_action() -> None:
     assert next_action["type"] == "setting_call"
 
 
+def test_forced_appointment_stage_wins_when_will_sign_changes_same_update() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je pense signer mais il faut un setting.")
+
+    update_lead_qualification(
+        result["lead_id"],
+        admin["id"],
+        "appointment_booked",
+        "will_sign",
+        contact_status="contact_allowed",
+    )
+
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "setting_call"
+    assert next_action["trigger_reason"] == "sales_stage_forced_appointment_booked"
+    assert next_action["sequence_code"] is None
+
+
 def test_do_not_contact_blocks_freeform_and_template_send() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
@@ -595,6 +614,140 @@ def test_do_not_contact_blocks_freeform_and_template_send() -> None:
     ok, message = send_template_message(result["conversation_id"], admin["id"], template["id"], {})
     assert ok is False
     assert "Contact bloqué" in message
+
+
+def test_resolved_conversation_blocks_freeform_and_template_send() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Question apres cloture.")
+
+    ok, _ = set_conversation_status(
+        result["conversation_id"],
+        admin["id"],
+        "resolved",
+        resolution_reason="other",
+        resolution_note="Test cloture.",
+    )
+    assert ok is True
+
+    ok, message = send_freeform_message(result["conversation_id"], admin["id"], "Bonjour.")
+    assert ok is False
+    assert "Conversation" in message
+    assert "avant tout envoi" in message
+
+    template = next(item for item in list_templates(approved_only=True))
+    ok, message = send_template_message(result["conversation_id"], admin["id"], template["id"], {})
+    assert ok is False
+    assert "Conversation" in message
+    assert "avant tout envoi" in message
+
+
+def test_resolved_conversation_blocks_new_work_shortcuts() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    closer = next(user for user in list_users() if user["role"] == "closer")
+    result = record_inbound_message(unique_phone(), "Conversation a terminer.")
+
+    ok, _ = set_conversation_status(
+        result["conversation_id"],
+        admin["id"],
+        "resolved",
+        resolution_reason="other",
+        resolution_note="Test cloture.",
+    )
+    assert ok is True
+
+    ok, message = schedule_followup(
+        result["conversation_id"],
+        admin["id"],
+        admin["id"],
+        iso_utc(utc_now()),
+    )
+    assert ok is False
+    assert "réactivez" in message or "rÃ©activez" in message
+
+    ok, message = handoff_to_closer(
+        result["conversation_id"],
+        admin["id"],
+        closer["id"],
+    )
+    assert ok is False
+    assert "réactivez" in message or "rÃ©activez" in message
+
+
+def test_qualification_noop_does_not_replace_followup_action() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Merci pour les infos.")
+
+    ok, _ = send_freeform_message(result["conversation_id"], admin["id"], "Je reviens vers vous.")
+    assert ok is True
+    followup = get_next_action_for_lead(result["lead_id"])
+    assert followup["type"] == "follow_up"
+
+    update_lead_qualification(
+        result["lead_id"],
+        admin["id"],
+        "new",
+        "neutral",
+        contact_status="contact_allowed",
+    )
+
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["id"] == followup["id"]
+    assert next_action["type"] == "follow_up"
+
+
+def test_reply_can_create_closing_call_directly() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    closer = next(user for user in list_users() if user["role"] == "closer")
+    result = record_inbound_message(unique_phone(), "Je veux parler au closer.")
+
+    ok, _ = send_freeform_message(
+        result["conversation_id"],
+        admin["id"],
+        "Parfait, Yasmine vous appelle demain.",
+        action_outcome="closing_booked",
+        next_due_at=iso_utc(utc_now()),
+        assigned_to_user_id=closer["id"],
+        note="RDV closing fixe directement.",
+    )
+    assert ok is True
+
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["sales_stage"] == "closing"
+    assert conversation["closer_user_id"] == closer["id"]
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "closing_call"
+    assert action["assigned_to_user_id"] == closer["id"]
+
+
+def test_blocked_followup_cannot_be_closed_by_unrelated_template_send() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je ne reponds plus.")
+
+    ok, _ = send_freeform_message(result["conversation_id"], admin["id"], "Je reste disponible.")
+    assert ok is True
+    followup = get_next_action_for_lead(result["lead_id"])
+    assert followup["type"] == "follow_up"
+
+    ok, _ = create_template_request(
+        result["conversation_id"],
+        admin["id"],
+        "Modele specifique manquant.",
+        "Contexte de relance.",
+    )
+    assert ok is True
+    blocked = get_next_action_for_lead(result["lead_id"])
+    assert blocked["status"] == "blocked"
+
+    template = next(item for item in list_templates(approved_only=True))
+    ok, message = send_template_message(result["conversation_id"], admin["id"], template["id"], {})
+    assert ok is False
+    assert "Relance" in message
+    assert get_next_action_for_lead(result["lead_id"])["status"] == "blocked"
 
 
 def test_call_completion_note_is_visible_in_conversation() -> None:

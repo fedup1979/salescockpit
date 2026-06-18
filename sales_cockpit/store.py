@@ -259,6 +259,40 @@ def setter2_user_id(conn: Any) -> int | None:
     return _default_active_user_id(conn, "setter")
 
 
+def setter1_user_id(conn: Any) -> int | None:
+    row = conn.execute(
+        """
+        SELECT id FROM users
+        WHERE role = 'setter'
+          AND lower(email) != 'setter2@essr.ch'
+          AND active = 1
+        ORDER BY id
+        LIMIT 1
+        """
+    ).fetchone()
+    if row:
+        return int(row["id"])
+    return _default_active_user_id(conn, "setter")
+
+
+def _is_setter1_user(conn: Any, user_id: int | None) -> bool:
+    if not user_id:
+        return False
+    row = conn.execute(
+        """
+        SELECT role, email
+        FROM users
+        WHERE id = ? AND active = 1
+        """,
+        (user_id,),
+    ).fetchone()
+    return bool(
+        row
+        and row["role"] == "setter"
+        and str(row["email"] or "").lower() != "setter2@essr.ch"
+    )
+
+
 def default_closer_user_id(conn: Any) -> int | None:
     row = conn.execute(
         """
@@ -534,6 +568,13 @@ def create_next_action(
     metadata: dict[str, Any] | None = None,
 ) -> int:
     with connect() as conn:
+        if conversation_id is not None:
+            conversation = conn.execute(
+                "SELECT status FROM conversations WHERE id = ?",
+                (conversation_id,),
+            ).fetchone()
+            if conversation and conversation["status"] != "open":
+                raise ValueError("Conversation terminée : réactivez-la avant de créer une action.")
         action_id = _insert_next_action(
             conn,
             lead_id=lead_id,
@@ -586,6 +627,8 @@ def schedule_followup(
         return False, "Conversation introuvable."
     if followups_are_blocked(conv):
         return False, "Ce statut bloque les relances commerciales."
+    if conv.get("status") != "open":
+        return False, "Conversation terminée : réactivez-la avant de planifier une relance."
 
     full_name = lead_full_name(conv)
     title = f"Relancer {full_name}"
@@ -639,6 +682,8 @@ def handoff_to_closer(
     conv = get_conversation(conversation_id)
     if not conv:
         return False, "Conversation introuvable."
+    if conv.get("status") != "open":
+        return False, "Conversation terminée : réactivez-la avant de passer au closer."
 
     with connect() as conn:
         closer = row_to_dict(
@@ -963,8 +1008,10 @@ def _first_active_action_for_lead(
     conn: Any,
     lead_id: int,
     action_types: tuple[str, ...] | None = None,
+    include_blocked: bool = True,
 ) -> dict[str, Any] | None:
-    filters = ["lead_id = ?", "status IN ('open', 'in_progress', 'planned', 'blocked')"]
+    statuses = "('open', 'in_progress', 'planned', 'blocked')" if include_blocked else "('open', 'in_progress', 'planned')"
+    filters = ["lead_id = ?", f"status IN {statuses}"]
     params: list[Any] = [lead_id]
     if action_types:
         placeholders = ", ".join("?" for _ in action_types)
@@ -990,6 +1037,20 @@ def _first_active_action_for_lead(
         params,
     ).fetchone()
     return row_to_dict(row)
+
+
+def _has_blocked_followup(conn: Any, lead_id: int) -> bool:
+    row = conn.execute(
+        """
+        SELECT id FROM tasks
+        WHERE lead_id = ?
+          AND type = 'follow_up'
+          AND status = 'blocked'
+        LIMIT 1
+        """,
+        (lead_id,),
+    ).fetchone()
+    return bool(row)
 
 
 def _due_after(base_iso: str, delay: str) -> str:
@@ -1043,6 +1104,7 @@ def _close_outbound_action_and_chain(
         conn,
         conv["lead_id"],
         action_types=("reply", "follow_up"),
+        include_blocked=False,
     )
     if not action:
         return
@@ -1095,7 +1157,11 @@ def _close_outbound_action_and_chain(
     full_name = lead_full_name(conv)
     if action["type"] == "reply":
         if action_outcome == "setting_booked":
-            assignee_id = assigned_to_user_id or action.get("assigned_to_user_id") or user_id
+            assignee_id = (
+                assigned_to_user_id
+                if _is_setter1_user(conn, assigned_to_user_id)
+                else setter1_user_id(conn)
+            ) or action.get("assigned_to_user_id") or user_id
             next_action_id = _insert_next_action(
                 conn,
                 lead_id=conv["lead_id"],
@@ -1108,6 +1174,35 @@ def _close_outbound_action_and_chain(
                 due_at=next_due_at or sent_at,
                 description=note or None,
                 trigger_reason="setting_appointment_booked",
+                previous_action_id=action["id"],
+            )
+            conn.execute("UPDATE tasks SET next_action_id = ? WHERE id = ?", (next_action_id, action["id"]))
+            return
+
+        if action_outcome == "closing_booked":
+            closer_id = assigned_to_user_id or default_closer_user_id(conn)
+            if not closer_id:
+                return
+            conn.execute(
+                """
+                UPDATE leads
+                SET closer_user_id = ?, sales_stage = 'closing', lead_status = 'neutral', updated_at = ?
+                WHERE id = ?
+                """,
+                (closer_id, sent_at, conv["lead_id"]),
+            )
+            next_action_id = _insert_next_action(
+                conn,
+                lead_id=conv["lead_id"],
+                conversation_id=conv["id"],
+                action_type="closing_call",
+                title=f"Contacter {full_name} pour closing",
+                assigned_to_user_id=closer_id,
+                created_by_user_id=user_id,
+                urgency="high",
+                due_at=next_due_at or sent_at,
+                description=note or None,
+                trigger_reason="closing_appointment_booked_from_reply",
                 previous_action_id=action["id"],
             )
             conn.execute("UPDATE tasks SET next_action_id = ? WHERE id = ?", (next_action_id, action["id"]))
@@ -1749,13 +1844,11 @@ def update_lead_qualification(
                 """,
                 (resolution_reason, now, now, lead_id),
             )
+        elif stage_changed and sales_stage == "appointment_booked":
+            _sync_next_action_for_sales_stage(conn, lead_id, user_id, sales_stage, now)
         elif lead_status == "will_sign" and lead_status_changed:
             _sync_next_action_for_lead_status(conn, lead_id, user_id, lead_status, now)
         elif stage_changed:
-            _sync_next_action_for_sales_stage(conn, lead_id, user_id, sales_stage, now)
-        elif lead_status == "will_sign":
-            _sync_next_action_for_lead_status(conn, lead_id, user_id, lead_status, now)
-        else:
             _sync_next_action_for_sales_stage(conn, lead_id, user_id, sales_stage, now)
         insert_event(
             conn,
@@ -1986,6 +2079,11 @@ def send_freeform_message(
         return False, "Conversation introuvable."
     if conv.get("contact_status") in STOP_CONTACT_STATUSES:
         return False, "Contact bloqué : le statut Ne plus contacter doit être levé avant tout envoi."
+    if conv.get("status") == "resolved":
+        return False, "Conversation terminée : réactivez-la avant tout envoi."
+    with connect() as conn:
+        if _has_blocked_followup(conn, conv["lead_id"]):
+            return False, "Relance bloquée : le nouveau modèle doit être approuvé avant l'envoi."
     state = calculate_window(conv["last_inbound_at"])
     if not state.is_open:
         return False, "Fenêtre WhatsApp fermée. Utilisez un modèle approuvé."
@@ -2057,6 +2155,11 @@ def send_template_message(
         return False, "Modèle introuvable."
     if conv.get("contact_status") in STOP_CONTACT_STATUSES:
         return False, "Contact bloqué : le statut Ne plus contacter doit être levé avant tout envoi."
+    if conv.get("status") == "resolved":
+        return False, "Conversation terminée : réactivez-la avant tout envoi."
+    with connect() as conn:
+        if _has_blocked_followup(conn, conv["lead_id"]):
+            return False, "Relance bloquée : le nouveau modèle doit être approuvé avant l'envoi."
     if template["status"] != "approved":
         return False, "Ce modèle n'est pas approuvé."
 
@@ -2566,7 +2669,11 @@ def complete_action_with_workflow(
             elif outcome == "setting_booked":
                 if not conversation_id:
                     return False, "Conversation introuvable pour créer l'appel."
-                assignee_id = assigned_to_user_id or task.get("assigned_to_user_id") or user_id
+                assignee_id = (
+                    assigned_to_user_id
+                    if _is_setter1_user(conn, assigned_to_user_id)
+                    else setter1_user_id(conn)
+                ) or task.get("assigned_to_user_id") or user_id
                 next_action_id = _insert_next_action(
                     conn,
                     lead_id=task["lead_id"],
@@ -2579,6 +2686,32 @@ def complete_action_with_workflow(
                     due_at=next_due_at or now,
                     description=note or None,
                     trigger_reason="setting_appointment_booked",
+                    previous_action_id=task_id,
+                )
+            elif outcome == "closing_booked":
+                closer_id = assigned_to_user_id or default_closer_user_id(conn)
+                if not closer_id or not conversation_id:
+                    return False, "Closer ou conversation introuvable."
+                conn.execute(
+                    """
+                    UPDATE leads
+                    SET closer_user_id = ?, sales_stage = 'closing', lead_status = 'neutral', updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (closer_id, now, task["lead_id"]),
+                )
+                next_action_id = _insert_next_action(
+                    conn,
+                    lead_id=task["lead_id"],
+                    conversation_id=conversation_id,
+                    action_type="closing_call",
+                    title=f"Contacter {full_name} pour closing",
+                    assigned_to_user_id=closer_id,
+                    created_by_user_id=user_id,
+                    urgency="high",
+                    due_at=next_due_at or now,
+                    description=note or None,
+                    trigger_reason="closing_appointment_booked_from_reply",
                     previous_action_id=task_id,
                 )
             elif outcome in {"not_relevant", "do_not_contact"}:
