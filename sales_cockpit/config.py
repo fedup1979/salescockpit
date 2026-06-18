@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     twilio_whatsapp_sender: str | None = None
     twilio_messaging_service_sid: str | None = None
     schooldrive_mcp_url: str | None = None
+    schooldrive_webhook_token: str | None = None
     notion_token: str | None = None
 
     model_config = SettingsConfigDict(

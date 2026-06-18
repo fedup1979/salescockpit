@@ -18,6 +18,11 @@ SOURCE_TYPES = [
         "meaning": "Donnée de démonstration locale.",
     },
     {
+        "value": "schooldrive_webhook",
+        "label": "SchoolDrive webhook",
+        "meaning": "Donnée reçue automatiquement depuis SchoolDrive.",
+    },
+    {
         "value": "unknown",
         "label": "Inconnu",
         "meaning": "Origine non encore synchronisée.",

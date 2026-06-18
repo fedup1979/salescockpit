@@ -12,6 +12,7 @@ Local URLs:
 DigitalOcean staging:
 
 - Staging UI: `http://139.59.158.77:8502`
+- SchoolDrive staging webhook: `http://139.59.158.77:8602/webhooks/schooldrive/lead-or-presubscription`
 - Host: `salescockpit-prod-01`
 - Services: `sales-cockpit-ui@staging.service`, `sales-cockpit-api@staging.service`
 
@@ -154,7 +155,8 @@ Stop-Process -Id <PID> -Force
 - GitHub remote exists: `https://github.com/fedup1979/salescockpit`.
 - DigitalOcean staging exists on `http://139.59.158.77:8502`.
 - Deployment scaffold exists in `deploy/` and `docs/DEPLOYMENT.md`.
-- The droplet still needs a read-only GitHub deploy key for future pull-based deploys.
+- The droplet has a read-only GitHub deploy key for pull-based deploys.
+- SchoolDrive webhook implementation exists. Read `docs/SCHOOLDRIVE_WEBHOOK.md` before changing it.
 - No backup strategy implemented yet.
 
 ## Recommended Next Work
@@ -162,11 +164,10 @@ Stop-Process -Id <PID> -Force
 1. Run the focused manual scenario validation in `docs/TEST_PLAN.md`, starting with `scripts/reset_demo.py`.
 2. Fix any UX or workflow failures discovered by the scenario pass.
 3. After scenario behavior is validated, do a moderate refactor of the largest files without changing behavior.
-4. Add a read-only GitHub deploy key for the droplet.
-5. Validate DigitalOcean staging on `http://139.59.158.77:8502`.
-6. Implement SchoolDrive read-only lead lookup.
-7. Implement Notion historical enrichment.
-8. Implement Twilio sandbox mode.
+4. Send Tiago the SchoolDrive staging webhook URL and token.
+5. Validate real SchoolDrive staging payloads and backfill replay.
+6. Implement Notion historical enrichment.
+7. Implement Twilio sandbox mode.
 
 ## Files Most Likely to Change Next
 

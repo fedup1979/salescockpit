@@ -79,15 +79,17 @@ V1 local mock build is runnable.
 - GitHub repository created and pushed: `https://github.com/fedup1979/salescockpit`.
 - DigitalOcean staging deployed on `http://139.59.158.77:8502`.
 - Staging services running: `sales-cockpit-ui@staging.service` and `sales-cockpit-api@staging.service`.
+- Implemented SchoolDrive snapshot webhook with bearer auth, environment guard, `event_id` idempotency, `schooldrive_id` upsert, `aggregated_updated_at` ordering, autoresponder replacement, and archival handling.
+- SchoolDrive `url` is stored and used by the UI SchoolDrive link.
 
 ## Next Checkpoints
 
 1. Run the focused scenario validation in `docs/TEST_PLAN.md` after `scripts/reset_demo.py`.
 2. Fix any scenario failures before adding new features.
 3. Only after scenario validation, do a moderate refactor of the large files into UI pages/components, workflow services, seed/reset, and repositories.
-4. Add a read-only GitHub deploy key on the DigitalOcean droplet.
-5. Validate staging manually on `http://139.59.158.77:8502`.
-6. Add read-only connectors for SchoolDrive and Notion.
+4. Send SchoolDrive staging webhook URL and token to Tiago.
+5. Validate a real SchoolDrive staging POST and backfill replay.
+6. Add Notion historical enrichment.
 7. Add Twilio sandbox integration.
 8. Define and automate SQLite backups before PROD.
 

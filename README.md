@@ -105,6 +105,7 @@ Before continuing work, read:
 - `docs/TEST_PLAN.md`
 - `docs/USER_GUIDE.md`
 - `docs/DEPLOYMENT.md`
+- `docs/SCHOOLDRIVE_WEBHOOK.md`
 - `PRODUCT.md`
 - `DESIGN.md`
 

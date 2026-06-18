@@ -54,6 +54,15 @@ CREATE TABLE IF NOT EXISTS leads (
     owner_user_id INTEGER REFERENCES users(id),
     setter_user_id INTEGER REFERENCES users(id),
     closer_user_id INTEGER REFERENCES users(id),
+    schooldrive_url TEXT,
+    schooldrive_status TEXT,
+    schooldrive_aggregated_updated_at TEXT,
+    schooldrive_last_event_occurred_at TEXT,
+    schooldrive_last_event_id TEXT,
+    schooldrive_is_archived INTEGER NOT NULL DEFAULT 0,
+    schooldrive_archived_at TEXT,
+    schooldrive_archive_reason TEXT,
+    schooldrive_payload_json TEXT,
     last_schooldrive_sync_at TEXT,
     last_notion_sync_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -234,6 +243,35 @@ CREATE TABLE IF NOT EXISTS user_activity_log (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS schooldrive_webhook_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    environment TEXT NOT NULL,
+    schooldrive_id TEXT,
+    lead_id INTEGER REFERENCES leads(id) ON DELETE SET NULL,
+    occurred_at TEXT,
+    aggregated_updated_at TEXT,
+    status TEXT NOT NULL,
+    ignored_reason TEXT,
+    payload_json TEXT NOT NULL,
+    received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS schooldrive_whatsapp_autoresponders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    schooldrive_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    autoresponder_id INTEGER,
+    template TEXT,
+    status TEXT NOT NULL,
+    sent_at TEXT,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(lead_id, message_id)
+);
+
 CREATE TABLE IF NOT EXISTS bug_reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -324,6 +362,15 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
             ("lead_type", "TEXT NOT NULL DEFAULT 'lead'"),
             ("acquisition_type", "TEXT NOT NULL DEFAULT 'unknown'"),
             ("contact_status", "TEXT NOT NULL DEFAULT 'contact_allowed'"),
+            ("schooldrive_url", "TEXT"),
+            ("schooldrive_status", "TEXT"),
+            ("schooldrive_aggregated_updated_at", "TEXT"),
+            ("schooldrive_last_event_occurred_at", "TEXT"),
+            ("schooldrive_last_event_id", "TEXT"),
+            ("schooldrive_is_archived", "INTEGER NOT NULL DEFAULT 0"),
+            ("schooldrive_archived_at", "TEXT"),
+            ("schooldrive_archive_reason", "TEXT"),
+            ("schooldrive_payload_json", "TEXT"),
         ],
     )
     add_missing_columns(

@@ -1762,6 +1762,8 @@ def render_template_body(body: str, variables: dict[str, str]) -> str:
 
 
 def get_schooldrive_url(conv: dict) -> str | None:
+    if conv.get("schooldrive_url"):
+        return conv.get("schooldrive_url")
     return SchoolDriveConnector().get_lead_url(conv.get("schooldrive_lead_id"))
 
 

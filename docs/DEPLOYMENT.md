@@ -31,6 +31,15 @@ PROD and DEV are intentionally not started yet. The scaffold supports them, but 
 
 The first staging deployment was made from a local `git archive` because the GitHub repository is private and the droplet does not yet have a GitHub deploy key.
 
+Current staging webhook for SchoolDrive:
+
+```text
+POST http://139.59.158.77:8602/webhooks/schooldrive/lead-or-presubscription
+Authorization: Bearer <staging-token>
+```
+
+The staging API port `8602` is exposed for integration testing. Do not connect production over plain HTTP; production should use HTTPS before cutover.
+
 The deployment target is one DigitalOcean droplet running three isolated environments:
 
 | Environment | UI port | API port | Database |
@@ -51,7 +60,7 @@ https://github.com/fedup1979/salescockpit
 
 Local `main` tracks `origin/main`.
 
-The droplet still needs a read-only GitHub deploy key before it can pull future updates directly from GitHub.
+The droplet has a read-only deploy key and can pull from GitHub.
 
 Historical note: the local GitHub CLI token could push to the repository, but could not create the repository because it lacked `createRepository`.
 
@@ -60,24 +69,10 @@ Two valid options:
 1. Refresh the GitHub CLI token with repository scope, then create the repo from the CLI.
 2. Create the private repo manually in GitHub, then add it as `origin` locally.
 
-Recommended repository:
+Repository:
 
 ```text
-fedup1979/sales-cockpit
-```
-
-After the repo exists:
-
-```powershell
-git remote add origin https://github.com/fedup1979/sales-cockpit.git
-git push -u origin main
-```
-
-If the local branch is still `master`, either push `master` first or rename it before pushing:
-
-```powershell
-git branch -M main
-git push -u origin main
+fedup1979/salescockpit
 ```
 
 ## DigitalOcean
@@ -94,8 +89,9 @@ Initial firewall:
 
 - `22` for SSH.
 - `8501`, `8502`, `8503` for UI testing.
+- `8602` for SchoolDrive staging webhook tests.
 
-Keep `8601`, `8602`, `8603` internal unless a Twilio sandbox test explicitly needs direct access. The cleaner future setup is to put FastAPI behind a reverse proxy with HTTPS.
+Keep `8601` and `8603` internal. The cleaner future setup is to put FastAPI behind a reverse proxy with HTTPS.
 
 ## Server Setup
 
@@ -104,7 +100,7 @@ On a fresh droplet, install Git first, then clone the repo into a temporary ops 
 ```bash
 sudo apt-get update
 sudo apt-get install -y git
-git clone https://github.com/fedup1979/sales-cockpit.git /tmp/sales-cockpit
+git clone git@github.com:fedup1979/salescockpit.git /tmp/sales-cockpit
 cd /tmp/sales-cockpit
 ```
 
@@ -125,7 +121,7 @@ sudo -u salescockpit nano /opt/sales-cockpit/staging/.env
 Then deploy:
 
 ```bash
-sudo REPO_URL=https://github.com/fedup1979/sales-cockpit.git BRANCH=main bash deploy/scripts/deploy_env.sh staging
+sudo REPO_URL=git@github.com:fedup1979/salescockpit.git BRANCH=main bash deploy/scripts/deploy_env.sh staging
 sudo systemctl enable --now sales-cockpit-ui@staging sales-cockpit-api@staging
 ```
 
@@ -144,7 +140,7 @@ SALES_COCKPIT_TWILIO_WHATSAPP_SENDER=
 SALES_COCKPIT_TWILIO_MESSAGING_SERVICE_SID=
 ```
 
-Webhook currently available in the FastAPI mock:
+Twilio webhook currently available in the FastAPI mock:
 
 ```text
 POST /webhooks/twilio/whatsapp/inbound
@@ -165,6 +161,25 @@ V1 needs read-only enrichment:
 - Direct SchoolDrive URL for the prospect.
 
 If the SchoolDrive MCP can expose these fields reliably, no extra SchoolDrive API is required for V1. If not, Tiago needs to provide either a read-only endpoint or a lead-created webhook payload with these fields.
+
+Implemented SchoolDrive webhook:
+
+```text
+POST /webhooks/schooldrive/lead-or-presubscription
+```
+
+Rules implemented:
+
+- Bearer auth via `SALES_COCKPIT_SCHOOLDRIVE_WEBHOOK_TOKEN`.
+- Environment guard.
+- Idempotency on `event_id`.
+- Upsert on `data.schooldrive_id`.
+- Ordering by `data.aggregated_updated_at`, then `occurred_at`, then `event_id`.
+- Older snapshots are logged and ignored.
+- Accepted snapshots replace the SchoolDrive WhatsApp autoresponder list.
+- Sent autoresponders are shown in the conversation as SchoolDrive outbound messages.
+- First Tanjona follow-up is scheduled at +72h after the latest sent autoresponder if no active action exists.
+- `is_archived: true` resolves the conversation and closes open actions.
 
 ## Backup
 

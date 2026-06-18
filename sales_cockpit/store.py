@@ -230,6 +230,538 @@ def followups_are_blocked(record: dict[str, Any]) -> bool:
     )
 
 
+def ingest_schooldrive_snapshot(envelope: dict[str, Any]) -> dict[str, Any]:
+    event_id = str(envelope.get("event_id") or "").strip()
+    environment = str(envelope.get("environment") or "").strip()
+    occurred_at = _normalize_required_iso(envelope.get("occurred_at"), "occurred_at")
+    data = envelope.get("data") or {}
+    schooldrive_id = str(data.get("schooldrive_id") or "").strip()
+    lead_type = str(data.get("lead_type") or "").strip()
+    aggregated_updated_at = _normalize_required_iso(
+        data.get("aggregated_updated_at"), "data.aggregated_updated_at"
+    )
+
+    if not event_id:
+        raise ValueError("event_id is required.")
+    if not schooldrive_id:
+        raise ValueError("data.schooldrive_id is required.")
+    if lead_type not in {"lead", "presubscription"}:
+        raise ValueError("data.lead_type must be lead or presubscription.")
+
+    now = iso_utc()
+    payload_json = json.dumps(envelope, ensure_ascii=False, sort_keys=True)
+    with connect() as conn:
+        duplicate = conn.execute(
+            "SELECT lead_id, status FROM schooldrive_webhook_events WHERE event_id = ?",
+            (event_id,),
+        ).fetchone()
+        if duplicate:
+            return {
+                "status": "duplicate",
+                "accepted": False,
+                "lead_id": duplicate["lead_id"],
+                "schooldrive_id": schooldrive_id,
+            }
+
+        existing = row_to_dict(
+            conn.execute(
+                """
+                SELECT
+                    id, schooldrive_aggregated_updated_at,
+                    schooldrive_last_event_occurred_at, schooldrive_last_event_id
+                FROM leads
+                WHERE schooldrive_lead_id = ?
+                """,
+                (schooldrive_id,),
+            ).fetchone()
+        )
+        if existing and not _schooldrive_snapshot_is_newer(
+            incoming_aggregated_at=aggregated_updated_at,
+            incoming_occurred_at=occurred_at,
+            incoming_event_id=event_id,
+            current_aggregated_at=existing.get("schooldrive_aggregated_updated_at"),
+            current_occurred_at=existing.get("schooldrive_last_event_occurred_at"),
+            current_event_id=existing.get("schooldrive_last_event_id"),
+        ):
+            conn.execute(
+                """
+                INSERT INTO schooldrive_webhook_events (
+                    event_id, environment, schooldrive_id, lead_id, occurred_at,
+                    aggregated_updated_at, status, ignored_reason, payload_json, received_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'ignored', 'stale_snapshot', ?, ?)
+                """,
+                (
+                    event_id,
+                    environment,
+                    schooldrive_id,
+                    existing["id"],
+                    occurred_at,
+                    aggregated_updated_at,
+                    payload_json,
+                    now,
+                ),
+            )
+            return {
+                "status": "ignored",
+                "accepted": False,
+                "ignored_reason": "stale_snapshot",
+                "lead_id": existing["id"],
+                "schooldrive_id": schooldrive_id,
+            }
+
+        lead_id, conversation_id, created = _upsert_schooldrive_lead(
+            conn,
+            data=data,
+            event_id=event_id,
+            occurred_at=occurred_at,
+            aggregated_updated_at=aggregated_updated_at,
+            payload_json=payload_json,
+        )
+        _replace_schooldrive_autoresponders(
+            conn,
+            lead_id=lead_id,
+            conversation_id=conversation_id,
+            schooldrive_id=schooldrive_id,
+            autoresponders=data.get("whatsapp_autoresponders") or [],
+            occurred_at=occurred_at,
+            aggregated_updated_at=aggregated_updated_at,
+        )
+        if data.get("is_archived"):
+            _apply_schooldrive_archive(
+                conn,
+                lead_id=lead_id,
+                conversation_id=conversation_id,
+                archive_reason=data.get("archive_reason"),
+            )
+        else:
+            _ensure_initial_schooldrive_followup(
+                conn,
+                lead_id=lead_id,
+                conversation_id=conversation_id,
+            )
+
+        conn.execute(
+            """
+            INSERT INTO schooldrive_webhook_events (
+                event_id, environment, schooldrive_id, lead_id, occurred_at,
+                aggregated_updated_at, status, payload_json, received_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'accepted', ?, ?)
+            """,
+            (
+                event_id,
+                environment,
+                schooldrive_id,
+                lead_id,
+                occurred_at,
+                aggregated_updated_at,
+                payload_json,
+                now,
+            ),
+        )
+        insert_event(
+            conn,
+            lead_id,
+            "schooldrive_snapshot_ingested",
+            new={
+                "schooldrive_id": schooldrive_id,
+                "event_id": event_id,
+                "created": created,
+                "aggregated_updated_at": aggregated_updated_at,
+                "whatsapp_autoresponders": len(data.get("whatsapp_autoresponders") or []),
+            },
+            metadata={"conversation_id": conversation_id},
+        )
+    return {
+        "status": "created" if created else "updated",
+        "accepted": True,
+        "lead_id": lead_id,
+        "conversation_id": conversation_id,
+        "schooldrive_id": schooldrive_id,
+    }
+
+
+def _normalize_required_iso(value: Any, field_name: str) -> str:
+    if not value:
+        raise ValueError(f"{field_name} is required.")
+    try:
+        return iso_utc(parse_dt(str(value)))
+    except Exception as exc:
+        raise ValueError(f"{field_name} must be an ISO 8601 timestamp.") from exc
+
+
+def _normalize_optional_iso(value: Any) -> str | None:
+    if not value:
+        return None
+    return iso_utc(parse_dt(str(value)))
+
+
+def _schooldrive_snapshot_is_newer(
+    incoming_aggregated_at: str,
+    incoming_occurred_at: str,
+    incoming_event_id: str,
+    current_aggregated_at: str | None,
+    current_occurred_at: str | None,
+    current_event_id: str | None,
+) -> bool:
+    if not current_aggregated_at:
+        return True
+    incoming = (
+        parse_dt(incoming_aggregated_at),
+        parse_dt(incoming_occurred_at),
+        incoming_event_id,
+    )
+    current = (
+        parse_dt(current_aggregated_at),
+        parse_dt(current_occurred_at) if current_occurred_at else parse_dt(current_aggregated_at),
+        current_event_id or "",
+    )
+    return incoming > current
+
+
+def _upsert_schooldrive_lead(
+    conn: Any,
+    data: dict[str, Any],
+    event_id: str,
+    occurred_at: str,
+    aggregated_updated_at: str,
+    payload_json: str,
+) -> tuple[int, int, bool]:
+    now = iso_utc()
+    schooldrive_id = str(data.get("schooldrive_id") or "").strip()
+    person = data.get("person") or {}
+    course = data.get("course") or {}
+    first_name = str(person.get("first_name") or "").strip() or "Inconnu(e)"
+    last_name = str(person.get("last_name") or "").strip()
+    phone = str(person.get("phone") or "").strip() or None
+    email = str(person.get("email") or "").strip() or None
+    lead_type = str(data.get("lead_type") or "lead").strip()
+    category = str(course.get("category") or "").strip() or None
+    course_name = str(course.get("course_name") or "").strip() or None
+    source_type = "paid_ads" if lead_type == "lead" else "organic"
+    archived_at = _normalize_optional_iso(data.get("archived_at"))
+    is_archived = 1 if bool(data.get("is_archived")) else 0
+    archive_reason = str(data.get("archive_reason") or "").strip() or None
+    url = str(data.get("url") or "").strip() or None
+    schooldrive_status = str(data.get("status") or "").strip() or None
+
+    existing = row_to_dict(
+        conn.execute(
+            "SELECT id FROM leads WHERE schooldrive_lead_id = ?",
+            (schooldrive_id,),
+        ).fetchone()
+    )
+    if existing:
+        lead_id = int(existing["id"])
+        conn.execute(
+            """
+            UPDATE leads
+            SET first_name = ?, last_name = ?, email = ?, phone_e164 = ?, phone_raw = ?,
+                course_id = ?, course_category_short_title = ?, course_title = ?,
+                lead_type = ?, source = 'schooldrive_webhook', acquisition_type = ?,
+                schooldrive_url = ?, schooldrive_status = ?,
+                schooldrive_aggregated_updated_at = ?,
+                schooldrive_last_event_occurred_at = ?,
+                schooldrive_last_event_id = ?,
+                schooldrive_is_archived = ?, schooldrive_archived_at = ?,
+                schooldrive_archive_reason = ?, schooldrive_payload_json = ?,
+                last_schooldrive_sync_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                first_name,
+                last_name,
+                email,
+                phone,
+                phone,
+                category,
+                category,
+                course_name,
+                lead_type,
+                source_type,
+                url,
+                schooldrive_status,
+                aggregated_updated_at,
+                occurred_at,
+                event_id,
+                is_archived,
+                archived_at,
+                archive_reason,
+                payload_json,
+                now,
+                now,
+                lead_id,
+            ),
+        )
+        created = False
+    else:
+        setter_id = _default_active_user_id(conn, "setter")
+        closer_id = default_closer_user_id(conn)
+        cursor = conn.execute(
+            """
+            INSERT INTO leads (
+                schooldrive_lead_id, first_name, last_name, email, phone_e164, phone_raw,
+                course_id, course_category_short_title, course_title, lead_type,
+                source, acquisition_type, lead_status, contact_status, sales_stage,
+                temperature, setter_user_id, closer_user_id, schooldrive_url,
+                schooldrive_status, schooldrive_aggregated_updated_at,
+                schooldrive_last_event_occurred_at, schooldrive_last_event_id,
+                schooldrive_is_archived, schooldrive_archived_at,
+                schooldrive_archive_reason, schooldrive_payload_json,
+                last_schooldrive_sync_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'schooldrive_webhook', ?,
+                'neutral', 'contact_allowed', 'new', 'warm', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                schooldrive_id,
+                first_name,
+                last_name,
+                email,
+                phone,
+                phone,
+                category,
+                category,
+                course_name,
+                lead_type,
+                source_type,
+                setter_id,
+                closer_id,
+                url,
+                schooldrive_status,
+                aggregated_updated_at,
+                occurred_at,
+                event_id,
+                is_archived,
+                archived_at,
+                archive_reason,
+                payload_json,
+                now,
+                now,
+                now,
+            ),
+        )
+        lead_id = int(cursor.lastrowid)
+        created = True
+
+    conversation = conn.execute(
+        "SELECT id FROM conversations WHERE lead_id = ? ORDER BY id DESC LIMIT 1",
+        (lead_id,),
+    ).fetchone()
+    if conversation:
+        conversation_id = int(conversation["id"])
+        conn.execute(
+            """
+            UPDATE conversations
+            SET recipient_phone_e164 = coalesce(?, recipient_phone_e164), updated_at = ?
+            WHERE id = ?
+            """,
+            (phone, now, conversation_id),
+        )
+    else:
+        conversation_id = int(
+            conn.execute(
+                """
+                INSERT INTO conversations (lead_id, recipient_phone_e164, status, created_at, updated_at)
+                VALUES (?, ?, 'open', ?, ?)
+                """,
+                (lead_id, phone, now, now),
+            ).lastrowid
+        )
+    return lead_id, conversation_id, created
+
+
+def _replace_schooldrive_autoresponders(
+    conn: Any,
+    lead_id: int,
+    conversation_id: int,
+    schooldrive_id: str,
+    autoresponders: list[dict[str, Any]],
+    occurred_at: str,
+    aggregated_updated_at: str,
+) -> None:
+    now = iso_utc()
+    conn.execute("DELETE FROM schooldrive_whatsapp_autoresponders WHERE lead_id = ?", (lead_id,))
+    conn.execute(
+        """
+        DELETE FROM messages
+        WHERE lead_id = ? AND conversation_id = ? AND channel = 'schooldrive_autoresponder'
+        """,
+        (lead_id, conversation_id),
+    )
+    for item in autoresponders:
+        message_id = str(item.get("message_id") or "").strip()
+        if not message_id:
+            continue
+        status = str(item.get("status") or "").strip() or "unknown"
+        template = str(item.get("template") or "").strip() or "template inconnu"
+        sent_at = _normalize_optional_iso(item.get("sent_at"))
+        item_json = json.dumps(item, ensure_ascii=False, sort_keys=True)
+        conn.execute(
+            """
+            INSERT INTO schooldrive_whatsapp_autoresponders (
+                lead_id, schooldrive_id, message_id, autoresponder_id, template,
+                status, sent_at, payload_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                lead_id,
+                schooldrive_id,
+                message_id,
+                item.get("autoresponder_id"),
+                template,
+                status,
+                sent_at,
+                item_json,
+                now,
+                now,
+            ),
+        )
+        message_time = sent_at or aggregated_updated_at or occurred_at
+        body = _schooldrive_autoresponder_message_body(template, status)
+        conn.execute(
+            """
+            INSERT INTO messages (
+                conversation_id, lead_id, direction, channel, body,
+                twilio_status, sent_at, created_at
+            ) VALUES (?, ?, 'outbound', 'schooldrive_autoresponder', ?, ?, ?, ?)
+            """,
+            (conversation_id, lead_id, body, status, sent_at, message_time),
+        )
+
+    row = conn.execute(
+        """
+        SELECT MAX(sent_at) AS last_outbound_at
+        FROM messages
+        WHERE conversation_id = ? AND direction = 'outbound' AND sent_at IS NOT NULL
+        """,
+        (conversation_id,),
+    ).fetchone()
+    conn.execute(
+        """
+        UPDATE conversations
+        SET last_outbound_at = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (row["last_outbound_at"] if row else None, now, conversation_id),
+    )
+
+
+def _schooldrive_autoresponder_message_body(template: str, status: str) -> str:
+    if status == "sent":
+        return f"WhatsApp automatique SchoolDrive envoyé : {template}"
+    if status in {"queued", "sending", "moderation_pending"}:
+        return f"WhatsApp automatique SchoolDrive en attente : {template} ({status})"
+    return f"WhatsApp automatique SchoolDrive non envoyé : {template} ({status})"
+
+
+def _latest_sent_schooldrive_autoresponder_at(conn: Any, lead_id: int) -> str | None:
+    row = conn.execute(
+        """
+        SELECT MAX(sent_at) AS sent_at
+        FROM schooldrive_whatsapp_autoresponders
+        WHERE lead_id = ? AND status = 'sent' AND sent_at IS NOT NULL
+        """,
+        (lead_id,),
+    ).fetchone()
+    return row["sent_at"] if row else None
+
+
+def _ensure_initial_schooldrive_followup(
+    conn: Any,
+    lead_id: int,
+    conversation_id: int,
+) -> None:
+    sent_at = _latest_sent_schooldrive_autoresponder_at(conn, lead_id)
+    if not sent_at:
+        return
+    lead = row_to_dict(
+        conn.execute(
+            """
+            SELECT first_name, last_name, lead_status, contact_status
+            FROM leads
+            WHERE id = ?
+            """,
+            (lead_id,),
+        ).fetchone()
+    )
+    if not lead or followups_are_blocked(lead):
+        return
+    active = _first_active_action_for_lead(conn, lead_id)
+    due_at = iso_utc(parse_dt(sent_at) + timedelta(hours=72))
+    setter2_id = setter2_user_id(conn)
+    if not setter2_id:
+        return
+    if active:
+        if active.get("type") == "follow_up" and active.get("trigger_reason") in {
+            "schooldrive_initial_autoresponder_sent",
+            "schooldrive_initial_followup_updated",
+        }:
+            conn.execute(
+                """
+                UPDATE tasks
+                SET assigned_to_user_id = ?, due_at = ?, updated_at = ?,
+                    trigger_reason = 'schooldrive_initial_followup_updated'
+                WHERE id = ?
+                """,
+                (setter2_id, due_at, iso_utc(), active["id"]),
+            )
+        return
+    action_id = _insert_next_action(
+        conn,
+        lead_id=lead_id,
+        conversation_id=conversation_id,
+        action_type="follow_up",
+        title=f"Relancer {lead_full_name(lead)}",
+        assigned_to_user_id=setter2_id,
+        created_by_user_id=None,
+        urgency="normal",
+        due_at=due_at,
+        status="planned",
+        trigger_reason="schooldrive_initial_autoresponder_sent",
+        sequence_code="lead_no_reply",
+        sequence_step_index=1,
+    )
+    insert_event(
+        conn,
+        lead_id,
+        "followup_scheduled_from_schooldrive_autoresponder",
+        new={"task_id": action_id, "due_at": due_at, "assigned_to_user_id": setter2_id},
+        metadata={"conversation_id": conversation_id},
+    )
+
+
+def _apply_schooldrive_archive(
+    conn: Any,
+    lead_id: int,
+    conversation_id: int,
+    archive_reason: Any,
+) -> None:
+    now = iso_utc()
+    reason = str(archive_reason or "").strip() or "Archivé dans SchoolDrive"
+    _complete_open_actions_for_lead(
+        conn,
+        lead_id,
+        user_id=None,
+        outcome="Archivé dans SchoolDrive",
+    )
+    conn.execute(
+        """
+        UPDATE conversations
+        SET status = 'resolved', resolution_reason = 'handled_elsewhere',
+            resolution_note = ?, resolved_at = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (reason, now, now, conversation_id),
+    )
+    _insert_internal_note_message(
+        conn,
+        lead_id,
+        conversation_id,
+        None,
+        f"Archivé dans SchoolDrive : {reason}",
+        now,
+    )
+
+
 def resolution_reason_requires_note(reason: str | None) -> bool:
     return any(
         item["value"] == reason and item["requires_note"]
@@ -340,6 +872,7 @@ def list_conversations(
             c.id AS conversation_id,
             l.id AS lead_id,
             l.schooldrive_lead_id,
+            l.schooldrive_url,
             l.first_name,
             l.last_name,
             l.email,
@@ -461,6 +994,7 @@ def get_conversation(conversation_id: int) -> dict[str, Any] | None:
             SELECT
                 c.*,
                 l.schooldrive_lead_id,
+                l.schooldrive_url,
                 l.first_name,
                 l.last_name,
                 l.email,

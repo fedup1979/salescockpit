@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+from hmac import compare_digest
+from typing import Any
+
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from sales_cockpit import __version__
+from sales_cockpit.config import get_settings
 from sales_cockpit.db import seed_initial_data
 from sales_cockpit.store import (
     create_template,
     get_conversation,
+    ingest_schooldrive_snapshot,
     list_conversations,
     list_messages,
     list_templates,
@@ -45,6 +50,51 @@ class InboundWebhookRequest(BaseModel):
     from_phone: str
     body: str
     lead_id: int | None = None
+
+
+class SchoolDrivePerson(BaseModel):
+    title: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+
+
+class SchoolDriveCourse(BaseModel):
+    category: str | None = None
+    course_name: str | None = None
+    session_name: str | None = None
+    start_date: str | None = None
+
+
+class SchoolDriveAutoresponder(BaseModel):
+    message_id: str
+    autoresponder_id: int | None = None
+    template: str | None = None
+    status: str
+    sent_at: str | None = None
+
+
+class SchoolDrivePayloadData(BaseModel):
+    schooldrive_id: str
+    lead_type: str
+    url: str | None = None
+    aggregated_updated_at: str
+    is_archived: bool = False
+    archived_at: str | None = None
+    archive_reason: str | None = None
+    person: SchoolDrivePerson
+    course: SchoolDriveCourse
+    status: str | None = None
+    whatsapp_autoresponders: list[SchoolDriveAutoresponder] = Field(default_factory=list)
+
+
+class SchoolDriveWebhookEnvelope(BaseModel):
+    schema_version: str
+    event_id: str
+    occurred_at: str
+    environment: str
+    data: SchoolDrivePayloadData
 
 
 @app.on_event("startup")
@@ -115,4 +165,43 @@ def twilio_inbound_mock(request: InboundWebhookRequest) -> dict:
         body=request.body,
         lead_id=request.lead_id,
     )
+    return {"status": "ok", **result}
+
+
+@app.post("/webhooks/schooldrive/lead-or-presubscription")
+def schooldrive_lead_or_presubscription(
+    request: SchoolDriveWebhookEnvelope,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    settings = get_settings()
+    expected_token = settings.schooldrive_webhook_token
+    if not expected_token:
+        raise HTTPException(status_code=503, detail="SchoolDrive webhook token is not configured.")
+    prefix = "Bearer "
+    if not authorization or not authorization.startswith(prefix):
+        raise HTTPException(status_code=401, detail="Missing bearer token.")
+    provided_token = authorization[len(prefix) :].strip()
+    if not compare_digest(provided_token, expected_token):
+        raise HTTPException(status_code=403, detail="Invalid bearer token.")
+
+    expected_environment = {
+        "prod": "production",
+        "production": "production",
+        "staging": "staging",
+        "dev": "staging",
+        "local": "staging",
+    }.get(settings.environment, settings.environment)
+    if request.environment != expected_environment:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Environment mismatch: endpoint is {expected_environment}, "
+                f"payload is {request.environment}."
+            ),
+        )
+
+    try:
+        result = ingest_schooldrive_snapshot(request.model_dump(mode="json"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "ok", **result}
