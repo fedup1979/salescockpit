@@ -91,6 +91,8 @@ The app has been iteratively reviewed by François and is currently in a good st
   - migration classification into `active`, `resolved`, or `manual_review`;
   - filtered Admin > Intégrations review by match status, migration status, and recommended action;
   - read-only cutover planning via `scripts/front_cutover_plan.py`;
+  - buffer rematching via `scripts/front_rematch_buffer.py` after SchoolDrive backfill;
+  - dry-run-first conversion via `scripts/front_convert_matched.py` for matched active Front rows;
   - optional `--attach-history` to copy matched messages into the thread as `front_history`, disabled by default;
   - Admin > Intégrations displays buffered Front records.
 - SchoolDrive payload replay tool exists: `scripts/schooldrive_replay_payloads.py`.
@@ -148,20 +150,20 @@ The app has been iteratively reviewed by François and is currently in a good st
 
 Latest known validation:
 
-- `pytest`: 90 tests passing.
+- `pytest`: 93 tests passing.
 - `compileall`: passed for `sales_cockpit`, `scripts`, and `tests`.
 - SchoolDrive staging API probe passed with a synthetic create + archive payload.
 - SchoolDrive synthetic smoke passed on staging with run id `smoke-20260619T122027Z`: created, updated, stale ignored, duplicate ignored, sent WhatsApp, queued WhatsApp, archive, and DB side effects all OK.
 - Real SchoolDrive MCP replay passed on staging for six records: six created records, one duplicate response, and one stale snapshot ignored. The latest pre-cutover check stayed green after the replay.
 - Timestamp decision after the real MCP replay: `KEEP_CURRENT_UTC`. No cleanup, no replay, and no `-2h` conversion are required.
-- Twilio staging template sync passed and imported 5 DEV templates, all currently `draft`.
-- Twilio template audit on staging currently sees 5 real Twilio DEV templates, all `draft`, and 0 real approved templates.
+- Twilio staging template sync passed. Staging currently sees 10 real Twilio DEV templates: 4 `pending`, 6 `draft`, and 0 real approved templates.
+- Test template `sc_dev_accuse_reception_fr_001` was created and submitted for WhatsApp approval; current status is `pending`.
 - Staging is currently in Twilio `live` mode with real DEV WhatsApp sender `+41445054269` and `SALES_COCKPIT_TWILIO_ALLOWED_RECIPIENTS=+41762845576`, so real SchoolDrive prospects cannot be messaged accidentally.
 - SQLite backup and restore have been tested successfully on staging with `deploy/scripts/backup_sqlite.sh` and `deploy/scripts/restore_sqlite.sh`.
 - Automated backup cron is installed and cron service is active on the droplet.
 - Front token is configured on staging. After fixing pagination limiting, a dry-run successfully read 1 Front conversation and 1 WhatsApp message with `writes: 0`.
-- Front pilot staging result: 5 Front conversations and 10 Front messages stored in the buffer tables, 0 messages attached to operational threads. All buffered samples are currently `unmatched` because their phones do not exist yet in staging SchoolDrive data. Current migration classification: 4 `active`, 1 `manual_review`.
-- Front cutover plan on staging currently returns 5 `manual_review` rows because all buffered Front conversations are still unmatched. It displays likely actions (`reply` for Mihary or `follow_up` for Tanjona) but does not convert anything.
+- Front pilot staging result: 13 Front conversations and 159 Front messages stored in the buffer tables, 0 messages attached to operational threads. All buffered samples are currently `unmatched` because their phones do not exist yet in staging SchoolDrive data.
+- Front rematch on staging processed 13 records and kept all 13 `unmatched`. Front conversion dry-run skipped all 13 because none is matched yet.
 - Admin readiness on staging is green for SchoolDrive, Front, Twilio, Backup, and Workflow. The workflow count explicitly separates 1 SchoolDrive record waiting for the first sent autoresponder from true open conversations without action.
 - Staging pre-cutover check passed with `scripts/pre_cutover_check.py --api-base http://127.0.0.1:8602 --ui-url http://127.0.0.1:8502`.
 - `scripts/reset_demo.py`: verified on a temporary SQLite database and creates 19 `SD-DEMO-*` leads.
@@ -202,8 +204,7 @@ Stop-Process -Id <PID> -Force
 - Notion connector is placeholder only.
 - Twilio is mock by default locally. Staging is configured in `live` mode with the DEV sender `+41445054269` and a strict recipient allowlist. Sandbox inbound/outbound was previously tested successfully.
 - Twilio Content API synchronization exists. Real template approval and closed-window template sending still need an end-to-end staging validation with an approved Twilio template.
-- Front import is partially connected in safe pilot mode. Read-only client, dry-run, buffer persistence, exact phone matching, and Admin visibility exist. Full historical import, ambiguous matching review, and conversation-level history filtering are still pending.
-- Front migration classification exists, but automatic conversion from active Front buffer rows into Sales Cockpit actions is not implemented yet.
+- Front import is partially connected in safe pilot mode. Read-only client, dry-run, buffer persistence, exact phone matching, buffer rematch, dry-run-first matched conversion, and Admin visibility exist. Full historical import, ambiguous matching review, and conversation-level history filtering are still pending.
 - Attachments UI exists but persistence/send is not implemented.
 - Auth is local password-based only.
 - GitHub remote exists: `https://github.com/fedup1979/salescockpit`.
@@ -225,8 +226,8 @@ Stop-Process -Id <PID> -Force
 2. When Tiago's producer sends live webhook events, validate accepted/ignored/duplicate events, sent vs queued WhatsApp messages, Tanjona +72h creation, and archive resolution in staging.
 3. If Tiago sends JSON files instead of POSTing directly, use `scripts/schooldrive_replay_payloads.py` with `--expected-environment staging`.
 4. If Tiago is still pending after a deployment, run `scripts/schooldrive_smoke.py` from the droplet with `--db-check` to validate the webhook with synthetic data.
-5. Review Front buffered records in Admin > Intégrations and decide whether/when to attach matched history into conversation threads.
-6. Validate Twilio template synchronization and status display on staging. Template approval cannot be fully validated until the ESSR sender/WABA path is settled.
+5. After Claude/MCP backfills more SchoolDrive leads, run `scripts/front_rematch_buffer.py --limit 500`, then review `scripts/front_convert_matched.py --limit 500` dry-run output.
+6. Watch Twilio template approval status. Closed-window template sending cannot be validated until at least one real template is approved.
 7. Run the focused manual scenario validation in `docs/TEST_PLAN.md` with Laura or François after real SchoolDrive data is visible.
 8. Fix any UX or workflow failures discovered by the scenario pass.
 9. After scenario behavior is validated, do a moderate refactor of the largest files without changing behavior.

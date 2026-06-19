@@ -100,6 +100,7 @@ V1 staging build is runnable. Staging is connected to a real Twilio DEV WhatsApp
 - Added Front historical import pilot foundation: exact phone matching, buffer tables, idempotent message storage, optional `front_history` attachment, `scripts/front_import_pilot.py`, and Admin visibility.
 - Added Front migration classification: active/resolved/manual_review with recommended `reply` or `follow_up` when safe.
 - Added filtered Admin review for Front buffer records and read-only Front cutover planning with `scripts/front_cutover_plan.py`.
+- Added Front buffer rematch and dry-run-first matched conversion tools for post-backfill cutover preparation.
 - Added SchoolDrive replay tool: `scripts/schooldrive_replay_payloads.py`.
 - Added synthetic SchoolDrive smoke test: `scripts/schooldrive_smoke.py`, covering create, update, stale ignore, duplicate ignore, sent WhatsApp, queued WhatsApp, and archive handling without real personal data.
 - Staging synthetic SchoolDrive smoke test passed, including DB side effects for sent WhatsApp follow-up creation, queued WhatsApp waiting state, and archive resolution.
@@ -115,10 +116,10 @@ V1 staging build is runnable. Staging is connected to a real Twilio DEV WhatsApp
 - Documented backup/restore procedure in `docs/BACKUP_RESTORE.md`.
 - Staging backup and restore have been tested successfully on DigitalOcean.
 - Latest staging readiness is green for SchoolDrive, Front, Twilio, Backup, and Workflow.
-- Latest Front pilot buffer on staging contains 5 Front conversations and 10 Front messages, with 0 attached operational messages. All are currently unmatched until SchoolDrive real data/backfill is present.
-- Latest Front cutover plan on staging returns 5 manual-review rows because all buffered Front conversations are unmatched. No actions are created by this plan.
-- Latest Twilio staging sync found 5 DEV Content API templates, all currently `draft`.
-- Latest Twilio template audit found 0 real approved Twilio templates, so closed-window template validation still waits on the ESSR sender/WABA path.
+- Latest Front pilot buffer on staging contains 13 Front conversations and 159 Front messages, with 0 attached operational messages. All are currently unmatched until SchoolDrive real data/backfill is present.
+- Latest Front rematch processed 13 records and kept all 13 unmatched. Latest Front conversion dry-run skipped all 13 because none is ready to convert.
+- Latest Twilio staging sync found 10 DEV Content API templates: 4 `pending`, 6 `draft`, and 0 real approved templates.
+- Test template `sc_dev_accuse_reception_fr_001` was submitted for WhatsApp approval and is currently `pending`; closed-window template validation still waits for approval.
 - Staging pre-cutover check passed and automated backup cron is installed on the droplet.
 - Documented Twilio WhatsApp sender migration strategy in `docs/TWILIO_SENDER_MIGRATION.md`.
 
@@ -132,9 +133,9 @@ V1 staging build is runnable. Staging is connected to a real Twilio DEV WhatsApp
 6. Fix any scenario failures before adding new features.
 7. Keep PROD disconnected until staging scenario behavior and the production cutover checklist are validated.
 8. Only after scenario validation, do a moderate refactor of the large files into UI pages/components, workflow services, seed/reset, and repositories.
-9. Test Twilio template synchronization and template creation from staging; full approval validation waits for the ESSR sender/WABA path.
-10. Run a small Front pilot on staging: preview, then optional `--write` to buffer tables only. Keep Front read-only and low-volume.
-11. Review Front migration classification results before creating any operational actions from Front.
+9. Monitor Twilio template approval. Full closed-window validation waits for one approved real template.
+10. After additional SchoolDrive backfill, run Front rematch, review conversion dry-run, then execute matched conversion only if rows are ready.
+11. Keep Front read-only and avoid attaching history until matched rows are reviewed.
 12. Review whether attached Front history should appear by default or behind a conversation filter.
 13. Add Notion historical enrichment.
 

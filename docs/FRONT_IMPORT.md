@@ -89,12 +89,20 @@ Implemented:
   - Admin > Intégrations shows the buffered Front records.
 - `scripts/front_import_pilot.py`, which previews or stores a small controlled sample.
 - `scripts/front_cutover_plan.py`, which reads the buffer and produces a conservative read-only cutover plan.
+- `scripts/front_rematch_buffer.py`, which recomputes buffered Front matches after a later SchoolDrive backfill.
+- `scripts/front_convert_matched.py`, which can convert only `matched` + `active` buffer rows into Sales Cockpit actions. It is dry-run by default and skips existing open actions unless explicitly told to replace them.
+
+Latest staging pilot:
+
+- 13 Front conversations buffered.
+- 159 Front messages buffered.
+- 0 Front messages attached to operational threads.
+- 13 conversations are currently `unmatched`, so conversion is intentionally skipped until the corresponding SchoolDrive leads are backfilled.
 
 Not implemented yet:
 
 - UI filter to show/hide attached Front history inside a conversation.
 - Phone/email/manual matching review workflow for ambiguous or unmatched Front conversations.
-- Automatic conversion from active Front buffer rows into Sales Cockpit next actions at cutover.
 - Full import command for all history.
 
 ## Dry-Run Command
@@ -162,3 +170,25 @@ The plan is deliberately conservative:
 - `manual_review`: unmatched, ambiguous, or unclear Front conversation.
 
 This command does not create actions and does not attach messages. It is safe to run before Tiago's SchoolDrive backfill, but most records will remain `manual_review` until SchoolDrive has populated the matching phone numbers.
+
+## Rematch And Conversion Commands
+
+After a SchoolDrive backfill, recompute Front matches without calling Front again:
+
+```bash
+python scripts/front_rematch_buffer.py --limit 500
+```
+
+Preview conversion of matched active Front rows into Sales Cockpit actions:
+
+```bash
+python scripts/front_convert_matched.py --limit 500
+```
+
+Execute conversion only after reviewing the dry-run output:
+
+```bash
+python scripts/front_convert_matched.py --limit 500 --execute
+```
+
+By default, conversion skips leads that already have an open next action. Use `--replace-existing` only during a controlled cutover if replacing those actions is intentional.
