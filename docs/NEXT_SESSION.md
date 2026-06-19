@@ -127,6 +127,7 @@ The app has been iteratively reviewed by François and is currently in a good st
 - Sidebar includes a `Bug` button. It opens a large dialog, creates a row in `bug_reports`, and logs the event in `user_activity_log`.
 - Business events inserted via `lead_events` are mirrored into `user_activity_log`, so Admin can inspect recent usage and cross-check bug reports with workflow events.
 - Admin now has a `Bugs & logs` tab showing bug reports and recent activity.
+- Admin now opens with an `État` tab showing readiness for SchoolDrive, Front, Twilio, backups, and workflow consistency.
 - Admin > Utilisateurs sorts users by ID, so Laura appears first in the seeded local data.
 - Admin shows page access by role. Admin sees everything; Setter 1, Tanjona and Closer see all user pages except Admin.
 - Human and business hours have provisional V1 values in Admin > Règles métier > Horaires et bascules. They still need Laura validation.
@@ -137,7 +138,7 @@ The app has been iteratively reviewed by François and is currently in a good st
 
 Latest known validation:
 
-- `pytest`: 84 tests passing.
+- `pytest`: 85 tests passing.
 - `compileall`: passed for `sales_cockpit`, `scripts`, and `tests`.
 - SchoolDrive staging API probe passed with a synthetic create + archive payload.
 - Twilio staging template sync passed and imported 5 DEV templates, all currently `draft`.

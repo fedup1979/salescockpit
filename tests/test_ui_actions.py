@@ -122,7 +122,7 @@ def test_admin_users_table_formats_setter2_role() -> None:
     app.run(timeout=10)
 
     assert len(app.exception) == 0
-    users_df = app.dataframe[0].value
+    users_df = next(dataframe.value for dataframe in app.dataframe if "Email" in dataframe.value.columns)
     row = users_df.loc[users_df["Email"] == "setter2@essr.ch"].iloc[0]
     assert row["Nom"] == "Tanjona"
     assert row["Rôle"] == "Setter II"

@@ -98,6 +98,7 @@ V1 staging build is runnable. Twilio sandbox messaging is connected for staging.
 - Added Front migration classification: active/resolved/manual_review with recommended `reply` or `follow_up` when safe.
 - Added SchoolDrive replay tool: `scripts/schooldrive_replay_payloads.py`.
 - Added production cutover runbook: `docs/CUTOVER_RUNBOOK.md`.
+- Added Admin `État` readiness view for SchoolDrive, Front, Twilio, backups, and workflow consistency.
 - Added SQLite backup and guarded restore scripts for deployed environments.
 - Documented backup/restore procedure in `docs/BACKUP_RESTORE.md`.
 - Staging backup and restore have been tested successfully on DigitalOcean.

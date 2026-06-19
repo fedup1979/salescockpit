@@ -41,6 +41,7 @@ from sales_cockpit.store import (
     create_template_request,
     create_template,
     get_conversation,
+    get_integration_readiness,
     get_next_action_for_lead,
     get_template,
     list_actions_for_lead,
@@ -1776,8 +1777,11 @@ def render_admin(user: dict) -> None:
     if user["role"] != "admin":
         st.warning("Accès lecture seul. Les réglages sont réservés aux admins.")
 
-    tabs = st.tabs(["Utilisateurs", "Règles métier", "Workflow", "Séquences", "Templates", "Bugs & logs", "Intégrations"])
+    tabs = st.tabs(["État", "Utilisateurs", "Règles métier", "Workflow", "Séquences", "Templates", "Bugs & logs", "Intégrations"])
     with tabs[0]:
+        render_admin_status_tab()
+
+    with tabs[1]:
         st.subheader("Utilisateurs")
         users = sorted(list_users(active_only=False), key=lambda item: item["id"])
         user_rows = [
@@ -1796,7 +1800,7 @@ def render_admin(user: dict) -> None:
         st.subheader("Rôles commerciaux")
         st.dataframe(SALES_ACTORS, hide_index=True, use_container_width=True)
 
-    with tabs[1]:
+    with tabs[2]:
         st.subheader("Qualifications")
         st.dataframe(QUALIFICATION_STATUSES, hide_index=True, use_container_width=True)
         st.subheader("Statuts de contact")
@@ -1814,7 +1818,7 @@ def render_admin(user: dict) -> None:
         st.subheader("Types de leads SchoolDrive")
         st.dataframe(LEAD_TYPES, hide_index=True, use_container_width=True)
 
-    with tabs[2]:
+    with tabs[3]:
         st.subheader("Types d'actions principales")
         st.dataframe(MAIN_ACTION_TYPES, hide_index=True, use_container_width=True)
         st.subheader("Actions support")
@@ -1827,7 +1831,7 @@ def render_admin(user: dict) -> None:
         )
         st.dataframe(WORKFLOW_TRANSITIONS, hide_index=True, use_container_width=True, height=520)
 
-    with tabs[3]:
+    with tabs[4]:
         st.subheader("Séquences de relance")
         st.dataframe(list_sequences(), hide_index=True, use_container_width=True)
         st.subheader("Étapes de séquence")
@@ -1836,7 +1840,7 @@ def render_admin(user: dict) -> None:
             "V1 affiche les règles. L'automatisation des séquences sera branchée après synchronisation SchoolDrive/Twilio."
         )
 
-    with tabs[4]:
+    with tabs[5]:
         st.subheader("Templates de démo")
         st.dataframe(DEMO_TEMPLATE_CATALOG, hide_index=True, use_container_width=True)
         st.caption("Les vrais templates seront synchronisés depuis Twilio. Les noms ci-dessus servent de mapping provisoire.")
@@ -1867,7 +1871,7 @@ def render_admin(user: dict) -> None:
         else:
             st.info("Aucune demande de modèle.")
 
-    with tabs[5]:
+    with tabs[6]:
         st.subheader("Signalements Bug")
         bug_reports = list_bug_reports()
         if bug_reports:
@@ -1878,7 +1882,7 @@ def render_admin(user: dict) -> None:
         st.caption("Derniers événements métier, connexions et signalements. Les événements lead détaillés restent dans `lead_events`.")
         st.dataframe(list_user_activity_log(200), hide_index=True, use_container_width=True, height=420)
 
-    with tabs[6]:
+    with tabs[7]:
         st.subheader("Intégrations")
         st.markdown(
             """
@@ -1894,6 +1898,200 @@ def render_admin(user: dict) -> None:
             st.dataframe(front_records, hide_index=True, use_container_width=True, height=360)
         else:
             st.info("Aucune conversation Front importée dans la zone tampon.")
+
+
+def render_admin_status_tab() -> None:
+    readiness = get_integration_readiness()
+    st.subheader("État des intégrations")
+    st.caption(
+        "Vue courte pour savoir si la bascule peut avancer. Les secrets ne sont jamais affichés ici."
+    )
+
+    status_cols = st.columns(len(readiness["checks"]))
+    for col, check in zip(status_cols, readiness["checks"], strict=False):
+        with col:
+            render_readiness_tile(check)
+
+    workflow = readiness["workflow"]
+    blockers = []
+    if workflow["open_conversations_without_action"]:
+        blockers.append(
+            {
+                "Type": "Workflow",
+                "Statut": "Bloquant",
+                "Détail": f"{workflow['open_conversations_without_action']} conversation(s) active(s) sans prochaine action.",
+            }
+        )
+    if workflow["blocked_action_count"]:
+        blockers.append(
+            {
+                "Type": "Actions",
+                "Statut": "À surveiller",
+                "Détail": f"{workflow['blocked_action_count']} action(s) bloquée(s).",
+            }
+        )
+    if workflow["pending_template_request_count"]:
+        blockers.append(
+            {
+                "Type": "Modèles",
+                "Statut": "À traiter",
+                "Détail": f"{workflow['pending_template_request_count']} demande(s) de modèle ouvertes.",
+            }
+        )
+    if workflow["open_bug_count"]:
+        blockers.append(
+            {
+                "Type": "Bugs",
+                "Statut": "À surveiller",
+                "Détail": f"{workflow['open_bug_count']} signalement(s) ouvert(s).",
+            }
+        )
+
+    st.subheader("Blocages")
+    if blockers:
+        st.dataframe(blockers, hide_index=True, use_container_width=True)
+    else:
+        st.success("Aucun blocage critique détecté dans les données actuelles.")
+
+    sd_col, front_col = st.columns(2)
+    with sd_col:
+        st.subheader("SchoolDrive")
+        sd = readiness["schooldrive"]
+        st.markdown(
+            f"""
+            <div class="sc-status-panel">
+              <strong>{sd['lead_count']}</strong>
+              <span>lead(s) ou préinscription(s) reçus depuis SchoolDrive</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        render_count_table("Événements webhook", sd["status_counts"])
+        if sd["latest_events"]:
+            st.dataframe(sd["latest_events"], hide_index=True, use_container_width=True, height=230)
+        else:
+            st.info("Aucun webhook SchoolDrive reçu.")
+
+    with front_col:
+        st.subheader("Front")
+        front = readiness["front"]
+        st.markdown(
+            f"""
+            <div class="sc-status-panel">
+              <strong>{front['message_count']}</strong>
+              <span>message(s) Front en zone tampon, {front['attached_message_count']} attaché(s) au fil</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        render_count_table("Matching", front["match_counts"])
+        render_count_table("Migration", front["migration_counts"])
+        if front["latest_records"]:
+            st.dataframe(front["latest_records"], hide_index=True, use_container_width=True, height=230)
+        else:
+            st.info("Aucune conversation Front importée.")
+
+    twilio_col, ops_col = st.columns(2)
+    with twilio_col:
+        st.subheader("Twilio")
+        twilio = readiness["twilio"]
+        sender = twilio["sender"] or "Non configuré"
+        st.markdown(
+            f"""
+            <div class="sc-status-panel">
+              <strong>{escape_html(twilio['mode'])}</strong>
+              <span>Sender : {escape_html(sender)}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        render_count_rows("Statuts messages", twilio["status_counts"], "status")
+        if twilio["latest_messages"]:
+            st.dataframe(twilio["latest_messages"], hide_index=True, use_container_width=True, height=230)
+        else:
+            st.info("Aucun message Twilio enregistré.")
+
+    with ops_col:
+        st.subheader("Opérations")
+        backup = readiness["backup"]
+        backup_label = "Aucun backup trouvé"
+        if backup.get("exists"):
+            backup_label = f"{format_bytes(backup['size_bytes'])} · {backup['updated_at']}"
+        st.markdown(
+            f"""
+            <div class="sc-status-panel">
+              <strong>{readiness['environment']}</strong>
+              <span>Dernier backup : {escape_html(backup_label)}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            [
+                {"Indicateur": "Actions ouvertes", "Valeur": workflow["open_action_count"]},
+                {"Indicateur": "Actions bloquées", "Valeur": workflow["blocked_action_count"]},
+                {"Indicateur": "Demandes de modèles ouvertes", "Valeur": workflow["pending_template_request_count"]},
+                {"Indicateur": "Bugs ouverts", "Valeur": workflow["open_bug_count"]},
+                {
+                    "Indicateur": "Conversations actives sans prochaine action",
+                    "Valeur": workflow["open_conversations_without_action"],
+                },
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
+
+
+def render_readiness_tile(check: dict[str, str]) -> None:
+    state = check["state"]
+    labels = {
+        "ready": "Prêt",
+        "info": "Info",
+        "warning": "À surveiller",
+        "danger": "Bloquant",
+    }
+    st.markdown(
+        f"""
+        <div class="sc-readiness sc-readiness-{escape_html(state)}">
+          <div class="sc-readiness-label">{escape_html(check['name'])}</div>
+          <div class="sc-readiness-state">{escape_html(labels.get(state, state))}</div>
+          <div class="sc-readiness-detail">{escape_html(check['detail'])}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_count_table(title: str, counts: dict[str, int]) -> None:
+    rows = [{"Statut": labelize(key), "Nombre": value} for key, value in counts.items()]
+    render_count_rows(title, rows, "Statut")
+
+
+def render_count_rows(title: str, rows: list[dict] | dict, label_key: str) -> None:
+    st.caption(title)
+    if isinstance(rows, dict):
+        rows = [{label_key: labelize(key), "count": value} for key, value in rows.items()]
+    normalized = []
+    for row in rows:
+        normalized.append(
+            {
+                "Statut": labelize(row.get(label_key) or row.get("status") or row.get("key") or "unknown"),
+                "Nombre": row.get("count") or row.get("Nombre") or 0,
+            }
+        )
+    if normalized:
+        st.dataframe(normalized, hide_index=True, use_container_width=True, height=min(180, 42 + 36 * len(normalized)))
+    else:
+        st.info("Aucune donnée.")
+
+
+def format_bytes(size_bytes: int | None) -> str:
+    size = float(size_bytes or 0)
+    for unit in ["B", "KB", "MB", "GB"]:
+        if size < 1024 or unit == "GB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
 
 
 def default_variable_value(conv: dict, key: str) -> str:

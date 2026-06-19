@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from sales_cockpit.business_rules import (
@@ -234,6 +235,240 @@ def list_user_activity_log(limit: int = 200) -> list[dict[str, Any]]:
             (limit,),
         ).fetchall()
     return rows_to_dicts(rows)
+
+
+def get_integration_readiness() -> dict[str, Any]:
+    settings = get_settings()
+    with connect() as conn:
+        schooldrive_status_counts = _count_by(conn, "schooldrive_webhook_events", "status")
+        schooldrive_latest = rows_to_dicts(
+            conn.execute(
+                """
+                SELECT event_id, schooldrive_id, status, ignored_reason,
+                       aggregated_updated_at, received_at
+                FROM schooldrive_webhook_events
+                ORDER BY datetime(received_at) DESC, id DESC
+                LIMIT 10
+                """
+            ).fetchall()
+        )
+        schooldrive_lead_count = _scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM leads WHERE source = 'schooldrive_webhook'",
+        )
+
+        front_match_counts = _count_by(conn, "front_conversations", "match_status")
+        front_migration_counts = _count_by(conn, "front_conversations", "migration_status")
+        front_message_count = _scalar_count(conn, "SELECT COUNT(*) FROM front_messages")
+        front_attached_count = _scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM messages WHERE channel = 'front_history'",
+        )
+        front_latest = rows_to_dicts(
+            conn.execute(
+                """
+                SELECT
+                    front_conversation_id, phone_e164, match_status,
+                    migration_status, migration_action_type,
+                    subject, updated_at
+                FROM front_conversations
+                ORDER BY datetime(updated_at) DESC, id DESC
+                LIMIT 10
+                """
+            ).fetchall()
+        )
+
+        twilio_status_counts = rows_to_dicts(
+            conn.execute(
+                """
+                SELECT coalesce(twilio_status, 'unknown') AS status, COUNT(*) AS count
+                FROM messages
+                WHERE channel = 'whatsapp_twilio'
+                  AND direction = 'outbound'
+                GROUP BY coalesce(twilio_status, 'unknown')
+                ORDER BY count DESC, status
+                """
+            ).fetchall()
+        )
+        twilio_latest = rows_to_dicts(
+            conn.execute(
+                """
+                SELECT
+                    m.id, m.direction, m.twilio_message_sid, m.twilio_status,
+                    m.twilio_error_code, m.created_at, substr(m.body, 1, 120) AS body_preview,
+                    l.first_name, l.last_name
+                FROM messages m
+                LEFT JOIN leads l ON l.id = m.lead_id
+                WHERE m.channel = 'whatsapp_twilio'
+                ORDER BY datetime(m.created_at) DESC, m.id DESC
+                LIMIT 10
+                """
+            ).fetchall()
+        )
+
+        conversations_without_action = _scalar_count(
+            conn,
+            """
+            SELECT COUNT(*)
+            FROM conversations c
+            WHERE c.status = 'open'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM tasks t
+                WHERE t.conversation_id = c.id
+                  AND t.status IN ('planned', 'open', 'in_progress', 'blocked')
+              )
+            """,
+        )
+        open_action_count = _scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM tasks WHERE status IN ('planned', 'open', 'in_progress', 'blocked')",
+        )
+        blocked_action_count = _scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM tasks WHERE status = 'blocked'",
+        )
+        open_bug_count = _scalar_count(conn, "SELECT COUNT(*) FROM bug_reports WHERE status = 'open'")
+        pending_template_request_count = _scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM template_requests WHERE status IN ('to_create', 'submitted')",
+        )
+
+    backup = _latest_backup_status(settings.environment)
+    checks = [
+        _readiness_check(
+            "SchoolDrive",
+            bool(schooldrive_latest),
+            "Webhook reçu" if schooldrive_latest else "Aucun webhook reçu",
+            "warning",
+        ),
+        _readiness_check(
+            "Front",
+            bool(front_match_counts),
+            "Zone tampon alimentée" if front_match_counts else "Zone tampon vide",
+            "info",
+        ),
+        _readiness_check(
+            "Twilio",
+            bool(settings.twilio_account_sid and settings.twilio_auth_token and settings.twilio_whatsapp_sender),
+            "Configuration présente" if settings.twilio_whatsapp_sender else "Sender non configuré",
+            "warning",
+        ),
+        _readiness_check(
+            "Backup",
+            bool(backup.get("exists")),
+            "Backup trouvé" if backup.get("exists") else "Aucun backup trouvé",
+            "warning",
+        ),
+        _readiness_check(
+            "Workflow",
+            conversations_without_action == 0,
+            "Aucune conversation active sans action"
+            if conversations_without_action == 0
+            else f"{conversations_without_action} conversation(s) active(s) sans prochaine action",
+            "danger",
+        ),
+    ]
+
+    return {
+        "environment": settings.environment,
+        "checks": checks,
+        "schooldrive": {
+            "token_configured": bool(settings.schooldrive_webhook_token),
+            "lead_count": schooldrive_lead_count,
+            "status_counts": schooldrive_status_counts,
+            "latest_events": schooldrive_latest,
+        },
+        "front": {
+            "token_configured": bool(settings.front_api_token),
+            "match_counts": front_match_counts,
+            "migration_counts": front_migration_counts,
+            "message_count": front_message_count,
+            "attached_message_count": front_attached_count,
+            "latest_records": front_latest,
+        },
+        "twilio": {
+            "mode": settings.twilio_mode,
+            "account_configured": bool(settings.twilio_account_sid),
+            "sender": settings.twilio_whatsapp_sender or "",
+            "status_callback_configured": bool(settings.twilio_status_callback_url),
+            "status_counts": twilio_status_counts,
+            "latest_messages": twilio_latest,
+        },
+        "backup": backup,
+        "workflow": {
+            "open_action_count": open_action_count,
+            "blocked_action_count": blocked_action_count,
+            "open_bug_count": open_bug_count,
+            "pending_template_request_count": pending_template_request_count,
+            "open_conversations_without_action": conversations_without_action,
+        },
+    }
+
+
+def _scalar_count(conn: Any, query: str, params: tuple[Any, ...] = ()) -> int:
+    row = conn.execute(query, params).fetchone()
+    if row is None:
+        return 0
+    return int(row[0] or 0)
+
+
+def _count_by(conn: Any, table_name: str, column_name: str) -> dict[str, int]:
+    rows = conn.execute(
+        f"""
+        SELECT coalesce({column_name}, 'unknown') AS key, COUNT(*) AS count
+        FROM {table_name}
+        GROUP BY coalesce({column_name}, 'unknown')
+        ORDER BY count DESC, key
+        """
+    ).fetchall()
+    return {str(row["key"]): int(row["count"]) for row in rows}
+
+
+def _readiness_check(
+    name: str,
+    ok: bool,
+    detail: str,
+    fail_level: str = "warning",
+) -> dict[str, str]:
+    return {
+        "name": name,
+        "state": "ready" if ok else fail_level,
+        "detail": detail,
+    }
+
+
+def _latest_backup_status(environment: str) -> dict[str, Any]:
+    settings = get_settings()
+    candidates = [
+        settings.root_dir.parent.parent / "backups" / environment,
+        settings.root_dir / "backups" / environment,
+        Path("backups") / environment,
+    ]
+    for directory in candidates:
+        try:
+            backups = sorted(
+                directory.glob("*.db.gz"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+        except OSError:
+            backups = []
+        if backups:
+            latest = backups[0]
+            return {
+                "exists": True,
+                "path": str(latest),
+                "updated_at": iso_utc(datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc)),
+                "size_bytes": latest.stat().st_size,
+            }
+    return {
+        "exists": False,
+        "path": "",
+        "updated_at": "",
+        "size_bytes": 0,
+        "searched": [str(path) for path in candidates],
+    }
 
 
 def followups_are_blocked(record: dict[str, Any]) -> bool:

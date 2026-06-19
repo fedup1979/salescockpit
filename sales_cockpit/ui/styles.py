@@ -391,5 +391,77 @@ h1, h2, h3 {
   border-color: var(--sc-accent);
   color: var(--sc-accent);
 }
+
+.sc-readiness {
+  border: 1px solid var(--sc-border);
+  border-radius: 8px;
+  padding: .75rem .8rem;
+  background: oklch(0.99 0.004 250);
+  min-height: 7rem;
+}
+
+.sc-readiness-label {
+  color: var(--sc-muted);
+  font-size: .78rem;
+  font-weight: 650;
+  line-height: 1.2;
+  margin-bottom: .42rem;
+}
+
+.sc-readiness-state {
+  color: var(--sc-text);
+  font-size: 1rem;
+  font-weight: 720;
+  line-height: 1.22;
+  margin-bottom: .32rem;
+}
+
+.sc-readiness-detail {
+  color: var(--sc-muted);
+  font-size: .8rem;
+  line-height: 1.32;
+}
+
+.sc-readiness-ready {
+  border-color: oklch(0.78 0.07 145);
+  background: oklch(0.968 0.025 145);
+}
+
+.sc-readiness-info {
+  border-color: oklch(0.8 0.055 230);
+  background: oklch(0.97 0.018 230);
+}
+
+.sc-readiness-warning {
+  border-color: oklch(0.82 0.085 82);
+  background: oklch(0.97 0.035 82);
+}
+
+.sc-readiness-danger {
+  border-color: oklch(0.78 0.09 29);
+  background: oklch(0.97 0.026 29);
+}
+
+.sc-status-panel {
+  border: 1px solid var(--sc-border);
+  border-radius: 8px;
+  padding: .7rem .8rem;
+  background: oklch(0.99 0.004 250);
+  margin: .2rem 0 .7rem 0;
+}
+
+.sc-status-panel strong {
+  display: block;
+  color: var(--sc-text);
+  font-size: 1.1rem;
+  line-height: 1.2;
+  margin-bottom: .18rem;
+}
+
+.sc-status-panel span {
+  color: var(--sc-muted);
+  font-size: .82rem;
+  line-height: 1.34;
+}
 </style>
 """

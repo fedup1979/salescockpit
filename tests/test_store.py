@@ -12,6 +12,7 @@ from sales_cockpit.store import (
     create_template,
     create_template_request,
     get_conversation,
+    get_integration_readiness,
     get_next_action_for_lead,
     handoff_to_closer,
     list_actions_for_lead,
@@ -30,6 +31,7 @@ from sales_cockpit.store import (
     sync_twilio_templates,
     update_lead_qualification,
 )
+from sales_cockpit.services.front_import import upsert_front_history
 
 
 def test_seeded_user_can_login() -> None:
@@ -60,6 +62,39 @@ def test_bug_report_is_stored_with_activity_log() -> None:
     assert reports[0]["title"] == "Carte incorrecte"
     assert reports[0]["severity"] == "high"
     assert any(item["event_type"] == "bug_report_created" for item in list_user_activity_log())
+
+
+def test_integration_readiness_summary_exposes_core_sections() -> None:
+    seed_initial_data()
+    upsert_front_history(
+        {
+            "id": "cnv_readiness",
+            "subject": "WhatsApp thread with +41790004001",
+            "status": "assigned",
+        },
+        messages=[
+            {
+                "id": "msg_readiness",
+                "type": "whatsapp",
+                "is_inbound": False,
+                "created_at": 1781157301,
+                "text": "Bonjour depuis Front.",
+            }
+        ],
+    )
+
+    readiness = get_integration_readiness()
+
+    assert {item["name"] for item in readiness["checks"]} == {
+        "SchoolDrive",
+        "Front",
+        "Twilio",
+        "Backup",
+        "Workflow",
+    }
+    assert readiness["front"]["message_count"] == 1
+    assert readiness["front"]["migration_counts"]["active"] == 1
+    assert "open_conversations_without_action" in readiness["workflow"]
 
 
 def test_freeform_send_blocked_when_window_closed() -> None:
