@@ -134,12 +134,13 @@ The app has been iteratively reviewed by François and is currently in a good st
 
 Latest known validation:
 
-- `pytest`: 70 tests passing.
+- `pytest`: 76 tests passing.
 - `compileall`: passed for `sales_cockpit`, `scripts`, and `tests`.
 - SchoolDrive staging API probe passed with a synthetic create + archive payload.
 - Twilio staging template sync passed and imported 5 DEV templates, all currently `draft`.
 - SQLite backup and restore have been tested successfully on staging with `deploy/scripts/backup_sqlite.sh` and `deploy/scripts/restore_sqlite.sh`.
-- Front token is configured on staging. After fixing pagination limiting, a dry-run successfully read 1 Front conversation and 1 WhatsApp message with `writes: 0`; keep further Front work read-only and low-volume.
+- Front token is configured on staging. After fixing pagination limiting, a dry-run successfully read 1 Front conversation and 1 WhatsApp message with `writes: 0`.
+- Front pilot staging result: 1 Front conversation and 1 Front message stored in the buffer tables, 0 messages attached to operational threads. The sample was `unmatched` because the phone did not exist yet in staging SchoolDrive data.
 - `scripts/reset_demo.py`: verified on a temporary SQLite database and creates 19 `SD-DEMO-*` leads.
 - Streamlit AppTest smoke covers reply-action guidance and absence of the generic `Terminer l'action` button in the main Actions flow.
 - Pytest uses an isolated temporary SQLite database via `tests/conftest.py`; it should not create test leads in the local app database.

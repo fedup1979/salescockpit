@@ -59,6 +59,7 @@ Implemented:
 - `scripts/front_dry_run.py`, which reads a small sample and prints JSON without writing to SQLite.
 - Dry-run pagination now respects the requested `limit` before following Front's next-page cursor. This matters because Front rate limits aggressively.
 - Staging dry-run has successfully read 1 Front conversation and 1 WhatsApp message with `writes: 0`.
+- Staging pilot has stored 1 Front conversation and 1 Front message in the buffer tables, with 0 attached operational messages. The first sample was unmatched because SchoolDrive staging data did not yet contain that phone number.
 - Front import pilot foundation:
   - phone extraction from Front WhatsApp subjects/handles;
   - exact phone matching against Sales Cockpit leads/conversations;
