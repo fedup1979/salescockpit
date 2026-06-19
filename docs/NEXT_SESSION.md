@@ -89,10 +89,14 @@ The app has been iteratively reviewed by François and is currently in a good st
   - phone extraction and exact phone matching;
   - `scripts/front_import_pilot.py`;
   - migration classification into `active`, `resolved`, or `manual_review`;
+  - filtered Admin > Intégrations review by match status, migration status, and recommended action;
+  - read-only cutover planning via `scripts/front_cutover_plan.py`;
   - optional `--attach-history` to copy matched messages into the thread as `front_history`, disabled by default;
   - Admin > Intégrations displays buffered Front records.
 - SchoolDrive payload replay tool exists: `scripts/schooldrive_replay_payloads.py`.
 - SchoolDrive synthetic smoke test exists: `scripts/schooldrive_smoke.py`. It can validate staging without real Tiago payloads and checks created/updated/ignored/duplicate/archive behavior.
+- Pre-cutover CLI check exists: `scripts/pre_cutover_check.py`.
+- Twilio template audit CLI exists: `scripts/twilio_template_audit.py`.
 - Production cutover runbook exists: `docs/CUTOVER_RUNBOOK.md`.
 - Lead-relative reminders follow `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
 - Course-date reminders win over lead-relative reminders. The losing lead-relative reminder is cancelled.
@@ -143,23 +147,27 @@ The app has been iteratively reviewed by François and is currently in a good st
 
 Latest known validation:
 
-- `pytest`: 88 tests passing.
+- `pytest`: 90 tests passing.
 - `compileall`: passed for `sales_cockpit`, `scripts`, and `tests`.
 - SchoolDrive staging API probe passed with a synthetic create + archive payload.
 - SchoolDrive synthetic smoke passed on staging with run id `smoke-20260619T122027Z`: created, updated, stale ignored, duplicate ignored, sent WhatsApp, queued WhatsApp, archive, and DB side effects all OK.
 - Twilio staging template sync passed and imported 5 DEV templates, all currently `draft`.
+- Twilio template audit on staging currently sees 5 real Twilio DEV templates, all `draft`, and 0 real approved templates.
 - SQLite backup and restore have been tested successfully on staging with `deploy/scripts/backup_sqlite.sh` and `deploy/scripts/restore_sqlite.sh`.
+- Automated backup cron is installed and cron service is active on the droplet.
 - Front token is configured on staging. After fixing pagination limiting, a dry-run successfully read 1 Front conversation and 1 WhatsApp message with `writes: 0`.
 - Front pilot staging result: 5 Front conversations and 10 Front messages stored in the buffer tables, 0 messages attached to operational threads. All buffered samples are currently `unmatched` because their phones do not exist yet in staging SchoolDrive data. Current migration classification: 4 `active`, 1 `manual_review`.
+- Front cutover plan on staging currently returns 5 `manual_review` rows because all buffered Front conversations are still unmatched. It displays likely actions (`reply` for Mihary or `follow_up` for Tanjona) but does not convert anything.
 - Admin readiness on staging is green for SchoolDrive, Front, Twilio, Backup, and Workflow. The workflow count explicitly separates 1 SchoolDrive record waiting for the first sent autoresponder from true open conversations without action.
+- Staging pre-cutover check passed with `scripts/pre_cutover_check.py --api-base http://127.0.0.1:8602 --ui-url http://127.0.0.1:8502`.
 - `scripts/reset_demo.py`: verified on a temporary SQLite database and creates 19 `SD-DEMO-*` leads.
 - Streamlit AppTest smoke covers reply-action guidance and absence of the generic `Terminer l'action` button in the main Actions flow.
 - Pytest uses an isolated temporary SQLite database via `tests/conftest.py`; it should not create test leads in the local app database.
 - Streamlit smoke tests passed during the session.
 - Streamlit and FastAPI were restarted after a stale import issue.
 - Latest backups created on the droplet:
-  - staging: `/opt/sales-cockpit/backups/staging/sales_cockpit_staging_20260619T122616Z.db.gz`
-  - prod: `/opt/sales-cockpit/backups/prod/sales_cockpit_prod_20260619T122616Z.db.gz`
+  - staging: `/opt/sales-cockpit/backups/staging/sales_cockpit_staging_20260619T124345Z.db.gz`
+  - prod: `/opt/sales-cockpit/backups/prod/sales_cockpit_prod_20260619T124345Z.db.gz`
 
 If a future session sees an import error for a recently added function, restart Streamlit. Streamlit can keep old modules in memory.
 
@@ -202,6 +210,10 @@ Stop-Process -Id <PID> -Force
 - The GitHub deploy key is on the `salescockpit` Linux user. Deployment scripts must run Git and Python app setup as `salescockpit`, then restart services as `root`.
 - SchoolDrive webhook implementation exists. Read `docs/SCHOOLDRIVE_WEBHOOK.md` before changing it.
 - SQLite backup/restore scripts exist. Read `docs/BACKUP_RESTORE.md` before using restore.
+- Automated backup cron is installed on the droplet in `/etc/cron.d/sales-cockpit-backups`.
+- Backup cron schedule, UTC:
+  - staging daily at `01:17`, 14-day retention;
+  - prod daily at `01:37`, 30-day retention.
 
 ## Recommended Next Work
 
