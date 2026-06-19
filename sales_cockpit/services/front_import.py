@@ -311,6 +311,71 @@ def upsert_front_history(
     }
 
 
+def rematch_front_buffer(limit: int = 500, attach_history: bool = False) -> dict[str, Any]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, payload_json
+            FROM front_conversations
+            ORDER BY datetime(updated_at) DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        message_rows = conn.execute(
+            """
+            SELECT front_conversation_row_id, payload_json
+            FROM front_messages
+            WHERE front_conversation_row_id IN (
+                SELECT id
+                FROM front_conversations
+                ORDER BY datetime(updated_at) DESC, id DESC
+                LIMIT ?
+            )
+            ORDER BY datetime(front_created_at) ASC, id ASC
+            """,
+            (limit,),
+        ).fetchall()
+
+    messages_by_front_row: dict[int, list[dict[str, Any]]] = {}
+    for row in message_rows:
+        message = _json_payload(row["payload_json"])
+        if message:
+            messages_by_front_row.setdefault(int(row["front_conversation_row_id"]), []).append(message)
+
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        conversation = _json_payload(row["payload_json"])
+        if not conversation:
+            continue
+        results.append(
+            upsert_front_history(
+                conversation,
+                messages=messages_by_front_row.get(int(row["id"]), []),
+                attach_history=attach_history,
+            )
+        )
+
+    match_counts: dict[str, int] = {}
+    migration_counts: dict[str, int] = {}
+    attached = 0
+    for result in results:
+        match_status = str(result.get("match_status") or "unknown")
+        migration_status = str(result.get("migration_status") or "unknown")
+        match_counts[match_status] = match_counts.get(match_status, 0) + 1
+        migration_counts[migration_status] = migration_counts.get(migration_status, 0) + 1
+        attached += int(result.get("messages_attached") or 0)
+
+    return {
+        "records_seen": len(rows),
+        "records_processed": len(results),
+        "match_counts": match_counts,
+        "migration_counts": migration_counts,
+        "messages_attached": attached,
+        "results": results,
+    }
+
+
 def list_front_import_records(
     limit: int = 100,
     match_status: str = "all",
@@ -507,6 +572,16 @@ def _upsert_front_message(
 
 def _front_id(payload: dict[str, Any]) -> str:
     return str(payload.get("id") or payload.get("uid") or "").strip()
+
+
+def _json_payload(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _message_body(message: dict[str, Any]) -> str:

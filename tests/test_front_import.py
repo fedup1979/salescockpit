@@ -7,6 +7,7 @@ from sales_cockpit.services.front_import import (
     extract_front_phone,
     list_front_import_records,
     preview_front_conversation,
+    rematch_front_buffer,
     upsert_front_history,
 )
 
@@ -183,6 +184,25 @@ def test_build_front_cutover_plan_is_read_only_and_conservative() -> None:
 
     with connect() as conn:
         assert conn.execute("SELECT COUNT(*) AS total FROM tasks").fetchone()["total"] == 0
+
+
+def test_rematch_front_buffer_matches_after_schooldrive_backfill() -> None:
+    init_db()
+    upsert_front_history(
+        _front_conversation("cnv_late_match", "+41760000001", status="assigned"),
+        messages=[_front_message("msg_late_match", is_inbound=True)],
+    )
+    before = list_front_import_records()
+    assert before[0]["match_status"] == "unmatched"
+
+    lead_id, conversation_id = _seed_lead_with_conversation("+41760000001")
+    result = rematch_front_buffer()
+
+    assert result["match_counts"] == {"matched": 1}
+    after = list_front_import_records()
+    assert after[0]["match_status"] == "matched"
+    assert after[0]["lead_id"] == lead_id
+    assert after[0]["conversation_id"] == conversation_id
 
 
 def _seed_lead_with_conversation(phone: str) -> tuple[int, int]:
