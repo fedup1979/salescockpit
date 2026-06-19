@@ -96,8 +96,10 @@ Latest staging pilot:
 
 - 13 Front conversations buffered.
 - 159 Front messages buffered.
-- 0 Front messages attached to operational threads.
-- 13 conversations are currently `unmatched`, so conversion is intentionally skipped until the corresponding SchoolDrive leads are backfilled.
+- After the latest SchoolDrive MCP backfill and rematch: 11 conversations are `unmatched`, 1 is `ambiguous`, and 1 is `matched`.
+- The matched row is `cnv_1mz0vz4w`, phone `+33669502201`, linked to `subscription:131887` / Lea Bucco.
+- 11 matched Front messages were attached as `front_history`.
+- Conversion dry-run skipped the matched row because that lead already has an open `follow_up` action.
 
 Not implemented yet:
 

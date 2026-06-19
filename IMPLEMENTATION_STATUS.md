@@ -116,8 +116,9 @@ V1 staging build is runnable. Staging is connected to a real Twilio DEV WhatsApp
 - Documented backup/restore procedure in `docs/BACKUP_RESTORE.md`.
 - Staging backup and restore have been tested successfully on DigitalOcean.
 - Latest staging readiness is green for SchoolDrive, Front, Twilio, Backup, and Workflow.
-- Latest Front pilot buffer on staging contains 13 Front conversations and 159 Front messages, with 0 attached operational messages. All are currently unmatched until SchoolDrive real data/backfill is present.
-- Latest Front rematch processed 13 records and kept all 13 unmatched. Latest Front conversion dry-run skipped all 13 because none is ready to convert.
+- Latest SchoolDrive MCP backfill has 35 accepted events, 2 ignored events, and 30 SchoolDrive-backed leads in staging.
+- Latest Front pilot buffer on staging contains 13 Front conversations and 159 Front messages.
+- Latest Front rematch: 11 unmatched, 1 ambiguous, 1 matched. The matched row is linked to `subscription:131887` / Lea Bucco; 11 Front messages were attached as `front_history`. Latest Front conversion dry-run skipped the matched row because an open `follow_up` action already exists.
 - Latest Twilio staging sync found 10 DEV Content API templates: 4 `pending`, 6 `draft`, and 0 real approved templates.
 - Test template `sc_dev_accuse_reception_fr_001` was submitted for WhatsApp approval and is currently `pending`; closed-window template validation still waits for approval.
 - Staging pre-cutover check passed and automated backup cron is installed on the droplet.
