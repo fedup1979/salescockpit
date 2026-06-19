@@ -2033,6 +2033,10 @@ def render_admin_status_tab() -> None:
                 {"Indicateur": "Demandes de modèles ouvertes", "Valeur": workflow["pending_template_request_count"]},
                 {"Indicateur": "Bugs ouverts", "Valeur": workflow["open_bug_count"]},
                 {
+                    "Indicateur": "En attente du premier WhatsApp SchoolDrive",
+                    "Valeur": workflow["schooldrive_waiting_first_autoresponder_count"],
+                },
+                {
                     "Indicateur": "Conversations actives sans prochaine action",
                     "Valeur": workflow["open_conversations_without_action"],
                 },

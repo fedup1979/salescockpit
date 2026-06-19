@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from sales_cockpit.db import seed_initial_data
@@ -14,6 +14,7 @@ from sales_cockpit.store import (
     get_conversation,
     get_integration_readiness,
     get_next_action_for_lead,
+    ingest_schooldrive_snapshot,
     handoff_to_closer,
     list_actions_for_lead,
     list_conversations,
@@ -32,6 +33,7 @@ from sales_cockpit.store import (
     update_lead_qualification,
 )
 from sales_cockpit.services.front_import import upsert_front_history
+from scripts.schooldrive_smoke import build_smoke_steps
 
 
 def test_seeded_user_can_login() -> None:
@@ -95,6 +97,22 @@ def test_integration_readiness_summary_exposes_core_sections() -> None:
     assert readiness["front"]["message_count"] == 1
     assert readiness["front"]["migration_counts"]["active"] == 1
     assert "open_conversations_without_action" in readiness["workflow"]
+
+
+def test_readiness_allows_schooldrive_waiting_for_first_sent_autoresponder() -> None:
+    seed_initial_data()
+    queued_payload = build_smoke_steps(
+        run_id="readiness-queued",
+        environment="staging",
+        base_time=datetime(2026, 6, 19, 12, 0, tzinfo=UTC),
+    )[5].payload
+
+    result = ingest_schooldrive_snapshot(queued_payload)
+
+    assert get_next_action_for_lead(result["lead_id"]) is None
+    readiness = get_integration_readiness()
+    assert readiness["workflow"]["schooldrive_waiting_first_autoresponder_count"] == 1
+    assert readiness["workflow"]["open_conversations_without_action"] == 0
 
 
 def test_freeform_send_blocked_when_window_closed() -> None:

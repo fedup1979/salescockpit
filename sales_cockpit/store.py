@@ -306,17 +306,51 @@ def get_integration_readiness() -> dict[str, Any]:
             ).fetchall()
         )
 
+        schooldrive_waiting_first_autoresponder_count = _scalar_count(
+            conn,
+            """
+            SELECT COUNT(*)
+            FROM conversations c
+            JOIN leads l ON l.id = c.lead_id
+            WHERE c.status = 'open'
+              AND l.source = 'schooldrive_webhook'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM tasks t
+                WHERE t.conversation_id = c.id
+                  AND t.status IN ('planned', 'open', 'in_progress', 'blocked')
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM schooldrive_whatsapp_autoresponders a
+                WHERE a.lead_id = l.id
+                  AND a.status = 'sent'
+                  AND a.sent_at IS NOT NULL
+              )
+            """,
+        )
         conversations_without_action = _scalar_count(
             conn,
             """
             SELECT COUNT(*)
             FROM conversations c
+            JOIN leads l ON l.id = c.lead_id
             WHERE c.status = 'open'
               AND NOT EXISTS (
                 SELECT 1
                 FROM tasks t
                 WHERE t.conversation_id = c.id
                   AND t.status IN ('planned', 'open', 'in_progress', 'blocked')
+              )
+              AND NOT (
+                l.source = 'schooldrive_webhook'
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM schooldrive_whatsapp_autoresponders a
+                  WHERE a.lead_id = l.id
+                    AND a.status = 'sent'
+                    AND a.sent_at IS NOT NULL
+                )
               )
             """,
         )
@@ -401,6 +435,7 @@ def get_integration_readiness() -> dict[str, Any]:
             "blocked_action_count": blocked_action_count,
             "open_bug_count": open_bug_count,
             "pending_template_request_count": pending_template_request_count,
+            "schooldrive_waiting_first_autoresponder_count": schooldrive_waiting_first_autoresponder_count,
             "open_conversations_without_action": conversations_without_action,
         },
     }

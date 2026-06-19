@@ -60,6 +60,8 @@ If no sent autoresponder exists yet, the cockpit waits for the next SchoolDrive 
 
 If `is_archived` is true, the cockpit resolves the conversation, closes open actions, and adds an internal note.
 
+The waiting state is deliberate. A SchoolDrive record with no sent WhatsApp yet, or only a queued WhatsApp, does not create a Tanjona follow-up because the 72h clock starts from the sent timestamp. Admin > État reports these records separately as waiting for the first SchoolDrive WhatsApp instead of treating them as broken workflow conversations.
+
 ## Replay Tool
 
 Use `scripts/schooldrive_replay_payloads.py` to replay Tiago's JSON payloads against local, staging, or production.
