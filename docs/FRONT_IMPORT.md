@@ -57,6 +57,7 @@ Implemented:
 - Unit tests for pagination, search query encoding, message listing, and missing token handling.
 - `scripts/front_dry_run.py`, which reads a small sample and prints JSON without writing to SQLite.
 - Dry-run pagination now respects the requested `limit` before following Front's next-page cursor. This matters because Front rate limits aggressively.
+- Staging dry-run has successfully read 1 Front conversation and 1 WhatsApp message with `writes: 0`.
 
 Not implemented yet:
 

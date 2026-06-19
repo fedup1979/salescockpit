@@ -133,7 +133,7 @@ Latest known validation:
 - SchoolDrive staging API probe passed with a synthetic create + archive payload.
 - Twilio staging template sync passed and imported 5 DEV templates, all currently `draft`.
 - SQLite backup and restore have been tested successfully on staging with `deploy/scripts/backup_sqlite.sh` and `deploy/scripts/restore_sqlite.sh`.
-- Front token is configured on staging, but recent Front calls returned `429 Too Many Requests`; do not hammer the API. Use `scripts/front_dry_run.py` with retry once the limit cools down.
+- Front token is configured on staging. After fixing pagination limiting, a dry-run successfully read 1 Front conversation and 1 WhatsApp message with `writes: 0`; keep further Front work read-only and low-volume.
 - `scripts/reset_demo.py`: verified on a temporary SQLite database and creates 19 `SD-DEMO-*` leads.
 - Streamlit AppTest smoke covers reply-action guidance and absence of the generic `Terminer l'action` button in the main Actions flow.
 - Pytest uses an isolated temporary SQLite database via `tests/conftest.py`; it should not create test leads in the local app database.
@@ -182,7 +182,7 @@ Stop-Process -Id <PID> -Force
 ## Recommended Next Work
 
 1. Wait for Tiago to POST the real SchoolDrive staging payload scenarios, then validate accepted/ignored/duplicate events, sent vs queued WhatsApp messages, Tanjona +72h creation, and archive resolution in staging.
-2. If Tiago is still pending, retry a very small Front dry-run only after the rate limit cools down. Keep Front read-only.
+2. If Tiago is still pending, define the Front history import mapping: phone matching, message storage fields, idempotency, and UI visibility. Keep Front read-only and low-volume.
 3. Validate Twilio template synchronization and status display on staging. Template approval cannot be fully validated until the ESSR WhatsApp sender/WABA path is settled.
 4. Run the focused manual scenario validation in `docs/TEST_PLAN.md` with Laura or François after real SchoolDrive data is visible.
 5. Fix any UX or workflow failures discovered by the scenario pass.
