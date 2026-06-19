@@ -11,12 +11,16 @@ Local URLs:
 
 DigitalOcean staging:
 
+- PROD UI: `http://139.59.158.77:8501`
+- PROD API health: `http://139.59.158.77:8601/health`
 - Staging UI: `http://139.59.158.77:8502`
 - SchoolDrive staging webhook: `http://139.59.158.77:8602/webhooks/schooldrive/lead-or-presubscription`
 - Twilio staging inbound webhook: `http://139.59.158.77:8602/webhooks/twilio/whatsapp/inbound`
 - Twilio staging status callback: `http://139.59.158.77:8602/webhooks/twilio/whatsapp/status`
 - Host: `salescockpit-prod-01`
-- Services: `sales-cockpit-ui@staging.service`, `sales-cockpit-api@staging.service`
+- Services: `sales-cockpit-ui@prod.service`, `sales-cockpit-api@prod.service`, `sales-cockpit-ui@staging.service`, `sales-cockpit-api@staging.service`
+
+PROD is prepared cold on `8501` / `8601` with its own database and `SALES_COCKPIT_TWILIO_MODE=mock`. It is not connected to production SchoolDrive, production Front import, or real ESSR WhatsApp traffic.
 
 The app has been iteratively reviewed by François and is currently in a good staging prototype state.
 
@@ -186,8 +190,10 @@ Stop-Process -Id <PID> -Force
 - Auth is local password-based only.
 - GitHub remote exists: `https://github.com/fedup1979/salescockpit`.
 - DigitalOcean staging exists on `http://139.59.158.77:8502`.
+- DigitalOcean PROD exists on `http://139.59.158.77:8501`, prepared cold with Twilio mock mode and isolated data.
 - Deployment scaffold exists in `deploy/` and `docs/DEPLOYMENT.md`.
 - The droplet has a read-only GitHub deploy key for pull-based deploys.
+- The GitHub deploy key is on the `salescockpit` Linux user. Deployment scripts must run Git and Python app setup as `salescockpit`, then restart services as `root`.
 - SchoolDrive webhook implementation exists. Read `docs/SCHOOLDRIVE_WEBHOOK.md` before changing it.
 - SQLite backup/restore scripts exist. Read `docs/BACKUP_RESTORE.md` before using restore.
 

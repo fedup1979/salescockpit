@@ -6,10 +6,11 @@ Publish Sales Cockpit quickly without touching Front.io, production Twilio, Scho
 
 ## Current DigitalOcean Status
 
-Staging is deployed and reachable:
+Staging and PROD are deployed and reachable:
 
 ```text
-http://139.59.158.77:8502
+PROD UI:    http://139.59.158.77:8501
+STAGING UI: http://139.59.158.77:8502
 ```
 
 Server:
@@ -23,13 +24,17 @@ Public IPv4: 139.59.158.77
 Running services:
 
 ```text
+sales-cockpit-ui@prod.service
+sales-cockpit-api@prod.service
 sales-cockpit-ui@staging.service
 sales-cockpit-api@staging.service
 ```
 
-PROD and DEV are intentionally not started yet. The scaffold supports them, but staging should be validated first so that we do not expose multiple mock copies of the cockpit.
+PROD is prepared cold on ports `8501` / `8601`, with an isolated SQLite database and Twilio still in `mock` mode. Do not connect SchoolDrive production, Front production import, or real ESSR WhatsApp traffic until the cutover checklist is explicitly validated.
 
-The first staging deployment was made from a local `git archive` because the GitHub repository is private and the droplet does not yet have a GitHub deploy key.
+DEV is intentionally not started yet. The scaffold supports it, but staging and PROD should stay the active server environments until we need a separate remote development copy.
+
+The first staging deployment was made from a local `git archive`. The droplet now has a read-only GitHub deploy key on the `salescockpit` Linux user and can pull from GitHub.
 
 Current staging webhook for SchoolDrive:
 
@@ -60,7 +65,7 @@ https://github.com/fedup1979/salescockpit
 
 Local `main` tracks `origin/main`.
 
-The droplet has a read-only deploy key and can pull from GitHub.
+The droplet has a read-only deploy key on the `salescockpit` Linux user and can pull from GitHub. Deployment scripts must run Git and Python app setup as `salescockpit`, not as `root`, because the GitHub SSH key belongs to that user.
 
 Historical note: the local GitHub CLI token could push to the repository, but could not create the repository because it lacked `createRepository`.
 
@@ -125,7 +130,11 @@ sudo REPO_URL=git@github.com:fedup1979/salescockpit.git BRANCH=main bash deploy/
 sudo systemctl enable --now sales-cockpit-ui@staging sales-cockpit-api@staging
 ```
 
-Repeat for `prod` and `dev` when needed.
+Repeat for `prod` and `dev` when needed. PROD has already been prepared once and can be redeployed with:
+
+```bash
+sudo REPO_URL=git@github.com:fedup1979/salescockpit.git BRANCH=main bash deploy/scripts/deploy_env.sh prod
+```
 
 ## Twilio Sandbox
 

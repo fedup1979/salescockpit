@@ -79,6 +79,8 @@ V1 staging build is runnable. Twilio sandbox messaging is connected for staging.
 - GitHub repository created and pushed: `https://github.com/fedup1979/salescockpit`.
 - DigitalOcean staging deployed on `http://139.59.158.77:8502`.
 - Staging services running: `sales-cockpit-ui@staging.service` and `sales-cockpit-api@staging.service`.
+- DigitalOcean PROD prepared cold on `http://139.59.158.77:8501`, with API on `8601`, isolated SQLite data, services running, and Twilio still in `mock` mode.
+- Deployment script adjusted so Git pull, virtualenv setup, dependency install, and DB init run as the `salescockpit` Linux user that owns the GitHub deploy key.
 - Implemented SchoolDrive snapshot webhook with bearer auth, environment guard, `event_id` idempotency, `schooldrive_id` upsert, `aggregated_updated_at` ordering, autoresponder replacement, and archival handling.
 - SchoolDrive `url` is stored and used by the UI SchoolDrive link.
 - Implemented Twilio sandbox-ready integration: SDK send client, inbound WhatsApp form webhook, `X-Twilio-Signature` validation, inbound idempotency by `MessageSid`, status callback storage, and legacy JSON mock compatibility.
@@ -110,12 +112,13 @@ V1 staging build is runnable. Twilio sandbox messaging is connected for staging.
 2. Verify real-payload behavior in staging: upsert, stale-event ignore, duplicate-event ignore, WhatsApp body rendering, Tanjona +72h follow-up creation, queued-message no-follow-up, and archive resolution.
 3. Run a focused UI scenario validation with François or Laura once real SchoolDrive records are visible.
 4. Fix any scenario failures before adding new features.
-5. Only after scenario validation, do a moderate refactor of the large files into UI pages/components, workflow services, seed/reset, and repositories.
-6. Test Twilio template synchronization and template creation from staging; full approval validation waits for the ESSR sender/WABA path.
-7. Run a small Front pilot on staging: preview, then optional `--write` to buffer tables only. Keep Front read-only and low-volume.
-8. Review Front migration classification results before creating any operational actions from Front.
-9. Review whether attached Front history should appear by default or behind a conversation filter.
-10. Add Notion historical enrichment.
+5. Keep PROD disconnected until staging scenario behavior and the production cutover checklist are validated.
+6. Only after scenario validation, do a moderate refactor of the large files into UI pages/components, workflow services, seed/reset, and repositories.
+7. Test Twilio template synchronization and template creation from staging; full approval validation waits for the ESSR sender/WABA path.
+8. Run a small Front pilot on staging: preview, then optional `--write` to buffer tables only. Keep Front read-only and low-volume.
+9. Review Front migration classification results before creating any operational actions from Front.
+10. Review whether attached Front history should appear by default or behind a conversation filter.
+11. Add Notion historical enrichment.
 
 ## Integration Policy
 
