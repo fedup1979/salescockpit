@@ -143,7 +143,7 @@ Latest known validation:
 - Twilio staging template sync passed and imported 5 DEV templates, all currently `draft`.
 - SQLite backup and restore have been tested successfully on staging with `deploy/scripts/backup_sqlite.sh` and `deploy/scripts/restore_sqlite.sh`.
 - Front token is configured on staging. After fixing pagination limiting, a dry-run successfully read 1 Front conversation and 1 WhatsApp message with `writes: 0`.
-- Front pilot staging result: 1 Front conversation and 1 Front message stored in the buffer tables, 0 messages attached to operational threads. The sample was `unmatched` because the phone did not exist yet in staging SchoolDrive data.
+- Front pilot staging result: 2 Front conversations and 2 Front messages stored in the buffer tables, 0 messages attached to operational threads. Both samples are currently `unmatched` because their phones do not exist yet in staging SchoolDrive data. One sample is classified `active / follow_up`; the older sample remains `manual_review`.
 - `scripts/reset_demo.py`: verified on a temporary SQLite database and creates 19 `SD-DEMO-*` leads.
 - Streamlit AppTest smoke covers reply-action guidance and absence of the generic `Terminer l'action` button in the main Actions flow.
 - Pytest uses an isolated temporary SQLite database via `tests/conftest.py`; it should not create test leads in the local app database.
