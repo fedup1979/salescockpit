@@ -195,11 +195,21 @@ Rules implemented:
 
 ## Backup
 
-SQLite backup is not yet automated.
+SQLite backup scripts exist:
 
-Minimum before PROD:
+```text
+deploy/scripts/backup_sqlite.sh
+deploy/scripts/restore_sqlite.sh
+```
 
-- Daily copy of each `sales_cockpit.db`.
-- Keep at least 7 daily backups.
-- Store backups outside the app folder.
-- Test restore once before live cutover.
+Backups are stored outside the app folder:
+
+```text
+/opt/sales-cockpit/backups/<env>/
+```
+
+Before production cutover, test restore once and then add a daily cron. Full procedure:
+
+```text
+docs/BACKUP_RESTORE.md
+```

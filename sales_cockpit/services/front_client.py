@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
@@ -21,6 +23,8 @@ class FrontClient:
     api_token: str
     base_url: str = FRONT_API_BASE_URL
     session: Any | None = None
+    max_retries: int = 3
+    retry_base_delay_seconds: float = 1.0
 
     @classmethod
     def from_settings(cls) -> "FrontClient":
@@ -87,24 +91,25 @@ class FrontClient:
         headers = kwargs.pop("headers", {})
         headers["Authorization"] = f"Bearer {self.api_token}"
         headers["Accept"] = "application/json"
-        try:
-            response = session.request(
-                method,
-                self._url(url),
-                headers=headers,
-                timeout=30,
-                **kwargs,
-            )
-        except requests.RequestException as exc:
-            raise FrontApiError(f"Front API inaccessible : {exc}") from exc
-        if response.status_code >= 400:
-            detail = response.text
+        response = None
+        for attempt in range(self.max_retries + 1):
             try:
-                payload = response.json()
-                detail = payload.get("message") or payload.get("detail") or detail
-            except ValueError:
-                pass
-            raise FrontApiError(f"Front API a refusé la demande : {detail}")
+                response = session.request(
+                    method,
+                    self._url(url),
+                    headers=headers,
+                    timeout=30,
+                    **kwargs,
+                )
+            except requests.RequestException as exc:
+                raise FrontApiError(f"Front API inaccessible : {exc}") from exc
+            if response.status_code != 429 or attempt >= self.max_retries:
+                break
+            time.sleep(self._retry_delay_seconds(response, attempt))
+        if response is None:
+            raise FrontApiError("Front API inaccessible.")
+        if response.status_code >= 400:
+            raise FrontApiError(f"Front API a refusé la demande : {self._error_detail(response)}")
         try:
             return response.json()
         except ValueError as exc:
@@ -114,3 +119,34 @@ class FrontClient:
         if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
             return path_or_url
         return f"{self.base_url.rstrip('/')}/{path_or_url.lstrip('/')}"
+
+    def _retry_delay_seconds(self, response: Any, attempt: int) -> float:
+        headers = getattr(response, "headers", {}) or {}
+        retry_after = headers.get("Retry-After") or headers.get("retry-after")
+        if retry_after:
+            try:
+                return max(float(retry_after), 0.1)
+            except ValueError:
+                pass
+        detail = self._error_detail(response)
+        milliseconds_match = re.search(r"retry in (\d+) milliseconds", detail, re.IGNORECASE)
+        if milliseconds_match:
+            return max(int(milliseconds_match.group(1)) / 1000, 0.1)
+        seconds_match = re.search(r"retry in (\d+) seconds", detail, re.IGNORECASE)
+        if seconds_match:
+            return max(float(seconds_match.group(1)), 0.1)
+        return self.retry_base_delay_seconds * (2**attempt)
+
+    def _error_detail(self, response: Any) -> str:
+        detail = getattr(response, "text", "")
+        try:
+            payload = response.json()
+        except ValueError:
+            return detail
+        if isinstance(payload, dict):
+            if payload.get("message") or payload.get("detail"):
+                return str(payload.get("message") or payload.get("detail"))
+            error = payload.get("_error")
+            if isinstance(error, dict):
+                return str(error.get("message") or error.get("title") or payload)
+        return str(payload)

@@ -22,6 +22,7 @@ The current read-only client in `sales_cockpit/services/front_client.py` support
 - `GET /conversations`
 - `GET /conversations/search/{query}`
 - `GET /conversations/{conversation_id}/messages`
+- retry on `429 Too Many Requests` using `Retry-After` or Front's retry message when available.
 
 Minimum Front scopes for API import:
 
@@ -54,10 +55,32 @@ Implemented:
 
 - Read-only Front API client.
 - Unit tests for pagination, search query encoding, message listing, and missing token handling.
+- `scripts/front_dry_run.py`, which reads a small sample and prints JSON without writing to SQLite.
 
 Not implemented yet:
 
 - Database persistence for imported Front messages.
 - UI filter for imported history.
-- Production Front token configuration.
 - Full import command.
+
+## Dry-Run Command
+
+Run locally or on staging with `SALES_COCKPIT_FRONT_API_TOKEN` configured:
+
+```bash
+python scripts/front_dry_run.py --limit 1
+```
+
+To fetch message samples too:
+
+```bash
+python scripts/front_dry_run.py --limit 1 --include-messages --messages-limit 5
+```
+
+To test a targeted Front search:
+
+```bash
+python scripts/front_dry_run.py --query "recipient:+41790000000" --limit 1 --include-messages
+```
+
+The dry-run has `writes: 0` by design. Do not add persistence until we have validated matching rules against real Front conversation shapes.

@@ -92,7 +92,11 @@ V1 staging build is runnable. Twilio sandbox messaging is connected for staging.
 - SchoolDrive webhook now supports Tiago's real payload shape: `subscription:<id>`, `short_name`, `whatsapp_template_id`, `whatsapp_template_variables_mapping`, and `whatsapp_send_body`.
 - Modèles page now separates real Twilio DEV templates from local demo templates to avoid confusion.
 - Added read-only Front API client foundation for future historical imports: conversation listing, search, and message listing.
+- Added Front read-only dry-run script with rate-limit retry: `scripts/front_dry_run.py`.
 - Documented Front historical import plan in `docs/FRONT_IMPORT.md`.
+- Added SQLite backup and guarded restore scripts for deployed environments.
+- Documented backup/restore procedure in `docs/BACKUP_RESTORE.md`.
+- Documented Twilio WhatsApp sender migration strategy in `docs/TWILIO_SENDER_MIGRATION.md`.
 
 ## Next Checkpoints
 
@@ -101,9 +105,9 @@ V1 staging build is runnable. Twilio sandbox messaging is connected for staging.
 3. Only after scenario validation, do a moderate refactor of the large files into UI pages/components, workflow services, seed/reset, and repositories.
 4. Validate a real SchoolDrive staging POST and backfill replay.
 5. Test Twilio template synchronization and template creation from staging.
-6. Run a small Front pilot import once a Front API token and inbox IDs are available.
+6. Run a small Front dry-run/pilot after Front rate limits allow it.
 7. Add Notion historical enrichment.
-8. Define and automate SQLite backups before PROD.
+8. Test restore once before PROD.
 
 ## Integration Policy
 

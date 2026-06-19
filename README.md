@@ -87,7 +87,9 @@ Deployment preparation is documented in:
 
 - `docs/DEPLOYMENT.md`
 - `docs/TWILIO_SANDBOX.md`
+- `docs/TWILIO_SENDER_MIGRATION.md`
 - `docs/FRONT_IMPORT.md`
+- `docs/BACKUP_RESTORE.md`
 - `deploy/README.md`
 
 Planned UI ports:
@@ -112,7 +114,9 @@ Before continuing work, read:
 - `docs/DEPLOYMENT.md`
 - `docs/SCHOOLDRIVE_WEBHOOK.md`
 - `docs/TWILIO_SANDBOX.md`
+- `docs/TWILIO_SENDER_MIGRATION.md`
 - `docs/FRONT_IMPORT.md`
+- `docs/BACKUP_RESTORE.md`
 - `PRODUCT.md`
 - `DESIGN.md`
 

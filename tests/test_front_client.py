@@ -5,10 +5,17 @@ from sales_cockpit.services.front_client import FrontApiError, FrontClient
 
 
 class FakeResponse:
-    def __init__(self, status_code: int, payload: dict | None = None, text: str = ""):
+    def __init__(
+        self,
+        status_code: int,
+        payload: dict | None = None,
+        text: str = "",
+        headers: dict | None = None,
+    ):
         self.status_code = status_code
         self._payload = payload
         self.text = text
+        self.headers = headers or {}
 
     def json(self) -> dict:
         if self._payload is None:
@@ -83,3 +90,43 @@ def test_front_client_requires_token_from_settings(monkeypatch) -> None:
         raise AssertionError("Front token should be required.")
     finally:
         get_settings.cache_clear()
+
+
+def test_front_client_retries_rate_limit_with_retry_after(monkeypatch) -> None:
+    sleeps = []
+    session = FakeSession(
+        [
+            FakeResponse(
+                429,
+                {"_error": {"message": "Rate limit exceeded."}},
+                headers={"Retry-After": "0.1"},
+            ),
+            FakeResponse(200, {"_results": [{"id": "cnv_1"}], "_pagination": {"next": None}}),
+        ]
+    )
+    monkeypatch.setattr("sales_cockpit.services.front_client.time.sleep", sleeps.append)
+    client = FrontClient(api_token="test", session=session, max_retries=1)
+
+    conversations = client.list_conversations(limit=1)
+
+    assert conversations == [{"id": "cnv_1"}]
+    assert len(session.calls) == 2
+    assert sleeps == [0.1]
+
+
+def test_front_client_retries_rate_limit_milliseconds_message(monkeypatch) -> None:
+    sleeps = []
+    session = FakeSession(
+        [
+            FakeResponse(
+                429,
+                {"_error": {"message": "Rate limit exceeded. Please retry in 250 milliseconds."}},
+            ),
+            FakeResponse(200, {"_results": [], "_pagination": {"next": None}}),
+        ]
+    )
+    monkeypatch.setattr("sales_cockpit.services.front_client.time.sleep", sleeps.append)
+    client = FrontClient(api_token="test", session=session, max_retries=1)
+
+    assert client.list_conversations(limit=1) == []
+    assert sleeps == [0.25]

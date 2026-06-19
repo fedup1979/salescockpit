@@ -13,7 +13,8 @@ apt-get install -y \
   python3-venv \
   python3-pip \
   build-essential \
-  curl
+  curl \
+  sqlite3
 
 if ! id salescockpit >/dev/null 2>&1; then
   useradd --system --create-home --shell /bin/bash salescockpit

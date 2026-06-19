@@ -10,6 +10,12 @@ Sales Cockpit supports three Twilio modes:
 
 Do not switch production WhatsApp traffic to Sales Cockpit without an explicit cutover plan.
 
+For the ESSR production sender and WABA migration questions, read:
+
+```text
+docs/TWILIO_SENDER_MIGRATION.md
+```
+
 ## Staging URLs
 
 Current staging API:
