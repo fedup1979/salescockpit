@@ -75,6 +75,7 @@ The app has been iteratively reviewed by François and is currently in a good st
 - Non-admin users can search templates and create template requests only.
 - Twilio templates are synchronized from the Twilio Content API through `sales_cockpit/services/twilio_content.py`.
 - In `sandbox` or `live` mode, approved templates are sendable only if they have a real Twilio `twilio_content_sid`; `HX_MOCK` demo templates are excluded from the send list.
+- The Modèles page defaults to `Twilio DEV` in sandbox/live mode to avoid confusing real Content API templates with local demo templates.
 - Delivery statuses are shown in conversation messages with WhatsApp-style checks: sent, delivered, read, failed, or queued/sending.
 - Front must remain read-only until an explicit import/cutover decision. The current Front work is only a read-only API client plus documentation for historical import.
 - Lead-relative reminders follow `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
@@ -88,6 +89,9 @@ The app has been iteratively reviewed by François and is currently in a good st
 - Reply tools live below the conversation thread.
 - SchoolDrive link appears next to the prospect name, opening in a new tab.
 - SchoolDrive lead types use SD terms internally: `lead` and `presubscription`.
+- SchoolDrive `schooldrive_id` prefixes are now `lead:<id>` and `subscription:<id>` for real webhook payloads. Older `presub:<id>` is still tolerated only in the fallback URL helper.
+- SchoolDrive WhatsApp autoresponders accept real fields from Tiago's payload: `short_name`, `whatsapp_template_id`, `whatsapp_template_variables_mapping`, and `whatsapp_send_body`.
+- If `whatsapp_send_body` is present on a sent SchoolDrive autoresponder, the conversation thread displays that exact body, not a generic placeholder.
 - Inbox conversation cards show `Lead` or `Préinscription` above the prospect name.
 - For `lead`, the course line shows the SD course category short title, e.g. `APP`; for `presubscription`, it shows the SD course short name, e.g. `APP GE P26`.
 - Checkpoint tag before the `Tâches` layout experiment: `checkpoint-before-a-faire-layout-2026-06-18-0829`.
@@ -122,7 +126,7 @@ The app has been iteratively reviewed by François and is currently in a good st
 
 Latest known validation:
 
-- `pytest`: 65 tests passing.
+- `pytest`: 67 tests passing.
 - `compileall`: passed for `sales_cockpit`, `scripts`, and `tests`.
 - SchoolDrive staging API probe passed with a synthetic create + archive payload.
 - Twilio staging template sync passed and imported 5 DEV templates, all currently `draft`.

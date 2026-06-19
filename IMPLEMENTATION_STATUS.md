@@ -89,6 +89,8 @@ V1 staging build is runnable. Twilio sandbox messaging is connected for staging.
 - Non-admin users can request missing templates but cannot create or synchronize Twilio templates.
 - In sandbox/live mode, sendable approved templates exclude local `HX_MOCK` demo templates.
 - SchoolDrive staging webhook was probed successfully with a synthetic create + archive payload.
+- SchoolDrive webhook now supports Tiago's real payload shape: `subscription:<id>`, `short_name`, `whatsapp_template_id`, `whatsapp_template_variables_mapping`, and `whatsapp_send_body`.
+- Modèles page now separates real Twilio DEV templates from local demo templates to avoid confusion.
 - Added read-only Front API client foundation for future historical imports: conversation listing, search, and message listing.
 - Documented Front historical import plan in `docs/FRONT_IMPORT.md`.
 

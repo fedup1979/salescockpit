@@ -18,7 +18,7 @@ Production should use HTTPS before cutover.
 ## Implemented Contract
 
 - Snapshot envelope with `schema_version`, `event_id`, `occurred_at`, `environment`, and `data`.
-- Stable business key: `data.schooldrive_id`, for example `lead:137797` or `presub:131885`.
+- Stable business key: `data.schooldrive_id`, for example `lead:137797` or `subscription:131885`.
 - `data.status` is stored as `schooldrive_status`; it does not overwrite Sales Cockpit qualification.
 - `data.url` is stored as `schooldrive_url` and used by the UI SchoolDrive link.
 
@@ -32,7 +32,9 @@ Production should use HTTPS before cutover.
 
 ## WhatsApp Autoresponders
 
-Accepted snapshots replace the stored SchoolDrive autoresponder list for the lead.
+Accepted snapshots replace the stored SchoolDrive autoresponder list for the lead or presubscription.
+
+Sales Cockpit accepts both the first draft field name `template` and the real SchoolDrive field name `short_name`. When SchoolDrive sends `whatsapp_send_body`, Sales Cockpit displays that exact rendered body in the conversation thread. The full WhatsApp autoresponder object, including `whatsapp_template_id` and `whatsapp_template_variables_mapping`, is preserved in `payload_json`.
 
 Autoresponders are also materialized as outbound conversation messages with:
 

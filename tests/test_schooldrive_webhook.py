@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from sales_cockpit.api.main import app
 from sales_cockpit.config import get_settings
 from sales_cockpit.db import connect, seed_initial_data
+from sales_cockpit.services.schooldrive import SchoolDriveConnector
 from sales_cockpit.store import (
     get_conversation,
     get_next_action_for_lead,
@@ -88,6 +89,69 @@ def test_schooldrive_snapshot_creates_lead_conversation_messages_and_followup() 
     assert action["sequence_code"] == "lead_no_reply"
     assert action["sequence_step_index"] == 1
     assert action["due_at"].startswith("2026-06-21T09:34:20")
+
+
+def test_schooldrive_snapshot_accepts_real_subscription_payload_fields() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload(
+        event_id="evt_real_subscription_shape",
+        schooldrive_id="subscription:131885",
+        lead_type="presubscription",
+        first_name="Souad",
+        last_name="Bousaid",
+    )
+    payload["data"]["url"] = (
+        "https://schooldrive.essr.ch/sd/customers/customers"
+        "(p1:sd/customers/customers/subscription/view/131885)"
+    )
+    payload["data"]["course"]["category"] = "APP"
+    payload["data"]["course"]["course_name"] = "APP VISIO E26"
+    payload["data"]["course"]["start_date"] = "2026-07-11"
+    payload["data"]["whatsapp_autoresponders"] = [
+        {
+            "message_id": "armsg:1019771",
+            "autoresponder_id": 2063,
+            "short_name": "mkt_app_ln_subs_01",
+            "whatsapp_template_id": "HXba7e2e78abb551de1f9c9cee798c8e59",
+            "whatsapp_template_variables_mapping": {"prenom": "Souad"},
+            "whatsapp_send_body": "Bonjour Souad, ceci est le vrai corps envoyé.",
+            "status": "sent",
+            "sent_at": "2026-06-18T09:34:20Z",
+        }
+    ]
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    assert result["status"] == "created"
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["schooldrive_lead_id"] == "subscription:131885"
+    assert conversation["lead_type"] == "presubscription"
+    assert conversation["course_title"] == "APP VISIO E26"
+    messages = list_messages(result["conversation_id"])
+    assert any(
+        message["channel"] == "schooldrive_autoresponder"
+        and message["body"] == "Bonjour Souad, ceci est le vrai corps envoyé."
+        for message in messages
+    )
+    with connect() as conn:
+        ar = conn.execute(
+            """
+            SELECT template, payload_json
+            FROM schooldrive_whatsapp_autoresponders
+            WHERE message_id = 'armsg:1019771'
+            """
+        ).fetchone()
+    assert ar["template"] == "mkt_app_ln_subs_01"
+    assert "whatsapp_template_id" in ar["payload_json"]
+
+
+def test_schooldrive_connector_supports_subscription_urls() -> None:
+    url = SchoolDriveConnector().get_lead_url("subscription:131885")
+
+    assert url == (
+        "https://schooldrive.essr.ch/sd/customers/customers"
+        "(p1:sd/customers/customers/subscription/view/131885)"
+    )
 
 
 def test_schooldrive_duplicate_event_is_idempotent() -> None:

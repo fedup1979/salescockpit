@@ -10,9 +10,12 @@ class SchoolDriveConnector:
         if ":" in schooldrive_lead_id:
             kind, raw_id = schooldrive_lead_id.split(":", 1)
             if kind == "lead":
-                return f"https://schooldrive.essr.ch/crm/leads/{raw_id}"
-            if kind == "presub":
-                return f"https://schooldrive.essr.ch/subscriptions/{raw_id}"
+                return f"https://schooldrive.essr.ch/sd/customers/leads(p1:sd/customers/leads/view/{raw_id})"
+            if kind in {"presub", "subscription"}:
+                return (
+                    "https://schooldrive.essr.ch/sd/customers/customers"
+                    f"(p1:sd/customers/customers/subscription/view/{raw_id})"
+                )
         return f"https://schooldrive.essr.ch/leads/{schooldrive_lead_id}"
 
     def get_lead(self, schooldrive_lead_id: str) -> dict:

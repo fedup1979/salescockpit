@@ -73,6 +73,10 @@ class SchoolDriveAutoresponder(BaseModel):
     message_id: str
     autoresponder_id: int | None = None
     template: str | None = None
+    short_name: str | None = None
+    whatsapp_template_id: str | None = None
+    whatsapp_template_variables_mapping: dict[str, Any] | None = None
+    whatsapp_send_body: str | None = None
     status: str
     sent_at: str | None = None
 

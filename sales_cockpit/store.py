@@ -604,7 +604,15 @@ def _replace_schooldrive_autoresponders(
         if not message_id:
             continue
         status = str(item.get("status") or "").strip() or "unknown"
-        template = str(item.get("template") or "").strip() or "template inconnu"
+        template = (
+            str(
+                item.get("template")
+                or item.get("short_name")
+                or item.get("whatsapp_template_id")
+                or ""
+            ).strip()
+            or "template inconnu"
+        )
         sent_at = _normalize_optional_iso(item.get("sent_at"))
         item_json = json.dumps(item, ensure_ascii=False, sort_keys=True)
         conn.execute(
@@ -628,7 +636,11 @@ def _replace_schooldrive_autoresponders(
             ),
         )
         message_time = sent_at or aggregated_updated_at or occurred_at
-        body = _schooldrive_autoresponder_message_body(template, status)
+        body = _schooldrive_autoresponder_message_body(
+            template,
+            status,
+            item.get("whatsapp_send_body"),
+        )
         conn.execute(
             """
             INSERT INTO messages (
@@ -657,8 +669,15 @@ def _replace_schooldrive_autoresponders(
     )
 
 
-def _schooldrive_autoresponder_message_body(template: str, status: str) -> str:
+def _schooldrive_autoresponder_message_body(
+    template: str,
+    status: str,
+    whatsapp_send_body: Any = None,
+) -> str:
     if status == "sent":
+        body = str(whatsapp_send_body or "").strip()
+        if body:
+            return body
         return f"WhatsApp automatique SchoolDrive envoyé : {template}"
     if status in {"queued", "sending", "moderation_pending"}:
         return f"WhatsApp automatique SchoolDrive en attente : {template} ({status})"

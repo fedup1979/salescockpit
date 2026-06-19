@@ -27,6 +27,7 @@ from sales_cockpit.business_rules import (
     TEMPLATE_REQUEST_STATUSES,
     WORKFLOW_TRANSITIONS,
 )
+from sales_cockpit.config import get_settings
 from sales_cockpit.db import seed_initial_data
 from sales_cockpit.services.whatsapp_rules import parse_dt, utc_now
 from sales_cockpit.services.schooldrive import SchoolDriveConnector
@@ -1529,6 +1530,7 @@ def render_user_guide() -> None:
 def render_templates(user: dict) -> None:
     st.title("Modèles WhatsApp")
     is_admin = user.get("role") == "admin"
+    twilio_mode = (get_settings().twilio_mode or "mock").lower()
     request_flash = st.session_state.pop("template_page_flash", None)
     if request_flash:
         st.success(request_flash)
@@ -1612,10 +1614,30 @@ def render_templates(user: dict) -> None:
         st.info("Aucune demande de modèle à traiter.")
 
     st.divider()
-    search = st.text_input("Recherche dynamique", placeholder="Ex. financement, rendez-vous, COVID")
-    templates = list_templates(search)
+    filter_col, search_col = st.columns([0.30, 0.70], vertical_alignment="end")
+    with filter_col:
+        source_filter = st.selectbox(
+            "Source",
+            ["twilio", "demo", "all"],
+            index=0 if twilio_mode != "mock" else 2,
+            format_func={
+                "twilio": "Twilio DEV",
+                "demo": "Démo locale",
+                "all": "Tout afficher",
+            }.get,
+        )
+    with search_col:
+        search = st.text_input("Recherche dynamique", placeholder="Ex. financement, rendez-vous, COVID")
+    all_templates = list_templates(search)
+    templates = [
+        template for template in all_templates
+        if template_matches_source_filter(template, source_filter)
+    ]
     st.subheader("Bibliothèque")
-    st.caption(f"{len(templates)} modèle(s) affiché(s). La recherche porte sur le nom, le contenu et la catégorie.")
+    st.caption(
+        f"{len(templates)} modèle(s) affiché(s). "
+        "La recherche porte sur le nom, le contenu et la catégorie."
+    )
     for template in templates:
         with st.container(border=True):
             cols = st.columns([0.58, 0.22, 0.20], vertical_alignment="center")
@@ -1623,9 +1645,12 @@ def render_templates(user: dict) -> None:
                 st.write(f"**{template['name']}**")
                 sid = template.get("twilio_content_sid") or "Aucun ContentSid"
                 content_type = labelize(template.get("twilio_content_type") or "twilio/text")
-                st.caption(f"{sid} · {content_type}")
+                st.caption(f"{template_source_label(template)} · {sid} · {content_type}")
             with cols[1]:
-                st.caption(f"{labelize(template['status'])} · {template['language']} · {labelize(template['category'])}")
+                st.caption(
+                    f"{template_status_label(template)} · "
+                    f"{template['language']} · {labelize(template['category'])}"
+                )
             with cols[2]:
                 if template.get("last_twilio_sync_at"):
                     st.caption(f"Sync {format_dt(template['last_twilio_sync_at'])}")
@@ -1674,6 +1699,38 @@ def render_templates(user: dict) -> None:
         show_result(ok, message)
         if ok:
             st.rerun()
+
+
+def template_matches_source_filter(template: dict, source_filter: str) -> bool:
+    if source_filter == "twilio":
+        return is_real_twilio_template(template)
+    if source_filter == "demo":
+        return is_demo_template(template)
+    return True
+
+
+def is_real_twilio_template(template: dict) -> bool:
+    sid = str(template.get("twilio_content_sid") or "")
+    return sid.startswith("HX") and not sid.startswith("HX_MOCK_")
+
+
+def is_demo_template(template: dict) -> bool:
+    sid = str(template.get("twilio_content_sid") or "")
+    return sid.startswith("HX_MOCK_") or not sid
+
+
+def template_source_label(template: dict) -> str:
+    if is_real_twilio_template(template):
+        return "Twilio DEV"
+    if is_demo_template(template):
+        return "Démo locale"
+    return "Local"
+
+
+def template_status_label(template: dict) -> str:
+    if is_real_twilio_template(template) and template.get("status") == "draft":
+        return "Non soumis"
+    return labelize(template.get("status"))
 
 
 def page_access_matrix() -> list[dict]:
