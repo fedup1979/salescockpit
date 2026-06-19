@@ -130,3 +130,26 @@ def test_front_client_retries_rate_limit_milliseconds_message(monkeypatch) -> No
 
     assert client.list_conversations(limit=1) == []
     assert sleeps == [0.25]
+
+
+def test_front_client_caps_retry_delay(monkeypatch) -> None:
+    sleeps = []
+    session = FakeSession(
+        [
+            FakeResponse(
+                429,
+                {"_error": {"message": "Rate limit exceeded. Please retry in 60000 milliseconds."}},
+            ),
+            FakeResponse(200, {"_results": [], "_pagination": {"next": None}}),
+        ]
+    )
+    monkeypatch.setattr("sales_cockpit.services.front_client.time.sleep", sleeps.append)
+    client = FrontClient(
+        api_token="test",
+        session=session,
+        max_retries=1,
+        max_retry_delay_seconds=2.0,
+    )
+
+    assert client.list_conversations(limit=1) == []
+    assert sleeps == [2.0]

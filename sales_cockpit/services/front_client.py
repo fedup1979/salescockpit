@@ -25,6 +25,7 @@ class FrontClient:
     session: Any | None = None
     max_retries: int = 3
     retry_base_delay_seconds: float = 1.0
+    max_retry_delay_seconds: float = 15.0
 
     @classmethod
     def from_settings(cls) -> "FrontClient":
@@ -125,17 +126,20 @@ class FrontClient:
         retry_after = headers.get("Retry-After") or headers.get("retry-after")
         if retry_after:
             try:
-                return max(float(retry_after), 0.1)
+                return self._bounded_retry_delay(max(float(retry_after), 0.1))
             except ValueError:
                 pass
         detail = self._error_detail(response)
         milliseconds_match = re.search(r"retry in (\d+) milliseconds", detail, re.IGNORECASE)
         if milliseconds_match:
-            return max(int(milliseconds_match.group(1)) / 1000, 0.1)
+            return self._bounded_retry_delay(max(int(milliseconds_match.group(1)) / 1000, 0.1))
         seconds_match = re.search(r"retry in (\d+) seconds", detail, re.IGNORECASE)
         if seconds_match:
-            return max(float(seconds_match.group(1)), 0.1)
-        return self.retry_base_delay_seconds * (2**attempt)
+            return self._bounded_retry_delay(max(float(seconds_match.group(1)), 0.1))
+        return self._bounded_retry_delay(self.retry_base_delay_seconds * (2**attempt))
+
+    def _bounded_retry_delay(self, delay_seconds: float) -> float:
+        return min(delay_seconds, self.max_retry_delay_seconds)
 
     def _error_detail(self, response: Any) -> str:
         detail = getattr(response, "text", "")

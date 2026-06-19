@@ -10,6 +10,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from sales_cockpit.config import get_settings
 from sales_cockpit.services.front_client import FrontApiError, FrontClient
 
 
@@ -28,9 +29,23 @@ def main() -> None:
         default=5,
         help="Maximum messages per conversation when --include-messages is set.",
     )
+    parser.add_argument("--max-retries", type=int, default=1, help="Maximum Front 429 retries.")
+    parser.add_argument(
+        "--max-retry-delay",
+        type=float,
+        default=15.0,
+        help="Maximum seconds to wait for one Front retry.",
+    )
     args = parser.parse_args()
 
-    client = FrontClient.from_settings()
+    settings = get_settings()
+    if not settings.front_api_token:
+        raise FrontApiError("Configure SALES_COCKPIT_FRONT_API_TOKEN.")
+    client = FrontClient(
+        api_token=settings.front_api_token,
+        max_retries=args.max_retries,
+        max_retry_delay_seconds=args.max_retry_delay,
+    )
     if args.query.strip():
         conversations = client.search_conversations(args.query, limit=args.limit)
     else:

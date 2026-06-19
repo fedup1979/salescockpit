@@ -127,7 +127,7 @@ The app has been iteratively reviewed by François and is currently in a good st
 
 Latest known validation:
 
-- `pytest`: 69 tests passing.
+- `pytest`: 70 tests passing.
 - `compileall`: passed for `sales_cockpit`, `scripts`, and `tests`.
 - SchoolDrive staging API probe passed with a synthetic create + archive payload.
 - Twilio staging template sync passed and imported 5 DEV templates, all currently `draft`.
