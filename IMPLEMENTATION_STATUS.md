@@ -96,18 +96,19 @@ V1 staging build is runnable. Twilio sandbox messaging is connected for staging.
 - Documented Front historical import plan in `docs/FRONT_IMPORT.md`.
 - Added SQLite backup and guarded restore scripts for deployed environments.
 - Documented backup/restore procedure in `docs/BACKUP_RESTORE.md`.
+- Staging backup and restore have been tested successfully on DigitalOcean.
 - Documented Twilio WhatsApp sender migration strategy in `docs/TWILIO_SENDER_MIGRATION.md`.
 
 ## Next Checkpoints
 
-1. Run the focused scenario validation in `docs/TEST_PLAN.md` after `scripts/reset_demo.py`.
-2. Fix any scenario failures before adding new features.
-3. Only after scenario validation, do a moderate refactor of the large files into UI pages/components, workflow services, seed/reset, and repositories.
-4. Validate a real SchoolDrive staging POST and backfill replay.
-5. Test Twilio template synchronization and template creation from staging.
-6. Run a small Front dry-run/pilot after Front rate limits allow it.
-7. Add Notion historical enrichment.
-8. Test restore once before PROD.
+1. Validate Tiago's real SchoolDrive staging payloads as soon as they are posted.
+2. Verify real-payload behavior in staging: upsert, stale-event ignore, duplicate-event ignore, WhatsApp body rendering, Tanjona +72h follow-up creation, queued-message no-follow-up, and archive resolution.
+3. Run a focused UI scenario validation with François or Laura once real SchoolDrive records are visible.
+4. Fix any scenario failures before adding new features.
+5. Only after scenario validation, do a moderate refactor of the large files into UI pages/components, workflow services, seed/reset, and repositories.
+6. Test Twilio template synchronization and template creation from staging; full approval validation waits for the ESSR sender/WABA path.
+7. Run a small Front dry-run/pilot after Front rate limits allow it. Keep Front read-only.
+8. Add Notion historical enrichment.
 
 ## Integration Policy
 
