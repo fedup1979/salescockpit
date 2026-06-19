@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sales_cockpit.db import connect, init_db
 from sales_cockpit.services.front_import import (
+    classify_front_migration,
     extract_front_phone,
     list_front_import_records,
     preview_front_conversation,
@@ -25,6 +26,37 @@ def test_preview_front_conversation_matches_existing_lead_by_phone() -> None:
     assert preview["lead_id"] == lead_id
     assert preview["conversation_id"] == conversation_id
     assert preview["phone_e164"] == "+41767270073"
+    assert preview["migration_status"] == "manual_review"
+
+
+def test_classify_front_active_inbound_recommends_reply() -> None:
+    classification = classify_front_migration(
+        {"status": "assigned"},
+        [_front_message("msg_1", is_inbound=True)],
+    )
+
+    assert classification["migration_status"] == "active"
+    assert classification["migration_action_type"] == "reply"
+
+
+def test_classify_front_active_outbound_recommends_follow_up() -> None:
+    classification = classify_front_migration(
+        {"status": "assigned"},
+        [_front_message("msg_1", is_inbound=False)],
+    )
+
+    assert classification["migration_status"] == "active"
+    assert classification["migration_action_type"] == "follow_up"
+
+
+def test_classify_front_archived_has_no_next_action() -> None:
+    classification = classify_front_migration(
+        {"status": "archived"},
+        [_front_message("msg_1", is_inbound=True)],
+    )
+
+    assert classification["migration_status"] == "resolved"
+    assert classification["migration_action_type"] is None
 
 
 def test_upsert_front_history_is_idempotent_without_attaching_messages() -> None:
@@ -91,6 +123,8 @@ def test_list_front_import_records_shows_matching_status() -> None:
     assert len(records) == 1
     assert records[0]["front_conversation_id"] == "cnv_1"
     assert records[0]["match_status"] == "matched"
+    assert records[0]["migration_status"] == "active"
+    assert records[0]["migration_action_type"] == "follow_up"
     assert records[0]["front_message_count"] == 1
 
 

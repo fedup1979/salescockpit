@@ -59,3 +59,33 @@ sequence_step_index = 1
 If no sent autoresponder exists yet, the cockpit waits for the next SchoolDrive snapshot instead of inventing a date.
 
 If `is_archived` is true, the cockpit resolves the conversation, closes open actions, and adds an internal note.
+
+## Replay Tool
+
+Use `scripts/schooldrive_replay_payloads.py` to replay Tiago's JSON payloads against local, staging, or production.
+
+Preview files without posting:
+
+```bash
+python scripts/schooldrive_replay_payloads.py payloads/schooldrive --dry-run --expected-environment staging
+```
+
+Replay against staging:
+
+```bash
+python scripts/schooldrive_replay_payloads.py payloads/schooldrive \
+  --url http://139.59.158.77:8602/webhooks/schooldrive/lead-or-presubscription \
+  --expected-environment staging \
+  --stop-on-error
+```
+
+The script reads either individual `.json` files or a directory of `.json` files. A file may contain one JSON object or a JSON array of payload objects.
+
+The summary reports:
+
+- total payload count;
+- successful vs failed POSTs;
+- response status counts such as `created`, `updated`, `duplicate`, or `ignored`;
+- per-payload `event_id`, `schooldrive_id`, `aggregated_updated_at`, HTTP status, and webhook response.
+
+Do not replay production payloads into staging unless `environment` is explicitly set to `staging` or the `--expected-environment` guard is deliberately removed for a controlled test.

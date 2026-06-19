@@ -16,6 +16,26 @@ Imported Front messages should be treated as history, not as operational actions
 6. Attach imported messages to the Sales Cockpit thread only after validation, with channel `front_history`.
 7. Preserve original Front IDs for idempotency before running any large import.
 
+## Migration Classification
+
+The Front buffer stores a migration recommendation for every Front conversation:
+
+| Front status / signal | Buffer `migration_status` | Recommended action |
+|---|---:|---|
+| `assigned`, `unassigned`, `open`, `waiting`, `pending` + latest inbound customer message | `active` | `reply` |
+| `assigned`, `unassigned`, `open`, `waiting`, `pending` + latest outbound team message | `active` | `follow_up` |
+| `archived`, `resolved`, `closed`, `deleted`, `spam` | `resolved` | none |
+| unknown status or no exploitable message | `manual_review` | none |
+
+This classification is intentionally conservative. It does not create Sales Cockpit actions by itself. At cutover, the operator must review the Front buffer first, then decide whether to convert active Front conversations into Sales Cockpit actions.
+
+The target cutover behavior is:
+
+- `active` + `reply`: Sales Cockpit conversation active, next action `Répondre au message`, usually assigned to Mihary.
+- `active` + `follow_up`: Sales Cockpit conversation active, next action `Envoyer relance` or manual review, usually assigned to Tanjona.
+- `resolved`: Sales Cockpit history visible, conversation terminated, no next action.
+- `manual_review`: no automatic migration; admin review required.
+
 ## API Surfaces
 
 The current read-only client in `sales_cockpit/services/front_client.py` supports:
@@ -63,6 +83,7 @@ Implemented:
 - Front import pilot foundation:
   - phone extraction from Front WhatsApp subjects/handles;
   - exact phone matching against Sales Cockpit leads/conversations;
+  - conservative migration classification into `active`, `resolved`, or `manual_review`;
   - idempotent buffer storage in `front_conversations` and `front_messages`;
   - optional explicit attachment to the Sales Cockpit thread as `front_history`;
   - Admin > Intégrations shows the buffered Front records.
@@ -72,6 +93,7 @@ Not implemented yet:
 
 - UI filter to show/hide attached Front history inside a conversation.
 - Phone/email/manual matching review workflow for ambiguous or unmatched Front conversations.
+- Automatic conversion from active Front buffer rows into Sales Cockpit next actions at cutover.
 - Full import command for all history.
 
 ## Dry-Run Command

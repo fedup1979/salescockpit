@@ -84,8 +84,11 @@ The app has been iteratively reviewed by François and is currently in a good st
   - `front_conversations` and `front_messages` buffer tables;
   - phone extraction and exact phone matching;
   - `scripts/front_import_pilot.py`;
+  - migration classification into `active`, `resolved`, or `manual_review`;
   - optional `--attach-history` to copy matched messages into the thread as `front_history`, disabled by default;
   - Admin > Intégrations displays buffered Front records.
+- SchoolDrive payload replay tool exists: `scripts/schooldrive_replay_payloads.py`.
+- Production cutover runbook exists: `docs/CUTOVER_RUNBOOK.md`.
 - Lead-relative reminders follow `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
 - Course-date reminders win over lead-relative reminders. The losing lead-relative reminder is cancelled.
 - Minimum outbound WhatsApp follow-up delay is 24h.
@@ -134,7 +137,7 @@ The app has been iteratively reviewed by François and is currently in a good st
 
 Latest known validation:
 
-- `pytest`: 76 tests passing.
+- `pytest`: 84 tests passing.
 - `compileall`: passed for `sales_cockpit`, `scripts`, and `tests`.
 - SchoolDrive staging API probe passed with a synthetic create + archive payload.
 - Twilio staging template sync passed and imported 5 DEV templates, all currently `draft`.
@@ -177,6 +180,7 @@ Stop-Process -Id <PID> -Force
 - Twilio is mock by default locally. Staging is configured in sandbox mode and real inbound/outbound WhatsApp has been tested.
 - Twilio Content API synchronization exists. Real template approval and closed-window template sending still need an end-to-end staging validation with an approved Twilio template.
 - Front import is partially connected in safe pilot mode. Read-only client, dry-run, buffer persistence, exact phone matching, and Admin visibility exist. Full historical import, ambiguous matching review, and conversation-level history filtering are still pending.
+- Front migration classification exists, but automatic conversion from active Front buffer rows into Sales Cockpit actions is not implemented yet.
 - Attachments UI exists but persistence/send is not implemented.
 - Auth is local password-based only.
 - GitHub remote exists: `https://github.com/fedup1979/salescockpit`.
@@ -189,13 +193,14 @@ Stop-Process -Id <PID> -Force
 ## Recommended Next Work
 
 1. Wait for Tiago to POST the real SchoolDrive staging payload scenarios, then validate accepted/ignored/duplicate events, sent vs queued WhatsApp messages, Tanjona +72h creation, and archive resolution in staging.
-2. If Tiago is still pending, run a tiny Front pilot in staging: preview first, then optionally `--write` to the buffer tables. Keep Front read-only and low-volume.
-3. Review Front buffered records in Admin > Intégrations and decide whether/when to attach matched history into conversation threads.
-4. Validate Twilio template synchronization and status display on staging. Template approval cannot be fully validated until the ESSR WhatsApp sender/WABA path is settled.
-5. Run the focused manual scenario validation in `docs/TEST_PLAN.md` with Laura or François after real SchoolDrive data is visible.
-6. Fix any UX or workflow failures discovered by the scenario pass.
-7. After scenario behavior is validated, do a moderate refactor of the largest files without changing behavior.
-8. Implement Notion historical enrichment.
+2. If Tiago sends JSON files instead of POSTing directly, use `scripts/schooldrive_replay_payloads.py` with `--expected-environment staging`.
+3. If Tiago is still pending, run a tiny Front pilot in staging: preview first, then optionally `--write` to the buffer tables. Keep Front read-only and low-volume.
+4. Review Front buffered records in Admin > Intégrations and decide whether/when to attach matched history into conversation threads.
+5. Validate Twilio template synchronization and status display on staging. Template approval cannot be fully validated until the ESSR WhatsApp sender/WABA path is settled.
+6. Run the focused manual scenario validation in `docs/TEST_PLAN.md` with Laura or François after real SchoolDrive data is visible.
+7. Fix any UX or workflow failures discovered by the scenario pass.
+8. After scenario behavior is validated, do a moderate refactor of the largest files without changing behavior.
+9. Implement Notion historical enrichment.
 
 ## Files Most Likely to Change Next
 
@@ -212,4 +217,7 @@ Stop-Process -Id <PID> -Force
 - `docs/TWILIO_SENDER_MIGRATION.md`
 - `docs/FRONT_IMPORT.md`
 - `docs/BACKUP_RESTORE.md`
+- `docs/CUTOVER_RUNBOOK.md`
+- `scripts/schooldrive_replay_payloads.py`
+- `scripts/front_import_pilot.py`
 - `tests/test_store.py`

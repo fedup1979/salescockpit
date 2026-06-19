@@ -10,6 +10,8 @@ from sales_cockpit.services.whatsapp_rules import iso_utc
 
 
 PHONE_PATTERN = re.compile(r"(?:whatsapp:)?(\+?\d[\d\s().-]{6,}\d)", re.IGNORECASE)
+FRONT_ACTIVE_STATUSES = {"assigned", "unassigned", "open", "waiting", "pending"}
+FRONT_RESOLVED_STATUSES = {"archived", "resolved", "closed", "deleted", "spam"}
 
 
 def normalize_phone_e164(raw_phone: Any, default_country: str = "CH") -> str | None:
@@ -137,11 +139,53 @@ def match_front_conversation(
     }
 
 
+def classify_front_migration(
+    conversation: dict[str, Any],
+    messages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    status = str(conversation.get("status") or "").strip().lower()
+    latest_message = _latest_front_message(messages or [])
+    latest_direction = None
+    if latest_message:
+        latest_direction = "inbound" if latest_message.get("is_inbound") else "outbound"
+
+    if status in FRONT_RESOLVED_STATUSES:
+        return {
+            "migration_status": "resolved",
+            "migration_action_type": None,
+            "migration_reason": f"Front indique '{status}'. Importer comme historique fermé, sans prochaine action.",
+        }
+    if status in FRONT_ACTIVE_STATUSES:
+        if latest_direction == "inbound":
+            return {
+                "migration_status": "active",
+                "migration_action_type": "reply",
+                "migration_reason": "Conversation Front active avec dernier message client entrant : répondre dans Sales Cockpit.",
+            }
+        if latest_direction == "outbound":
+            return {
+                "migration_status": "active",
+                "migration_action_type": "follow_up",
+                "migration_reason": "Conversation Front active avec dernier message équipe sortant : prévoir une relance ou revue.",
+            }
+        return {
+            "migration_status": "manual_review",
+            "migration_action_type": None,
+            "migration_reason": "Conversation Front active mais aucun message exploitable : revue manuelle nécessaire.",
+        }
+    return {
+        "migration_status": "manual_review",
+        "migration_action_type": None,
+        "migration_reason": f"Statut Front inconnu ou non mappé : '{status or 'vide'}'. Revue manuelle nécessaire.",
+    }
+
+
 def preview_front_conversation(
     conversation: dict[str, Any],
     messages: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     match = match_front_conversation(conversation, messages)
+    migration = classify_front_migration(conversation, messages)
     return {
         "front_conversation_id": _front_id(conversation),
         "subject": conversation.get("subject") or "",
@@ -154,6 +198,7 @@ def preview_front_conversation(
         "lead_id": match.get("lead_id"),
         "conversation_id": match.get("conversation_id"),
         "message_count": len(messages or []),
+        **migration,
     }
 
 
@@ -167,6 +212,7 @@ def upsert_front_history(
         raise ValueError("Front conversation id is required.")
     messages = messages or []
     match = match_front_conversation(conversation, messages)
+    migration = classify_front_migration(conversation, messages)
     now = iso_utc()
     payload_json = json.dumps(conversation, ensure_ascii=False, sort_keys=True)
     links = conversation.get("_links") if isinstance(conversation.get("_links"), dict) else {}
@@ -187,6 +233,9 @@ def upsert_front_history(
             conversation.get("subject") or "",
             conversation.get("status") or "",
             _name_or_id(conversation.get("assignee")),
+            migration["migration_status"],
+            migration["migration_action_type"],
+            migration["migration_reason"],
             links.get("self") if isinstance(links, dict) else None,
             payload_json,
             now,
@@ -199,8 +248,9 @@ def upsert_front_history(
                 UPDATE front_conversations
                 SET lead_id = ?, conversation_id = ?, match_status = ?,
                     match_confidence = ?, match_reason = ?, phone_e164 = ?,
-                    subject = ?, front_status = ?, assignee_name = ?, api_link = ?,
-                    payload_json = ?, last_seen_at = ?, updated_at = ?
+                    subject = ?, front_status = ?, assignee_name = ?,
+                    migration_status = ?, migration_action_type = ?, migration_reason = ?,
+                    api_link = ?, payload_json = ?, last_seen_at = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (*values, front_conversation_row_id),
@@ -212,8 +262,9 @@ def upsert_front_history(
                 INSERT INTO front_conversations (
                     front_conversation_id, lead_id, conversation_id, match_status,
                     match_confidence, match_reason, phone_e164, subject, front_status,
-                    assignee_name, api_link, payload_json, last_seen_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    assignee_name, migration_status, migration_action_type, migration_reason,
+                    api_link, payload_json, last_seen_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (front_conversation_id, *values),
             )
@@ -256,6 +307,7 @@ def upsert_front_history(
         "messages_created": inserted_messages,
         "messages_attached": attached_messages,
         **match,
+        **migration,
     }
 
 
@@ -376,6 +428,12 @@ def _front_id(payload: dict[str, Any]) -> str:
 
 def _message_body(message: dict[str, Any]) -> str:
     return " ".join(str(message.get("text") or message.get("body") or "").split())
+
+
+def _latest_front_message(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not messages:
+        return None
+    return max(messages, key=lambda message: float(message.get("created_at") or 0))
 
 
 def _front_timestamp_to_iso(value: Any) -> str | None:

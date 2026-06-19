@@ -347,6 +347,9 @@ CREATE TABLE IF NOT EXISTS front_conversations (
     subject TEXT,
     front_status TEXT,
     assignee_name TEXT,
+    migration_status TEXT NOT NULL DEFAULT 'manual_review',
+    migration_action_type TEXT,
+    migration_reason TEXT,
     api_link TEXT,
     payload_json TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
@@ -472,6 +475,15 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
             ("cancelled_reason", "TEXT"),
             ("blocked_reason", "TEXT"),
             ("metadata_json", "TEXT"),
+        ],
+    )
+    add_missing_columns(
+        conn,
+        "front_conversations",
+        [
+            ("migration_status", "TEXT NOT NULL DEFAULT 'manual_review'"),
+            ("migration_action_type", "TEXT"),
+            ("migration_reason", "TEXT"),
         ],
     )
 
