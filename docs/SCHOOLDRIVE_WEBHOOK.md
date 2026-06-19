@@ -62,6 +62,31 @@ channel = schooldrive_autoresponder
 
 This makes the SchoolDrive WhatsApp history visible in the conversation thread without merging it with Cockpit-sent messages.
 
+## Current AR-Sent Validation Blocker
+
+As of 2026-06-19 20:54 Europe/Zurich, the Sales Cockpit webhook contract is working, but the real SchoolDrive AR-sent producer path is not validated.
+
+Observed case:
+
+```text
+lead:124126
+AR: armsg:1005384
+Cockpit received status: queued
+SchoolDrive MCP status: sent
+Cockpit newer event after queued snapshot: none
+```
+
+This means Sales Cockpit is not currently receiving a fresh snapshot when that AR status changes to `sent`. The required SchoolDrive behavior is:
+
+```text
+WhatsApp AR status changes to sent
+-> SchoolDrive emits/projects a new lead/presubscription snapshot
+-> payload includes status=sent and sent_at
+-> Cockpit creates the Tanjona follow-up at sent_at + 72h
+```
+
+Do not treat the SchoolDrive integration as production-ready until this real path is validated.
+
 ## Action Rule
 
 If the accepted snapshot contains a sent autoresponder with `sent_at`, and no active action exists, the cockpit creates:

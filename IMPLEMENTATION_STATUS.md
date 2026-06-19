@@ -4,6 +4,8 @@
 
 V1 staging build is runnable. Staging is connected to a real Twilio DEV WhatsApp sender in `live` mode with a recipient allowlist.
 
+The current hard blocker for production cutover is SchoolDrive-side: the projector must emit a new webhook snapshot when a WhatsApp autoresponder changes to `sent`. Sales Cockpit has validated queued/sent ingestion behavior, but the real AR status-change trigger is not yet validated.
+
 ## Completed
 
 - Product context.
@@ -125,12 +127,13 @@ V1 staging build is runnable. Staging is connected to a real Twilio DEV WhatsApp
 - Documented Twilio WhatsApp sender migration strategy in `docs/TWILIO_SENDER_MIGRATION.md`.
 - Inbound WhatsApp identity guardrail added: exact phone match attaches automatically; zero or multiple matches create a temporary `À identifier` lead with manual name/course fields.
 - V2 identity-resolution debt is documented in `docs/TECHNICAL_DEBT.md`.
+- Live SchoolDrive projector validation reached a hard blocker: `lead:124126` arrived with `armsg:1005384` as `queued`, but Claude MCP verified the same AR is `sent` in SchoolDrive and no newer webhook reached Cockpit.
 
 ## Next Checkpoints
 
-1. Use the real SchoolDrive MCP replay as the current staging baseline and keep the `KEEP_CURRENT_UTC` timestamp convention.
-2. Validate Tiago's live SchoolDrive producer as soon as it posts directly to staging.
-3. If Tiago is pending, run the synthetic SchoolDrive smoke test on staging after each relevant deployment.
+1. Get the SchoolDrive AR-sent trigger/projector fixed or deployed, then validate a real AR status-change event into staging.
+2. Use the real SchoolDrive MCP replay as the current staging baseline and keep the `KEEP_CURRENT_UTC` timestamp convention.
+3. If SchoolDrive is pending, run the synthetic SchoolDrive smoke test on staging after each relevant deployment, but do not treat smoke tests as proof that the real AR-sent trigger works.
 4. Verify live-payload behavior in staging: upsert, stale-event ignore, duplicate-event ignore, WhatsApp body rendering, Tanjona +72h follow-up creation, queued-message no-follow-up, and archive resolution.
 5. Run a focused UI scenario validation with François or Laura once real SchoolDrive records are visible.
 6. Fix any scenario failures before adding new features.

@@ -2,6 +2,8 @@
 
 ## Current State
 
+Read `docs/CURRENT_STATE.md` first. It contains the current production-readiness state, the exact SchoolDrive AR-sent blocker, and the next operational decisions.
+
 Sales Cockpit is a runnable staging prototype.
 
 Local URLs:
@@ -23,6 +25,25 @@ DigitalOcean staging:
 PROD is prepared cold on `8501` / `8601` with its own database and `SALES_COCKPIT_TWILIO_MODE=mock`. It is not connected to production SchoolDrive, production Front import, or real ESSR WhatsApp traffic.
 
 The app has been iteratively reviewed by François and is currently in a good staging prototype state.
+
+## Current Hard Blocker
+
+Sales Cockpit is ready for the SchoolDrive payloads it receives, but the real automatic AR-sent path is not yet validated.
+
+Latest diagnostic:
+
+- `lead:124126` / Lydia Djouhri was received in Cockpit staging with `armsg:1005384` as `queued`.
+- Claude Code checked SchoolDrive through MCP and found `armsg:1005384` is actually `sent` in SchoolDrive, with `status_updated_at = 2026-05-29 05:55:03 UTC`.
+- Cockpit has no newer webhook event for `lead:124126`.
+- Cockpit correctly did not create a Tanjona follow-up from the stale `queued` snapshot.
+
+Conclusion:
+
+```text
+SchoolDrive/projector still needs to emit a new snapshot when a WhatsApp AR changes to sent.
+```
+
+Do not claim production readiness until a real AR-sent event reaches Cockpit and creates the expected Tanjona +72h follow-up.
 
 ## Important Recent Decisions
 

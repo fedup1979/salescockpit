@@ -100,10 +100,13 @@ Planned UI ports:
 
 ## New Codex Sessions
 
+Start with `docs/CURRENT_STATE.md` for the latest operational truth, then read the supporting docs below.
+
 Before continuing work, read:
 
 - `AGENTS.md`
 - `IMPLEMENTATION_STATUS.md`
+- `docs/CURRENT_STATE.md`
 - `docs/NEXT_SESSION.md`
 - `docs/BUILD_SPEC.md`
 - `docs/ACTION_WORKFLOW.md`

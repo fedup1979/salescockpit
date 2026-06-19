@@ -23,6 +23,7 @@ Production should use HTTPS before final cutover.
 
 - SchoolDrive production webhook URL and token are configured.
 - SchoolDrive can backfill all active leads and presubscriptions.
+- SchoolDrive emits a fresh webhook when a WhatsApp autoresponder status changes to `sent`; this must be validated with a real AR status-change event, not only with synthetic replay.
 - Twilio WhatsApp sender for the production business is verified and approved.
 - Twilio inbound webhook and status callback have been tested on staging.
 - Front API read-only token is valid.
@@ -54,6 +55,7 @@ python scripts/schooldrive_replay_payloads.py payloads/schooldrive \
    - SchoolDrive links open correctly;
    - sent autoresponders appear in the thread;
    - queued autoresponders do not create follow-ups;
+   - a real AR changing to `sent` produces a new webhook and creates the Tanjona +72h follow-up;
    - archived SchoolDrive records are terminated;
    - Tanjona +72h follow-ups exist only when expected.
 
@@ -181,6 +183,7 @@ sudo CONFIRM_RESTORE=1 bash /opt/sales-cockpit/prod/app/deploy/scripts/restore_s
 
 - HTTPS domain for production.
 - Production environment variables and secrets.
+- Real SchoolDrive AR-sent event trigger validation.
 - Final Twilio production sender verification.
 - Front full-history import batch sizing.
 - UI filter for `front_history`.

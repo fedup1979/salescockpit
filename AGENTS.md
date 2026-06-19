@@ -12,13 +12,15 @@ At the start of any new Codex session in this repo, read these files before edit
 
 1. `README.md`
 2. `IMPLEMENTATION_STATUS.md`
-3. `docs/NEXT_SESSION.md`
-4. `docs/BUILD_SPEC.md`
-5. `docs/ACTION_WORKFLOW.md`
-6. `docs/BUSINESS_LOGIC.md`
-7. `docs/GAP_ANALYSIS.md`
-8. `PRODUCT.md`
-9. `DESIGN.md`
+3. `docs/CURRENT_STATE.md`
+4. `docs/NEXT_SESSION.md`
+5. `docs/BUILD_SPEC.md`
+6. `docs/ACTION_WORKFLOW.md`
+7. `docs/BUSINESS_LOGIC.md`
+8. `docs/GAP_ANALYSIS.md`
+9. `docs/TECHNICAL_DEBT.md`
+10. `PRODUCT.md`
+11. `DESIGN.md`
 
 The original longer PRD currently also exists at:
 
