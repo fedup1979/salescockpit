@@ -12,8 +12,9 @@ Imported Front messages should be treated as history, not as operational actions
 2. Use Front's Core API to search or list conversations.
 3. For each Front conversation, fetch its messages in chronological order.
 4. Match the conversation to a Sales Cockpit lead using phone number first, then email, then manual review.
-5. Store imported messages with a dedicated historical channel, for example `front_history`.
-6. Preserve original Front IDs for idempotency before running any large import.
+5. Store Front conversations and messages first in the dedicated `front_conversations` and `front_messages` buffer tables.
+6. Attach imported messages to the Sales Cockpit thread only after validation, with channel `front_history`.
+7. Preserve original Front IDs for idempotency before running any large import.
 
 ## API Surfaces
 
@@ -58,12 +59,19 @@ Implemented:
 - `scripts/front_dry_run.py`, which reads a small sample and prints JSON without writing to SQLite.
 - Dry-run pagination now respects the requested `limit` before following Front's next-page cursor. This matters because Front rate limits aggressively.
 - Staging dry-run has successfully read 1 Front conversation and 1 WhatsApp message with `writes: 0`.
+- Front import pilot foundation:
+  - phone extraction from Front WhatsApp subjects/handles;
+  - exact phone matching against Sales Cockpit leads/conversations;
+  - idempotent buffer storage in `front_conversations` and `front_messages`;
+  - optional explicit attachment to the Sales Cockpit thread as `front_history`;
+  - Admin > Intégrations shows the buffered Front records.
+- `scripts/front_import_pilot.py`, which previews or stores a small controlled sample.
 
 Not implemented yet:
 
-- Database persistence for imported Front messages.
-- UI filter for imported history.
-- Full import command.
+- UI filter to show/hide attached Front history inside a conversation.
+- Phone/email/manual matching review workflow for ambiguous or unmatched Front conversations.
+- Full import command for all history.
 
 ## Dry-Run Command
 
@@ -86,3 +94,25 @@ python scripts/front_dry_run.py --query "recipient:+41790000000" --limit 1 --inc
 ```
 
 The dry-run has `writes: 0` by design. Do not add persistence until we have validated matching rules against real Front conversation shapes.
+
+## Pilot Import Command
+
+Preview matching without writing:
+
+```bash
+python scripts/front_import_pilot.py --limit 1 --include-messages --messages-limit 1
+```
+
+Store the pilot result in the Front buffer tables only:
+
+```bash
+python scripts/front_import_pilot.py --limit 1 --include-messages --messages-limit 1 --write
+```
+
+Attach matched messages to the Sales Cockpit thread as historical messages:
+
+```bash
+python scripts/front_import_pilot.py --limit 1 --include-messages --messages-limit 1 --write --attach-history
+```
+
+Do not use `--allow-large` until the small pilot has been reviewed in Admin > Intégrations.

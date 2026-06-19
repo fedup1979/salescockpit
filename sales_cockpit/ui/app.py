@@ -45,6 +45,7 @@ from sales_cockpit.store import (
     get_template,
     list_actions_for_lead,
     list_conversations,
+    list_front_import_records,
     list_messages,
     list_sequence_steps,
     list_sequences,
@@ -1884,9 +1885,15 @@ def render_admin(user: dict) -> None:
             - Twilio : mock local actif, synchronisation templates à brancher.
             - SchoolDrive : connecteur read-only à brancher pour leads, types de leads et dates de cours.
             - Notion : connecteur read-only en V1, écriture future possible pour qualifications.
-            - Front.io : aucun changement de webhook en V1 locale.
+            - Front.io : lecture seule pour récupérer l'historique WhatsApp.
             """
         )
+        st.subheader("Front.io historique")
+        front_records = list_front_import_records(100)
+        if front_records:
+            st.dataframe(front_records, hide_index=True, use_container_width=True, height=360)
+        else:
+            st.info("Aucune conversation Front importée dans la zone tampon.")
 
 
 def default_variable_value(conv: dict, key: str) -> str:

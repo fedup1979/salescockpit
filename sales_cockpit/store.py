@@ -24,6 +24,7 @@ from sales_cockpit.services.twilio_client import (
     TwilioMessageError,
     get_whatsapp_client,
 )
+from sales_cockpit.services.front_import import list_front_import_records
 from sales_cockpit.services.whatsapp_rules import calculate_window, iso_utc, parse_dt, utc_now
 
 

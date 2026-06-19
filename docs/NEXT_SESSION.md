@@ -80,6 +80,12 @@ The app has been iteratively reviewed by François and is currently in a good st
 - Delivery statuses are shown in conversation messages with WhatsApp-style checks: sent, delivered, read, failed, or queued/sending.
 - Front must remain read-only until an explicit import/cutover decision. The current Front work is a read-only API client, dry-run script, retry handling, and documentation for historical import.
 - Front dry-run pagination now respects the requested `limit` before following next-page cursors. This was fixed after a supposedly tiny `limit=1` dry-run kept running too long.
+- Front historical import now has a safe pilot foundation:
+  - `front_conversations` and `front_messages` buffer tables;
+  - phone extraction and exact phone matching;
+  - `scripts/front_import_pilot.py`;
+  - optional `--attach-history` to copy matched messages into the thread as `front_history`, disabled by default;
+  - Admin > Intégrations displays buffered Front records.
 - Lead-relative reminders follow `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
 - Course-date reminders win over lead-relative reminders. The losing lead-relative reminder is cancelled.
 - Minimum outbound WhatsApp follow-up delay is 24h.
@@ -169,7 +175,7 @@ Stop-Process -Id <PID> -Force
 - Notion connector is placeholder only.
 - Twilio is mock by default locally. Staging is configured in sandbox mode and real inbound/outbound WhatsApp has been tested.
 - Twilio Content API synchronization exists. Real template approval and closed-window template sending still need an end-to-end staging validation with an approved Twilio template.
-- Front import is not connected. The read-only client and dry-run command exist, but persistence and UI filtering still need to be built after we validate real Front conversation shapes.
+- Front import is partially connected in safe pilot mode. Read-only client, dry-run, buffer persistence, exact phone matching, and Admin visibility exist. Full historical import, ambiguous matching review, and conversation-level history filtering are still pending.
 - Attachments UI exists but persistence/send is not implemented.
 - Auth is local password-based only.
 - GitHub remote exists: `https://github.com/fedup1979/salescockpit`.
@@ -182,12 +188,13 @@ Stop-Process -Id <PID> -Force
 ## Recommended Next Work
 
 1. Wait for Tiago to POST the real SchoolDrive staging payload scenarios, then validate accepted/ignored/duplicate events, sent vs queued WhatsApp messages, Tanjona +72h creation, and archive resolution in staging.
-2. If Tiago is still pending, define the Front history import mapping: phone matching, message storage fields, idempotency, and UI visibility. Keep Front read-only and low-volume.
-3. Validate Twilio template synchronization and status display on staging. Template approval cannot be fully validated until the ESSR WhatsApp sender/WABA path is settled.
-4. Run the focused manual scenario validation in `docs/TEST_PLAN.md` with Laura or François after real SchoolDrive data is visible.
-5. Fix any UX or workflow failures discovered by the scenario pass.
-6. After scenario behavior is validated, do a moderate refactor of the largest files without changing behavior.
-7. Implement Notion historical enrichment.
+2. If Tiago is still pending, run a tiny Front pilot in staging: preview first, then optionally `--write` to the buffer tables. Keep Front read-only and low-volume.
+3. Review Front buffered records in Admin > Intégrations and decide whether/when to attach matched history into conversation threads.
+4. Validate Twilio template synchronization and status display on staging. Template approval cannot be fully validated until the ESSR WhatsApp sender/WABA path is settled.
+5. Run the focused manual scenario validation in `docs/TEST_PLAN.md` with Laura or François after real SchoolDrive data is visible.
+6. Fix any UX or workflow failures discovered by the scenario pass.
+7. After scenario behavior is validated, do a moderate refactor of the largest files without changing behavior.
+8. Implement Notion historical enrichment.
 
 ## Files Most Likely to Change Next
 

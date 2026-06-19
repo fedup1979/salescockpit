@@ -94,6 +94,7 @@ V1 staging build is runnable. Twilio sandbox messaging is connected for staging.
 - Added read-only Front API client foundation for future historical imports: conversation listing, search, and message listing.
 - Added Front read-only dry-run script with rate-limit retry: `scripts/front_dry_run.py`.
 - Documented Front historical import plan in `docs/FRONT_IMPORT.md`.
+- Added Front historical import pilot foundation: exact phone matching, buffer tables, idempotent message storage, optional `front_history` attachment, `scripts/front_import_pilot.py`, and Admin visibility.
 - Added SQLite backup and guarded restore scripts for deployed environments.
 - Documented backup/restore procedure in `docs/BACKUP_RESTORE.md`.
 - Staging backup and restore have been tested successfully on DigitalOcean.
@@ -107,8 +108,9 @@ V1 staging build is runnable. Twilio sandbox messaging is connected for staging.
 4. Fix any scenario failures before adding new features.
 5. Only after scenario validation, do a moderate refactor of the large files into UI pages/components, workflow services, seed/reset, and repositories.
 6. Test Twilio template synchronization and template creation from staging; full approval validation waits for the ESSR sender/WABA path.
-7. Run a small Front dry-run/pilot after Front rate limits allow it. Keep Front read-only.
-8. Add Notion historical enrichment.
+7. Run a small Front pilot on staging: preview, then optional `--write` to buffer tables only. Keep Front read-only and low-volume.
+8. Review whether attached Front history should appear by default or behind a conversation filter.
+9. Add Notion historical enrichment.
 
 ## Integration Policy
 

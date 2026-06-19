@@ -334,6 +334,55 @@ CREATE TABLE IF NOT EXISTS integration_sync_runs (
     error_message TEXT,
     metadata_json TEXT
 );
+
+CREATE TABLE IF NOT EXISTS front_conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    front_conversation_id TEXT NOT NULL UNIQUE,
+    lead_id INTEGER REFERENCES leads(id) ON DELETE SET NULL,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    match_status TEXT NOT NULL DEFAULT 'unmatched',
+    match_confidence REAL,
+    match_reason TEXT,
+    phone_e164 TEXT,
+    subject TEXT,
+    front_status TEXT,
+    assignee_name TEXT,
+    api_link TEXT,
+    payload_json TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_front_conversations_lead_id
+ON front_conversations(lead_id);
+
+CREATE INDEX IF NOT EXISTS idx_front_conversations_phone
+ON front_conversations(phone_e164);
+
+CREATE TABLE IF NOT EXISTS front_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    front_message_id TEXT NOT NULL UNIQUE,
+    front_conversation_id TEXT NOT NULL,
+    front_conversation_row_id INTEGER REFERENCES front_conversations(id) ON DELETE CASCADE,
+    lead_id INTEGER REFERENCES leads(id) ON DELETE SET NULL,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    imported_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+    direction TEXT NOT NULL CHECK(direction IN ('inbound', 'outbound', 'manual_note')),
+    body TEXT NOT NULL,
+    front_type TEXT,
+    front_created_at TEXT,
+    author_name TEXT,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_front_messages_conversation
+ON front_messages(front_conversation_id);
+
+CREATE INDEX IF NOT EXISTS idx_front_messages_lead_id
+ON front_messages(lead_id);
 """
 
 
