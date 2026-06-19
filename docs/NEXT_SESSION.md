@@ -143,18 +143,23 @@ The app has been iteratively reviewed by François and is currently in a good st
 
 Latest known validation:
 
-- `pytest`: 85 tests passing.
+- `pytest`: 88 tests passing.
 - `compileall`: passed for `sales_cockpit`, `scripts`, and `tests`.
 - SchoolDrive staging API probe passed with a synthetic create + archive payload.
+- SchoolDrive synthetic smoke passed on staging with run id `smoke-20260619T122027Z`: created, updated, stale ignored, duplicate ignored, sent WhatsApp, queued WhatsApp, archive, and DB side effects all OK.
 - Twilio staging template sync passed and imported 5 DEV templates, all currently `draft`.
 - SQLite backup and restore have been tested successfully on staging with `deploy/scripts/backup_sqlite.sh` and `deploy/scripts/restore_sqlite.sh`.
 - Front token is configured on staging. After fixing pagination limiting, a dry-run successfully read 1 Front conversation and 1 WhatsApp message with `writes: 0`.
-- Front pilot staging result: 2 Front conversations and 2 Front messages stored in the buffer tables, 0 messages attached to operational threads. Both samples are currently `unmatched` because their phones do not exist yet in staging SchoolDrive data. One sample is classified `active / follow_up`; the older sample remains `manual_review`.
+- Front pilot staging result: 5 Front conversations and 10 Front messages stored in the buffer tables, 0 messages attached to operational threads. All buffered samples are currently `unmatched` because their phones do not exist yet in staging SchoolDrive data. Current migration classification: 4 `active`, 1 `manual_review`.
+- Admin readiness on staging is green for SchoolDrive, Front, Twilio, Backup, and Workflow. The workflow count explicitly separates 1 SchoolDrive record waiting for the first sent autoresponder from true open conversations without action.
 - `scripts/reset_demo.py`: verified on a temporary SQLite database and creates 19 `SD-DEMO-*` leads.
 - Streamlit AppTest smoke covers reply-action guidance and absence of the generic `Terminer l'action` button in the main Actions flow.
 - Pytest uses an isolated temporary SQLite database via `tests/conftest.py`; it should not create test leads in the local app database.
 - Streamlit smoke tests passed during the session.
 - Streamlit and FastAPI were restarted after a stale import issue.
+- Latest backups created on the droplet:
+  - staging: `/opt/sales-cockpit/backups/staging/sales_cockpit_staging_20260619T122616Z.db.gz`
+  - prod: `/opt/sales-cockpit/backups/prod/sales_cockpit_prod_20260619T122616Z.db.gz`
 
 If a future session sees an import error for a recently added function, restart Streamlit. Streamlit can keep old modules in memory.
 

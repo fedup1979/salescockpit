@@ -100,11 +100,16 @@ V1 staging build is runnable. Twilio sandbox messaging is connected for staging.
 - Added Front migration classification: active/resolved/manual_review with recommended `reply` or `follow_up` when safe.
 - Added SchoolDrive replay tool: `scripts/schooldrive_replay_payloads.py`.
 - Added synthetic SchoolDrive smoke test: `scripts/schooldrive_smoke.py`, covering create, update, stale ignore, duplicate ignore, sent WhatsApp, queued WhatsApp, and archive handling without real personal data.
+- Staging synthetic SchoolDrive smoke test passed, including DB side effects for sent WhatsApp follow-up creation, queued WhatsApp waiting state, and archive resolution.
+- Admin readiness now separates SchoolDrive records waiting for the first sent autoresponder from true open conversations without a next action.
 - Added production cutover runbook: `docs/CUTOVER_RUNBOOK.md`.
 - Added Admin `État` readiness view for SchoolDrive, Front, Twilio, backups, and workflow consistency.
 - Added SQLite backup and guarded restore scripts for deployed environments.
 - Documented backup/restore procedure in `docs/BACKUP_RESTORE.md`.
 - Staging backup and restore have been tested successfully on DigitalOcean.
+- Latest staging readiness is green for SchoolDrive, Front, Twilio, Backup, and Workflow.
+- Latest Front pilot buffer on staging contains 5 Front conversations and 10 Front messages, with 0 attached operational messages. All are currently unmatched until SchoolDrive real data/backfill is present.
+- Latest Twilio staging sync found 5 DEV Content API templates, all currently `draft`.
 - Documented Twilio WhatsApp sender migration strategy in `docs/TWILIO_SENDER_MIGRATION.md`.
 
 ## Next Checkpoints
