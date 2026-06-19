@@ -89,3 +89,37 @@ The summary reports:
 - per-payload `event_id`, `schooldrive_id`, `aggregated_updated_at`, HTTP status, and webhook response.
 
 Do not replay production payloads into staging unless `environment` is explicitly set to `staging` or the `--expected-environment` guard is deliberately removed for a controlled test.
+
+## Synthetic Smoke Test
+
+Use `scripts/schooldrive_smoke.py` when Tiago's real payloads are not available yet, or after a deployment to verify that the webhook still behaves correctly. It generates synthetic records with unique SchoolDrive IDs and posts this sequence:
+
+1. lead created with no WhatsApp yet;
+2. same lead updated with one sent WhatsApp;
+3. stale replay ignored;
+4. duplicate event ignored;
+5. presubscription with one sent WhatsApp;
+6. presubscription with one queued WhatsApp;
+7. presubscription created;
+8. same presubscription archived.
+
+Dry-run without posting:
+
+```bash
+python scripts/schooldrive_smoke.py --dry-run --environment staging
+```
+
+Run against staging from the droplet, using the token already stored in `/opt/sales-cockpit/staging/.env`:
+
+```bash
+cd /opt/sales-cockpit/staging/app
+set -a
+source /opt/sales-cockpit/staging/.env
+set +a
+.venv/bin/python scripts/schooldrive_smoke.py \
+  --url http://127.0.0.1:8602/webhooks/schooldrive/lead-or-presubscription \
+  --environment staging \
+  --db-check
+```
+
+The expected response statuses are `created`, `updated`, `ignored`, `duplicate`, `created`, `created`, `created`, `updated`. The optional DB check verifies key side effects such as archived conversations being resolved and queued WhatsApp messages not creating an automatic follow-up.

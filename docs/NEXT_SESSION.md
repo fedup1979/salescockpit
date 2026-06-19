@@ -92,6 +92,7 @@ The app has been iteratively reviewed by François and is currently in a good st
   - optional `--attach-history` to copy matched messages into the thread as `front_history`, disabled by default;
   - Admin > Intégrations displays buffered Front records.
 - SchoolDrive payload replay tool exists: `scripts/schooldrive_replay_payloads.py`.
+- SchoolDrive synthetic smoke test exists: `scripts/schooldrive_smoke.py`. It can validate staging without real Tiago payloads and checks created/updated/ignored/duplicate/archive behavior.
 - Production cutover runbook exists: `docs/CUTOVER_RUNBOOK.md`.
 - Lead-relative reminders follow `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
 - Course-date reminders win over lead-relative reminders. The losing lead-relative reminder is cancelled.
@@ -179,7 +180,7 @@ Stop-Process -Id <PID> -Force
 
 ## Known Gaps
 
-- SchoolDrive snapshot webhook exists; real staging payload validation is still pending.
+- SchoolDrive snapshot webhook exists; synthetic smoke validation is available, but real Tiago payload validation is still pending.
 - SchoolDrive URL format is provided by Tiago's webhook contract and should be checked during the first staging replay.
 - Notion connector is placeholder only.
 - Twilio is mock by default locally. Staging is configured in sandbox mode and real inbound/outbound WhatsApp has been tested.
@@ -201,10 +202,11 @@ Stop-Process -Id <PID> -Force
 
 1. Wait for Tiago to POST the real SchoolDrive staging payload scenarios, then validate accepted/ignored/duplicate events, sent vs queued WhatsApp messages, Tanjona +72h creation, and archive resolution in staging.
 2. If Tiago sends JSON files instead of POSTing directly, use `scripts/schooldrive_replay_payloads.py` with `--expected-environment staging`.
-3. If Tiago is still pending, run a tiny Front pilot in staging: preview first, then optionally `--write` to the buffer tables. Keep Front read-only and low-volume.
-4. Review Front buffered records in Admin > Intégrations and decide whether/when to attach matched history into conversation threads.
-5. Validate Twilio template synchronization and status display on staging. Template approval cannot be fully validated until the ESSR WhatsApp sender/WABA path is settled.
-6. Run the focused manual scenario validation in `docs/TEST_PLAN.md` with Laura or François after real SchoolDrive data is visible.
+3. If Tiago is still pending after a deployment, run `scripts/schooldrive_smoke.py` from the droplet with `--db-check` to validate the webhook with synthetic data.
+4. If Tiago is still pending, run a tiny Front pilot in staging: preview first, then optionally `--write` to the buffer tables. Keep Front read-only and low-volume.
+5. Review Front buffered records in Admin > Intégrations and decide whether/when to attach matched history into conversation threads.
+6. Validate Twilio template synchronization and status display on staging. Template approval cannot be fully validated until the ESSR WhatsApp sender/WABA path is settled.
+7. Run the focused manual scenario validation in `docs/TEST_PLAN.md` with Laura or François after real SchoolDrive data is visible.
 7. Fix any UX or workflow failures discovered by the scenario pass.
 8. After scenario behavior is validated, do a moderate refactor of the largest files without changing behavior.
 9. Implement Notion historical enrichment.
