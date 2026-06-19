@@ -102,6 +102,8 @@ V1 staging build is runnable. Twilio sandbox messaging is connected for staging.
 - Added SchoolDrive replay tool: `scripts/schooldrive_replay_payloads.py`.
 - Added synthetic SchoolDrive smoke test: `scripts/schooldrive_smoke.py`, covering create, update, stale ignore, duplicate ignore, sent WhatsApp, queued WhatsApp, and archive handling without real personal data.
 - Staging synthetic SchoolDrive smoke test passed, including DB side effects for sent WhatsApp follow-up creation, queued WhatsApp waiting state, and archive resolution.
+- Real SchoolDrive MCP replay passed on staging with six real records, one duplicate response, and one stale snapshot ignored.
+- Validated and documented the SchoolDrive MCP timestamp convention: current MCP naive timestamps are already UTC (`KEEP_CURRENT_UTC`), so do not subtract two hours.
 - Admin readiness now separates SchoolDrive records waiting for the first sent autoresponder from true open conversations without a next action.
 - Added production cutover runbook: `docs/CUTOVER_RUNBOOK.md`.
 - Added Admin `État` readiness view for SchoolDrive, Front, Twilio, backups, and workflow consistency.
@@ -121,18 +123,19 @@ V1 staging build is runnable. Twilio sandbox messaging is connected for staging.
 
 ## Next Checkpoints
 
-1. Validate Tiago's real SchoolDrive staging payloads as soon as they are posted.
-2. If Tiago is pending, run the synthetic SchoolDrive smoke test on staging after each relevant deployment.
-3. Verify real-payload behavior in staging: upsert, stale-event ignore, duplicate-event ignore, WhatsApp body rendering, Tanjona +72h follow-up creation, queued-message no-follow-up, and archive resolution.
-4. Run a focused UI scenario validation with François or Laura once real SchoolDrive records are visible.
-5. Fix any scenario failures before adding new features.
-6. Keep PROD disconnected until staging scenario behavior and the production cutover checklist are validated.
-7. Only after scenario validation, do a moderate refactor of the large files into UI pages/components, workflow services, seed/reset, and repositories.
-8. Test Twilio template synchronization and template creation from staging; full approval validation waits for the ESSR sender/WABA path.
-9. Run a small Front pilot on staging: preview, then optional `--write` to buffer tables only. Keep Front read-only and low-volume.
-10. Review Front migration classification results before creating any operational actions from Front.
-11. Review whether attached Front history should appear by default or behind a conversation filter.
-12. Add Notion historical enrichment.
+1. Use the real SchoolDrive MCP replay as the current staging baseline and keep the `KEEP_CURRENT_UTC` timestamp convention.
+2. Validate Tiago's live SchoolDrive producer as soon as it posts directly to staging.
+3. If Tiago is pending, run the synthetic SchoolDrive smoke test on staging after each relevant deployment.
+4. Verify live-payload behavior in staging: upsert, stale-event ignore, duplicate-event ignore, WhatsApp body rendering, Tanjona +72h follow-up creation, queued-message no-follow-up, and archive resolution.
+5. Run a focused UI scenario validation with François or Laura once real SchoolDrive records are visible.
+6. Fix any scenario failures before adding new features.
+7. Keep PROD disconnected until staging scenario behavior and the production cutover checklist are validated.
+8. Only after scenario validation, do a moderate refactor of the large files into UI pages/components, workflow services, seed/reset, and repositories.
+9. Test Twilio template synchronization and template creation from staging; full approval validation waits for the ESSR sender/WABA path.
+10. Run a small Front pilot on staging: preview, then optional `--write` to buffer tables only. Keep Front read-only and low-volume.
+11. Review Front migration classification results before creating any operational actions from Front.
+12. Review whether attached Front history should appear by default or behind a conversation filter.
+13. Add Notion historical enrichment.
 
 ## Integration Policy
 

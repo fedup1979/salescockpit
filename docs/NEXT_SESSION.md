@@ -95,6 +95,7 @@ The app has been iteratively reviewed by François and is currently in a good st
   - Admin > Intégrations displays buffered Front records.
 - SchoolDrive payload replay tool exists: `scripts/schooldrive_replay_payloads.py`.
 - SchoolDrive synthetic smoke test exists: `scripts/schooldrive_smoke.py`. It can validate staging without real Tiago payloads and checks created/updated/ignored/duplicate/archive behavior.
+- Real SchoolDrive MCP replay into staging validated the timestamp convention on 2026-06-19: naive MCP timestamps are UTC, not Europe/Zurich local time. Keep current UTC values and do not subtract two hours.
 - Pre-cutover CLI check exists: `scripts/pre_cutover_check.py`.
 - Twilio template audit CLI exists: `scripts/twilio_template_audit.py`.
 - Production cutover runbook exists: `docs/CUTOVER_RUNBOOK.md`.
@@ -151,6 +152,8 @@ Latest known validation:
 - `compileall`: passed for `sales_cockpit`, `scripts`, and `tests`.
 - SchoolDrive staging API probe passed with a synthetic create + archive payload.
 - SchoolDrive synthetic smoke passed on staging with run id `smoke-20260619T122027Z`: created, updated, stale ignored, duplicate ignored, sent WhatsApp, queued WhatsApp, archive, and DB side effects all OK.
+- Real SchoolDrive MCP replay passed on staging for six records: six created records, one duplicate response, and one stale snapshot ignored. The latest pre-cutover check stayed green after the replay.
+- Timestamp decision after the real MCP replay: `KEEP_CURRENT_UTC`. No cleanup, no replay, and no `-2h` conversion are required.
 - Twilio staging template sync passed and imported 5 DEV templates, all currently `draft`.
 - Twilio template audit on staging currently sees 5 real Twilio DEV templates, all `draft`, and 0 real approved templates.
 - SQLite backup and restore have been tested successfully on staging with `deploy/scripts/backup_sqlite.sh` and `deploy/scripts/restore_sqlite.sh`.
@@ -217,16 +220,16 @@ Stop-Process -Id <PID> -Force
 
 ## Recommended Next Work
 
-1. Wait for Tiago to POST the real SchoolDrive staging payload scenarios, then validate accepted/ignored/duplicate events, sent vs queued WhatsApp messages, Tanjona +72h creation, and archive resolution in staging.
-2. If Tiago sends JSON files instead of POSTing directly, use `scripts/schooldrive_replay_payloads.py` with `--expected-environment staging`.
-3. If Tiago is still pending after a deployment, run `scripts/schooldrive_smoke.py` from the droplet with `--db-check` to validate the webhook with synthetic data.
-4. If Tiago is still pending, run a tiny Front pilot in staging: preview first, then optionally `--write` to the buffer tables. Keep Front read-only and low-volume.
+1. Use the real SchoolDrive MCP replay results as the current staging baseline. Do not apply a timezone correction to those records.
+2. When Tiago's producer sends live webhook events, validate accepted/ignored/duplicate events, sent vs queued WhatsApp messages, Tanjona +72h creation, and archive resolution in staging.
+3. If Tiago sends JSON files instead of POSTing directly, use `scripts/schooldrive_replay_payloads.py` with `--expected-environment staging`.
+4. If Tiago is still pending after a deployment, run `scripts/schooldrive_smoke.py` from the droplet with `--db-check` to validate the webhook with synthetic data.
 5. Review Front buffered records in Admin > Intégrations and decide whether/when to attach matched history into conversation threads.
-6. Validate Twilio template synchronization and status display on staging. Template approval cannot be fully validated until the ESSR WhatsApp sender/WABA path is settled.
+6. Validate Twilio template synchronization and status display on staging. Template approval cannot be fully validated until the ESSR sender/WABA path is settled.
 7. Run the focused manual scenario validation in `docs/TEST_PLAN.md` with Laura or François after real SchoolDrive data is visible.
-7. Fix any UX or workflow failures discovered by the scenario pass.
-8. After scenario behavior is validated, do a moderate refactor of the largest files without changing behavior.
-9. Implement Notion historical enrichment.
+8. Fix any UX or workflow failures discovered by the scenario pass.
+9. After scenario behavior is validated, do a moderate refactor of the largest files without changing behavior.
+10. Implement Notion historical enrichment.
 
 ## Files Most Likely to Change Next
 

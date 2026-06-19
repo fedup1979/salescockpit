@@ -22,6 +22,24 @@ Production should use HTTPS before cutover.
 - `data.status` is stored as `schooldrive_status`; it does not overwrite Sales Cockpit qualification.
 - `data.url` is stored as `schooldrive_url` and used by the UI SchoolDrive link.
 
+## Timestamp Convention
+
+Sales Cockpit expects all SchoolDrive webhook timestamps as ISO 8601 UTC.
+
+Decision from the real SchoolDrive MCP replay on 2026-06-19: `KEEP_CURRENT_UTC`.
+
+The SchoolDrive MCP currently returns timestamp fields that are already UTC, even when the raw value is naive text without a timezone suffix. Do not interpret current MCP naive timestamps as Europe/Zurich local time and do not subtract two hours.
+
+Evidence from the live replay: the most recent MCP autoresponder `created_at` tracked real UTC within normal queue latency and was about two hours behind Europe/Zurich wall time. Applying a Zurich-to-UTC conversion to those MCP values would antedate records and can cause replays to be rejected as stale.
+
+Producer rule:
+
+- If a timestamp is timezone-aware (`Z` or an explicit offset), normalize it to UTC.
+- If a timestamp comes from the current SchoolDrive MCP as naive text, treat it as UTC and add `Z`.
+- Do not apply Europe/Zurich conversion to MCP values unless a future producer explicitly documents that a specific field is local time.
+
+Tiago's earlier static example values that were two hours earlier than the MCP replay are treated as a producer/spec mismatch, not as the Cockpit replay convention.
+
 ## Idempotency And Ordering
 
 - Duplicate `event_id` returns `200` with `status: duplicate`.
