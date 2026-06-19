@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     twilio_auth_token: str | None = None
     twilio_whatsapp_sender: str | None = None
     twilio_messaging_service_sid: str | None = None
+    twilio_allowed_recipients: str | None = None
     twilio_validate_signature: bool = True
     twilio_webhook_url: str | None = None
     twilio_status_callback_url: str | None = None

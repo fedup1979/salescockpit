@@ -11,6 +11,8 @@ Sales Cockpit staging is connected to Twilio Sandbox. This validates:
 
 It does not validate the final ESSR production sender.
 
+François has also validated a real DEV WhatsApp sender, `+41445054269`, under the legacy PMC / Permismoinscher context. This can validate live Twilio sender mechanics in staging, but it is not the final ESSR production sender.
+
 François confirmed that the ESSR WhatsApp number is already in use. Therefore, creating or buying an unrelated Twilio phone number does not solve the production template validation problem.
 
 ## Key Rule
@@ -26,6 +28,7 @@ Do not spend time trying to submit ESSR production templates from the current DE
 The current useful DEV tests are:
 
 - sandbox inbound/outbound mechanics;
+- live DEV sender inbound/outbound mechanics with a strict recipient allowlist;
 - Content API synchronization;
 - local UI template search and placeholder rendering;
 - blocked/free-form rule behavior when the 24h window is closed.

@@ -47,12 +47,14 @@ class TwilioWhatsAppClient:
         auth_token: str,
         whatsapp_sender: str | None = None,
         messaging_service_sid: str | None = None,
+        allowed_recipients: str | None = None,
         status_callback_url: str | None = None,
     ) -> None:
         self.account_sid = account_sid
         self.auth_token = auth_token
         self.whatsapp_sender = whatsapp_sender
         self.messaging_service_sid = messaging_service_sid
+        self.allowed_recipients = _parse_allowed_recipients(allowed_recipients)
         self.status_callback_url = status_callback_url
 
     def _client(self):
@@ -67,6 +69,11 @@ class TwilioWhatsAppClient:
     def _base_params(self, to_phone: str) -> dict[str, str]:
         if not to_phone:
             raise TwilioConfigurationError("Numéro WhatsApp destinataire manquant.")
+        normalized_to = _normalize_whatsapp_phone(to_phone)
+        if self.allowed_recipients and normalized_to not in self.allowed_recipients:
+            raise TwilioConfigurationError(
+                "Envoi Twilio bloqué : ce numéro n'est pas dans la liste de test autorisée."
+            )
         params: dict[str, str] = {"to": _whatsapp_address(to_phone)}
         if self.messaging_service_sid:
             params["messaging_service_sid"] = self.messaging_service_sid
@@ -129,6 +136,7 @@ def get_whatsapp_client() -> MockWhatsAppClient | TwilioWhatsAppClient:
         auth_token=settings.twilio_auth_token,
         whatsapp_sender=settings.twilio_whatsapp_sender,
         messaging_service_sid=settings.twilio_messaging_service_sid,
+        allowed_recipients=settings.twilio_allowed_recipients,
         status_callback_url=settings.twilio_status_callback_url,
     )
 
@@ -136,3 +144,20 @@ def get_whatsapp_client() -> MockWhatsAppClient | TwilioWhatsAppClient:
 def _whatsapp_address(phone: str) -> str:
     value = phone.strip()
     return value if value.startswith("whatsapp:") else f"whatsapp:{value}"
+
+
+def _normalize_whatsapp_phone(phone: str) -> str:
+    value = phone.strip()
+    if value.startswith("whatsapp:"):
+        value = value.removeprefix("whatsapp:")
+    return "".join(value.split())
+
+
+def _parse_allowed_recipients(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    return {
+        normalized
+        for item in value.split(",")
+        if (normalized := _normalize_whatsapp_phone(item))
+    }

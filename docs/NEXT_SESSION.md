@@ -156,6 +156,7 @@ Latest known validation:
 - Timestamp decision after the real MCP replay: `KEEP_CURRENT_UTC`. No cleanup, no replay, and no `-2h` conversion are required.
 - Twilio staging template sync passed and imported 5 DEV templates, all currently `draft`.
 - Twilio template audit on staging currently sees 5 real Twilio DEV templates, all `draft`, and 0 real approved templates.
+- A real DEV WhatsApp sender `+41445054269` exists for validation. Before switching staging from `sandbox` to `live`, set `SALES_COCKPIT_TWILIO_ALLOWED_RECIPIENTS` to the test phone(s) so real SchoolDrive prospects cannot be messaged accidentally.
 - SQLite backup and restore have been tested successfully on staging with `deploy/scripts/backup_sqlite.sh` and `deploy/scripts/restore_sqlite.sh`.
 - Automated backup cron is installed and cron service is active on the droplet.
 - Front token is configured on staging. After fixing pagination limiting, a dry-run successfully read 1 Front conversation and 1 WhatsApp message with `writes: 0`.

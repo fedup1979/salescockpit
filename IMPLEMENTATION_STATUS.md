@@ -86,6 +86,7 @@ V1 staging build is runnable. Twilio sandbox messaging is connected for staging.
 - Implemented Twilio sandbox-ready integration: SDK send client, inbound WhatsApp form webhook, `X-Twilio-Signature` validation, inbound idempotency by `MessageSid`, status callback storage, and legacy JSON mock compatibility.
 - Twilio sandbox has been configured and tested on staging for inbound and outbound WhatsApp messages.
 - Twilio delivery status is displayed in the conversation thread with WhatsApp-style checks.
+- Added a Twilio real-send recipient allowlist for staging/live validation with a real DEV WhatsApp sender.
 - Admin-only Twilio template synchronization is implemented through the Twilio Content API.
 - Admin-only Twilio template creation and WhatsApp approval submission are implemented for text templates.
 - Non-admin users can request missing templates but cannot create or synchronize Twilio templates.

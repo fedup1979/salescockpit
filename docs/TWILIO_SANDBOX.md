@@ -6,7 +6,7 @@ Sales Cockpit supports three Twilio modes:
 
 - `mock`: default local/staging-safe mode. No Twilio API call is made.
 - `sandbox`: real Twilio Sandbox API calls and signed webhooks.
-- `live`: reserved for a later production cutover plan.
+- `live`: real Twilio sender API calls. Use this for a validated DEV WhatsApp sender before production cutover.
 
 Do not switch production WhatsApp traffic to Sales Cockpit without an explicit cutover plan.
 
@@ -48,6 +48,7 @@ SALES_COCKPIT_TWILIO_ACCOUNT_SID=AC...
 SALES_COCKPIT_TWILIO_AUTH_TOKEN=...
 SALES_COCKPIT_TWILIO_WHATSAPP_SENDER=+14155238886
 SALES_COCKPIT_TWILIO_MESSAGING_SERVICE_SID=
+SALES_COCKPIT_TWILIO_ALLOWED_RECIPIENTS=
 SALES_COCKPIT_TWILIO_VALIDATE_SIGNATURE=true
 SALES_COCKPIT_TWILIO_WEBHOOK_URL=http://139.59.158.77:8602
 SALES_COCKPIT_TWILIO_STATUS_CALLBACK_URL=http://139.59.158.77:8602/webhooks/twilio/whatsapp/status
@@ -59,6 +60,16 @@ Use either:
 - `SALES_COCKPIT_TWILIO_MESSAGING_SERVICE_SID` if Twilio is configured through a Messaging Service.
 
 For Twilio Sandbox, the sender is usually the sandbox WhatsApp number shown in Twilio Console.
+
+For a real DEV WhatsApp sender on staging:
+
+```text
+SALES_COCKPIT_TWILIO_MODE=live
+SALES_COCKPIT_TWILIO_WHATSAPP_SENDER=+41445054269
+SALES_COCKPIT_TWILIO_ALLOWED_RECIPIENTS=+41762845576
+```
+
+Keep `SALES_COCKPIT_TWILIO_ALLOWED_RECIPIENTS` populated while staging contains real SchoolDrive prospects. This comma-separated allowlist prevents accidental outbound WhatsApp sends to real prospects during DEV sender validation. Remove or widen it only for an explicit cutover rehearsal.
 
 ## Implemented Behavior
 
