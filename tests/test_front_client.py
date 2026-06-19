@@ -57,6 +57,27 @@ def test_front_client_paginates_conversations() -> None:
     assert session.calls[1][2]["params"] == {}
 
 
+def test_front_client_stops_pagination_at_limit() -> None:
+    session = FakeSession(
+        [
+            FakeResponse(
+                200,
+                {
+                    "_results": [{"id": "cnv_1"}],
+                    "_pagination": {"next": "https://api2.frontapp.com/conversations?page_token=next"},
+                },
+            ),
+            FakeResponse(200, {"_results": [{"id": "cnv_2"}], "_pagination": {"next": None}}),
+        ]
+    )
+    client = FrontClient(api_token="test", session=session)
+
+    conversations = client.list_conversations(limit=1)
+
+    assert conversations == [{"id": "cnv_1"}]
+    assert len(session.calls) == 1
+
+
 def test_front_client_search_encodes_query() -> None:
     session = FakeSession([FakeResponse(200, {"_results": [], "_pagination": {"next": None}})])
     client = FrontClient(api_token="test", session=session)

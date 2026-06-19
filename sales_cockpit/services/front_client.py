@@ -39,18 +39,21 @@ class FrontClient:
         query: dict[str, Any] | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
         params: dict[str, Any] = {"limit": min(limit, 100)}
         if query:
             params["q"] = query
-        return self._paginate("/conversations", params=params)
+        return self._paginate("/conversations", params=params, max_results=limit)
 
     def search_conversations(self, query: str, limit: int = 100) -> list[dict[str, Any]]:
         safe_query = query.strip()
-        if not safe_query:
+        if not safe_query or limit <= 0:
             return []
         return self._paginate(
             f"/conversations/search/{quote(safe_query)}",
             params={"limit": min(limit, 100)},
+            max_results=limit,
         )
 
     def list_conversation_messages(
@@ -62,6 +65,8 @@ class FrontClient:
         conversation_id = conversation_id.strip()
         if not conversation_id:
             raise FrontApiError("conversation_id is required.")
+        if limit <= 0:
+            return []
         return self._paginate(
             f"/conversations/{conversation_id}/messages",
             params={
@@ -69,19 +74,28 @@ class FrontClient:
                 "sort_by": "created_at",
                 "sort_order": sort_order,
             },
+            max_results=limit,
         )
 
     def _paginate(
         self,
         path_or_url: str,
         params: dict[str, Any] | None = None,
+        max_results: int | None = None,
     ) -> list[dict[str, Any]]:
         url = self._url(path_or_url)
         next_params = params or {}
         results: list[dict[str, Any]] = []
         while url:
             payload = self._request("GET", url, params=next_params)
-            results.extend(payload.get("_results") or [])
+            page_results = payload.get("_results") or []
+            if max_results is None:
+                results.extend(page_results)
+            else:
+                remaining = max(max_results - len(results), 0)
+                results.extend(page_results[:remaining])
+                if len(results) >= max_results:
+                    break
             pagination = payload.get("_pagination") or {}
             url = pagination.get("next")
             next_params = {}
