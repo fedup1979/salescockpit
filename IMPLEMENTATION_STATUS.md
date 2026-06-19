@@ -2,7 +2,7 @@
 
 ## Current Status
 
-V1 staging build is runnable. Twilio sandbox messaging is connected for staging.
+V1 staging build is runnable. Staging is connected to a real Twilio DEV WhatsApp sender in `live` mode with a recipient allowlist.
 
 ## Completed
 

@@ -2,7 +2,7 @@
 
 ## Current Situation
 
-Sales Cockpit staging is connected to Twilio Sandbox. This validates:
+Sales Cockpit staging was first connected to Twilio Sandbox. This validated:
 
 - inbound webhook handling;
 - outbound free-form sending inside the sandbox session;
@@ -11,7 +11,7 @@ Sales Cockpit staging is connected to Twilio Sandbox. This validates:
 
 It does not validate the final ESSR production sender.
 
-François has also validated a real DEV WhatsApp sender, `+41445054269`, under the legacy PMC / Permismoinscher context. This can validate live Twilio sender mechanics in staging, but it is not the final ESSR production sender.
+François has also validated a real DEV WhatsApp sender, `+41445054269`, under the legacy PMC / Permismoinscher context. Staging now uses this sender in `live` mode with a strict recipient allowlist. This can validate live Twilio sender mechanics in staging, but it is not the final ESSR production sender.
 
 François confirmed that the ESSR WhatsApp number is already in use. Therefore, creating or buying an unrelated Twilio phone number does not solve the production template validation problem.
 
@@ -52,8 +52,8 @@ The real production test requires:
 
 ## Recommended Path
 
-1. Keep staging on Twilio Sandbox.
-2. Use staging to validate workflow and SchoolDrive integration.
+1. Keep staging on the real DEV sender with a strict recipient allowlist.
+2. Use staging to validate workflow, SchoolDrive integration, and live DEV sender mechanics.
 3. In parallel, clarify ESSR sender ownership.
 4. Once ownership is clear, create a small production cutover checklist.
 5. Only then submit ESSR production templates for Meta approval.

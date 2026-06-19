@@ -156,7 +156,7 @@ Latest known validation:
 - Timestamp decision after the real MCP replay: `KEEP_CURRENT_UTC`. No cleanup, no replay, and no `-2h` conversion are required.
 - Twilio staging template sync passed and imported 5 DEV templates, all currently `draft`.
 - Twilio template audit on staging currently sees 5 real Twilio DEV templates, all `draft`, and 0 real approved templates.
-- A real DEV WhatsApp sender `+41445054269` exists for validation. Before switching staging from `sandbox` to `live`, set `SALES_COCKPIT_TWILIO_ALLOWED_RECIPIENTS` to the test phone(s) so real SchoolDrive prospects cannot be messaged accidentally.
+- Staging is currently in Twilio `live` mode with real DEV WhatsApp sender `+41445054269` and `SALES_COCKPIT_TWILIO_ALLOWED_RECIPIENTS=+41762845576`, so real SchoolDrive prospects cannot be messaged accidentally.
 - SQLite backup and restore have been tested successfully on staging with `deploy/scripts/backup_sqlite.sh` and `deploy/scripts/restore_sqlite.sh`.
 - Automated backup cron is installed and cron service is active on the droplet.
 - Front token is configured on staging. After fixing pagination limiting, a dry-run successfully read 1 Front conversation and 1 WhatsApp message with `writes: 0`.
@@ -200,7 +200,7 @@ Stop-Process -Id <PID> -Force
 - SchoolDrive snapshot webhook exists; synthetic smoke validation is available, but real Tiago payload validation is still pending.
 - SchoolDrive URL format is provided by Tiago's webhook contract and should be checked during the first staging replay.
 - Notion connector is placeholder only.
-- Twilio is mock by default locally. Staging is configured in sandbox mode and real inbound/outbound WhatsApp has been tested.
+- Twilio is mock by default locally. Staging is configured in `live` mode with the DEV sender `+41445054269` and a strict recipient allowlist. Sandbox inbound/outbound was previously tested successfully.
 - Twilio Content API synchronization exists. Real template approval and closed-window template sending still need an end-to-end staging validation with an approved Twilio template.
 - Front import is partially connected in safe pilot mode. Read-only client, dry-run, buffer persistence, exact phone matching, and Admin visibility exist. Full historical import, ambiguous matching review, and conversation-level history filtering are still pending.
 - Front migration classification exists, but automatic conversion from active Front buffer rows into Sales Cockpit actions is not implemented yet.
