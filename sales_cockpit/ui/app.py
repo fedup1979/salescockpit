@@ -1614,7 +1614,7 @@ def render_templates(user: dict) -> None:
         st.info("Aucune demande de modèle à traiter.")
 
     st.divider()
-    filter_col, search_col = st.columns([0.30, 0.70], vertical_alignment="end")
+    filter_col, search_col = st.columns([0.30, 0.70], vertical_alignment="bottom")
     with filter_col:
         source_filter = st.selectbox(
             "Source",
