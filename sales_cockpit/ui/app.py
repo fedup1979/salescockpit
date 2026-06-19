@@ -43,6 +43,7 @@ from sales_cockpit.store import (
     get_conversation,
     get_integration_readiness,
     get_next_action_for_lead,
+    build_front_cutover_plan,
     get_template,
     list_actions_for_lead,
     list_conversations,
@@ -161,6 +162,8 @@ DISPLAY_LABELS = {
     "ambiguous": "Ambigu",
     "active": "Active",
     "manual_review": "Revue manuelle",
+    "ready_to_convert": "Prête à basculer",
+    "history_only": "Historique seul",
     "none": "Aucune",
     "twilio/text": "Texte",
     "twilio/call-to-action": "Bouton",
@@ -1960,6 +1963,28 @@ def render_admin(user: dict) -> None:
             )
         else:
             st.info("Aucune conversation Front importée dans la zone tampon.")
+
+        st.subheader("Plan de bascule Front")
+        front_plan = build_front_cutover_plan(int(front_limit))
+        render_count_table("Décisions", front_plan["counts"])
+        if front_plan["rows"]:
+            plan_rows = [
+                {
+                    "Décision": labelize(item["decision"]),
+                    "Action": labelize(item.get("recommended_action") or "none"),
+                    "Responsable": item.get("recommended_owner") or "",
+                    "Front ID": item.get("front_conversation_id") or "",
+                    "Téléphone": item.get("phone_e164") or "",
+                    "Prospect": lead_display_name(item) if item.get("lead_id") else "",
+                    "SD ID": item.get("schooldrive_lead_id") or "",
+                    "Messages": item.get("front_message_count") or 0,
+                    "Raison": compact_text(item.get("reason") or "", 120),
+                }
+                for item in front_plan["rows"]
+            ]
+            st.dataframe(plan_rows, hide_index=True, use_container_width=True, height=260)
+        else:
+            st.info("Aucune ligne à planifier.")
 
 
 def render_admin_status_tab() -> None:

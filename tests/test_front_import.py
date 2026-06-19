@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sales_cockpit.db import connect, init_db
 from sales_cockpit.services.front_import import (
+    build_front_cutover_plan,
     classify_front_migration,
     extract_front_phone,
     list_front_import_records,
@@ -148,6 +149,40 @@ def test_list_front_import_records_filters_review_queue() -> None:
     assert [item["front_conversation_id"] for item in resolved] == ["cnv_unmatched"]
     assert [item["front_conversation_id"] for item in reply] == ["cnv_matched"]
     assert [item["front_conversation_id"] for item in no_action] == ["cnv_unmatched"]
+
+
+def test_build_front_cutover_plan_is_read_only_and_conservative() -> None:
+    _seed_lead_with_conversation("+41767270073")
+    upsert_front_history(
+        _front_conversation("cnv_ready", "+41767270073", status="assigned"),
+        messages=[_front_message("msg_ready", is_inbound=True)],
+    )
+    upsert_front_history(
+        _front_conversation("cnv_history", "+41767270073", status="archived"),
+        messages=[_front_message("msg_history", is_inbound=False)],
+    )
+    upsert_front_history(
+        _front_conversation("cnv_review", "+41760000000", status="assigned"),
+        messages=[_front_message("msg_review", is_inbound=True)],
+    )
+
+    plan = build_front_cutover_plan()
+
+    assert plan["counts"] == {
+        "ready_to_convert": 1,
+        "history_only": 1,
+        "manual_review": 1,
+    }
+    ready = next(item for item in plan["rows"] if item["front_conversation_id"] == "cnv_ready")
+    history = next(item for item in plan["rows"] if item["front_conversation_id"] == "cnv_history")
+    review = next(item for item in plan["rows"] if item["front_conversation_id"] == "cnv_review")
+    assert ready["recommended_action"] == "reply"
+    assert ready["recommended_owner"] == "Mihary"
+    assert history["recommended_action"] is None
+    assert review["decision"] == "manual_review"
+
+    with connect() as conn:
+        assert conn.execute("SELECT COUNT(*) AS total FROM tasks").fetchone()["total"] == 0
 
 
 def _seed_lead_with_conversation(phone: str) -> tuple[int, int]:

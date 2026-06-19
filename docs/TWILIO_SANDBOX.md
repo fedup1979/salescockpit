@@ -94,6 +94,20 @@ Template management:
 - admins can submit the new template for WhatsApp approval;
 - non-admin users can browse templates and create template requests, but cannot create or synchronize Twilio templates.
 
+Template audit:
+
+```bash
+python scripts/twilio_template_audit.py
+```
+
+To fail when no real approved Twilio template is available:
+
+```bash
+python scripts/twilio_template_audit.py --require-approved-real
+```
+
+Demo templates with `HX_MOCK_*` are deliberately excluded from the real approved-template count.
+
 Delivery checks in the conversation thread:
 
 - `...` means queued or sending;

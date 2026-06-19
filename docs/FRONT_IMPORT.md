@@ -88,6 +88,7 @@ Implemented:
   - optional explicit attachment to the Sales Cockpit thread as `front_history`;
   - Admin > Intégrations shows the buffered Front records.
 - `scripts/front_import_pilot.py`, which previews or stores a small controlled sample.
+- `scripts/front_cutover_plan.py`, which reads the buffer and produces a conservative read-only cutover plan.
 
 Not implemented yet:
 
@@ -139,3 +140,25 @@ python scripts/front_import_pilot.py --limit 1 --include-messages --messages-lim
 ```
 
 Do not use `--allow-large` until the small pilot has been reviewed in Admin > Intégrations.
+
+## Cutover Plan Command
+
+Build a read-only plan from the Front buffer:
+
+```bash
+python scripts/front_cutover_plan.py --limit 500
+```
+
+Full JSON output:
+
+```bash
+python scripts/front_cutover_plan.py --limit 500 --json
+```
+
+The plan is deliberately conservative:
+
+- `ready_to_convert`: matched active Front conversation with a clear recommended action (`reply` or `follow_up`);
+- `history_only`: matched resolved Front conversation, import as history only;
+- `manual_review`: unmatched, ambiguous, or unclear Front conversation.
+
+This command does not create actions and does not attach messages. It is safe to run before Tiago's SchoolDrive backfill, but most records will remain `manual_review` until SchoolDrive has populated the matching phone numbers.

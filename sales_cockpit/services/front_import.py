@@ -355,6 +355,68 @@ def list_front_import_records(
     return rows_to_dicts(rows)
 
 
+def build_front_cutover_plan(limit: int = 500) -> dict[str, Any]:
+    records = list_front_import_records(limit=limit)
+    rows = [_front_cutover_plan_row(record) for record in records]
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row["decision"]] = counts.get(row["decision"], 0) + 1
+    return {
+        "record_count": len(records),
+        "counts": counts,
+        "rows": rows,
+    }
+
+
+def _front_cutover_plan_row(record: dict[str, Any]) -> dict[str, Any]:
+    match_status = record.get("match_status")
+    migration_status = record.get("migration_status")
+    action_type = record.get("migration_action_type")
+    if match_status != "matched":
+        decision = "manual_review"
+        reason = "La conversation Front n'est pas rattachée à un lead SchoolDrive/Sales Cockpit."
+    elif migration_status == "resolved":
+        decision = "history_only"
+        reason = "Front indique une conversation terminée : importer comme historique, sans action."
+    elif migration_status == "active" and action_type in {"reply", "follow_up"}:
+        decision = "ready_to_convert"
+        reason = (
+            "Conversation active et rattachée : une action Sales Cockpit peut être créée "
+            "après validation humaine."
+        )
+    else:
+        decision = "manual_review"
+        reason = record.get("migration_reason") or "Cas non couvert par les règles automatiques."
+
+    return {
+        "decision": decision,
+        "recommended_action": action_type,
+        "recommended_owner": _front_recommended_owner(action_type),
+        "reason": reason,
+        "front_conversation_id": record.get("front_conversation_id"),
+        "front_status": record.get("front_status"),
+        "subject": record.get("subject"),
+        "phone_e164": record.get("phone_e164"),
+        "match_status": match_status,
+        "migration_status": migration_status,
+        "lead_id": record.get("lead_id"),
+        "conversation_id": record.get("conversation_id"),
+        "schooldrive_lead_id": record.get("schooldrive_lead_id"),
+        "first_name": record.get("first_name"),
+        "last_name": record.get("last_name"),
+        "front_message_count": record.get("front_message_count") or 0,
+        "attached_message_count": record.get("attached_message_count") or 0,
+    }
+
+
+def _front_recommended_owner(action_type: str | None) -> str | None:
+    if action_type == "reply":
+        return "Mihary"
+    if action_type == "follow_up":
+        return "Tanjona"
+    return None
+
+
 def _upsert_front_message(
     conn: Any,
     front_conversation_id: str,
