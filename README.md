@@ -116,6 +116,7 @@ Before continuing work, read:
 - `docs/TWILIO_SANDBOX.md`
 - `docs/TWILIO_SENDER_MIGRATION.md`
 - `docs/FRONT_IMPORT.md`
+- `docs/TECHNICAL_DEBT.md`
 - `docs/BACKUP_RESTORE.md`
 - `PRODUCT.md`
 - `DESIGN.md`

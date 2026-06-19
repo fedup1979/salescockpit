@@ -83,6 +83,12 @@ The app has been iteratively reviewed by François and is currently in a good st
 - ESSR production WhatsApp sender migration is documented in `docs/TWILIO_SENDER_MIGRATION.md`; do not assume buying a new Twilio number validates the ESSR sender.
 - Delivery statuses are shown in conversation messages with WhatsApp-style checks: sent, delivered, read, failed, or queued/sending.
 - Front must remain read-only until an explicit import/cutover decision. The current Front work is a read-only API client, dry-run script, retry handling, and documentation for historical import.
+- Inbound WhatsApp identity matching is conservative by design:
+  - one phone match attaches automatically;
+  - zero phone match creates a temporary `À identifier` record;
+  - multiple phone matches create a temporary `À identifier` record with candidate leads stored for review.
+- Users can temporarily fill name, course/category, and identification note in the `Statuts` tab. This is operational data only, not a SchoolDrive replacement.
+- V2 debt for identity resolution and merging temporary records is documented in `docs/TECHNICAL_DEBT.md`.
 - Front dry-run pagination now respects the requested `limit` before following next-page cursors. This was fixed after a supposedly tiny `limit=1` dry-run kept running too long.
 - Front historical import now has a safe pilot foundation:
   - `front_conversations` and `front_messages` buffer tables;
@@ -249,6 +255,7 @@ Stop-Process -Id <PID> -Force
 - `docs/FRONT_IMPORT.md`
 - `docs/BACKUP_RESTORE.md`
 - `docs/CUTOVER_RUNBOOK.md`
+- `docs/TECHNICAL_DEBT.md`
 - `scripts/schooldrive_replay_payloads.py`
 - `scripts/front_import_pilot.py`
 - `tests/test_store.py`

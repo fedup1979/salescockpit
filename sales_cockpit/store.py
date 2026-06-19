@@ -29,6 +29,15 @@ from sales_cockpit.services.front_import import build_front_cutover_plan, list_f
 from sales_cockpit.services.whatsapp_rules import calculate_window, iso_utc, parse_dt, utc_now
 
 
+IDENTITY_STATUS_VERIFIED = "verified"
+IDENTITY_STATUS_NEEDS_IDENTIFICATION = "needs_identification"
+IDENTITY_STATUS_AMBIGUOUS = "ambiguous_identity"
+IDENTITY_REVIEW_STATUSES = {
+    IDENTITY_STATUS_NEEDS_IDENTIFICATION,
+    IDENTITY_STATUS_AMBIGUOUS,
+}
+
+
 def bootstrap() -> None:
     init_db()
 
@@ -747,6 +756,9 @@ def _upsert_schooldrive_lead(
                 schooldrive_last_event_id = ?,
                 schooldrive_is_archived = ?, schooldrive_archived_at = ?,
                 schooldrive_archive_reason = ?, schooldrive_payload_json = ?,
+                identity_status = 'verified',
+                identity_review_note = NULL,
+                identity_candidates_json = NULL,
                 last_schooldrive_sync_at = ?, updated_at = ?
             WHERE id = ?
             """,
@@ -790,9 +802,11 @@ def _upsert_schooldrive_lead(
                 schooldrive_last_event_occurred_at, schooldrive_last_event_id,
                 schooldrive_is_archived, schooldrive_archived_at,
                 schooldrive_archive_reason, schooldrive_payload_json,
+                identity_status, identity_review_note, identity_candidates_json,
                 last_schooldrive_sync_at, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'schooldrive_webhook', ?,
-                'neutral', 'contact_allowed', 'new', 'warm', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                'neutral', 'contact_allowed', 'new', 'warm',
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 schooldrive_id,
@@ -817,6 +831,9 @@ def _upsert_schooldrive_lead(
                 archived_at,
                 archive_reason,
                 payload_json,
+                IDENTITY_STATUS_VERIFIED,
+                None,
+                None,
                 now,
                 now,
                 now,
@@ -1188,6 +1205,9 @@ def list_conversations(
             l.contact_status,
             l.sales_stage,
             l.temperature,
+            l.identity_status,
+            l.identity_review_note,
+            l.identity_candidates_json,
             setter.full_name AS setter_name,
             closer.full_name AS closer_name,
             c.last_inbound_at,
@@ -1311,6 +1331,9 @@ def get_conversation(conversation_id: int) -> dict[str, Any] | None:
                 l.contact_status,
                 l.sales_stage,
                 l.temperature,
+                l.identity_status,
+                l.identity_review_note,
+                l.identity_candidates_json,
                 l.setter_user_id,
                 l.closer_user_id,
                 setter.full_name AS setter_name,
@@ -2421,6 +2444,167 @@ def _upsert_reply_action_for_inbound(
         )
 
 
+def _phone_match_candidates(conn: Any, from_phone: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT
+            l.id AS lead_id,
+            (
+                SELECT c2.id FROM conversations c2
+                WHERE c2.lead_id = l.id
+                ORDER BY c2.id DESC
+                LIMIT 1
+            ) AS conversation_id,
+            l.schooldrive_lead_id,
+            l.first_name,
+            l.last_name,
+            l.phone_e164,
+            l.phone_raw,
+            l.course_category_short_title,
+            l.course_title,
+            l.source,
+            l.identity_status,
+            l.setter_user_id
+        FROM leads l
+        WHERE l.phone_e164 = ?
+           OR l.phone_raw = ?
+           OR EXISTS (
+                SELECT 1 FROM conversations c
+                WHERE c.lead_id = l.id AND c.recipient_phone_e164 = ?
+           )
+        ORDER BY
+            CASE WHEN l.identity_status IN ('needs_identification', 'ambiguous_identity') THEN 0 ELSE 1 END,
+            l.id DESC
+        """,
+        (from_phone, from_phone, from_phone),
+    ).fetchall()
+    return rows_to_dicts(rows)
+
+
+def _candidate_summary(candidate: dict[str, Any]) -> dict[str, Any]:
+    name = lead_full_name(candidate)
+    return {
+        "lead_id": candidate.get("lead_id"),
+        "schooldrive_lead_id": candidate.get("schooldrive_lead_id"),
+        "name": name,
+        "phone_e164": candidate.get("phone_e164") or candidate.get("phone_raw"),
+        "course": candidate.get("course_title")
+        or candidate.get("course_category_short_title")
+        or None,
+        "identity_status": candidate.get("identity_status") or IDENTITY_STATUS_VERIFIED,
+    }
+
+
+def _select_inbound_match(
+    conn: Any,
+    from_phone: str,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]], str]:
+    candidates = _phone_match_candidates(conn, from_phone)
+    review_records = [
+        candidate
+        for candidate in candidates
+        if candidate.get("identity_status") in IDENTITY_REVIEW_STATUSES
+    ]
+    if review_records:
+        return review_records[0], candidates, "existing_identity_review"
+    if len(candidates) == 1:
+        return candidates[0], candidates, "matched"
+    if not candidates:
+        return None, candidates, "no_match"
+    return None, candidates, "ambiguous"
+
+
+def _ensure_conversation_for_lead(
+    conn: Any,
+    lead_id: int,
+    from_phone: str,
+    now: str,
+    conversation_id: int | None = None,
+) -> int:
+    if conversation_id:
+        return int(conversation_id)
+    return int(
+        conn.execute(
+            """
+            INSERT INTO conversations (lead_id, recipient_phone_e164, last_inbound_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (lead_id, from_phone, now, now, now),
+        ).lastrowid
+    )
+
+
+def _create_temporary_identity_lead(
+    conn: Any,
+    from_phone: str,
+    setter_user_id: int | None,
+    candidates: list[dict[str, Any]],
+    match_status: str,
+    now: str,
+) -> tuple[int, int, str]:
+    identity_status = (
+        IDENTITY_STATUS_AMBIGUOUS
+        if match_status == "ambiguous"
+        else IDENTITY_STATUS_NEEDS_IDENTIFICATION
+    )
+    candidate_payload = (
+        json.dumps([_candidate_summary(candidate) for candidate in candidates], ensure_ascii=False)
+        if candidates
+        else None
+    )
+    source = (
+        "twilio_inbound_ambiguous"
+        if identity_status == IDENTITY_STATUS_AMBIGUOUS
+        else "twilio_inbound_unmatched"
+    )
+    cursor = conn.execute(
+        """
+        INSERT INTO leads (
+            first_name, last_name, phone_e164, phone_raw, source,
+            acquisition_type, lead_status, contact_status, sales_stage,
+            temperature, setter_user_id, identity_status, identity_candidates_json,
+            created_at, updated_at
+        ) VALUES ('Inconnu(e)', '', ?, ?, ?, 'unknown', 'neutral',
+            'contact_allowed', 'new', 'warm', ?, ?, ?, ?, ?)
+        """,
+        (
+            from_phone,
+            from_phone,
+            source,
+            setter_user_id,
+            identity_status,
+            candidate_payload,
+            now,
+            now,
+        ),
+    )
+    lead_id = int(cursor.lastrowid)
+    conversation_id = int(
+        conn.execute(
+            """
+            INSERT INTO conversations (lead_id, recipient_phone_e164, last_inbound_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (lead_id, from_phone, now, now, now),
+        ).lastrowid
+    )
+    insert_event(
+        conn,
+        lead_id,
+        "identity_review_required",
+        new={
+            "identity_status": identity_status,
+            "phone_e164": from_phone,
+            "candidate_count": len(candidates),
+        },
+        metadata={
+            "conversation_id": conversation_id,
+            "candidates": [_candidate_summary(candidate) for candidate in candidates],
+        },
+    )
+    return lead_id, conversation_id, identity_status
+
+
 def list_messages(conversation_id: int) -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(
@@ -3041,6 +3225,113 @@ def update_template_request_status(
     return True, "Demande de modèle mise à jour."
 
 
+def update_temporary_identity(
+    conversation_id: int,
+    user_id: int,
+    first_name: str,
+    last_name: str,
+    course_category_short_title: str | None,
+    course_title: str | None,
+    note: str | None = None,
+) -> tuple[bool, str]:
+    first_name = first_name.strip() or "Inconnu(e)"
+    last_name = last_name.strip()
+    category = (course_category_short_title or "").strip() or None
+    course = (course_title or "").strip() or None
+    note = (note or "").strip() or None
+    now = iso_utc()
+    with connect() as conn:
+        row = row_to_dict(
+            conn.execute(
+                """
+                SELECT
+                    c.id AS conversation_id,
+                    l.id AS lead_id,
+                    l.schooldrive_lead_id,
+                    l.first_name,
+                    l.last_name,
+                    l.course_category_short_title,
+                    l.course_title,
+                    l.identity_status,
+                    l.identity_review_note
+                FROM conversations c
+                JOIN leads l ON l.id = c.lead_id
+                WHERE c.id = ?
+                """,
+                (conversation_id,),
+            ).fetchone()
+        )
+        if not row:
+            return False, "Conversation introuvable."
+        if row.get("identity_status") not in IDENTITY_REVIEW_STATUSES and row.get("schooldrive_lead_id"):
+            return False, "Cette fiche est déjà reliée à SchoolDrive."
+
+        conn.execute(
+            """
+            UPDATE leads
+            SET first_name = ?, last_name = ?,
+                course_category_short_title = ?,
+                course_title = ?,
+                identity_status = CASE
+                    WHEN identity_status = 'ambiguous_identity' THEN 'ambiguous_identity'
+                    ELSE 'needs_identification'
+                END,
+                identity_review_note = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                first_name,
+                last_name,
+                category,
+                course,
+                note,
+                now,
+                row["lead_id"],
+            ),
+        )
+        full_name = " ".join(part for part in [first_name, last_name] if part).strip()
+        note_parts = [f"Nom temporaire : {full_name or 'Inconnu(e)'}"]
+        if category:
+            note_parts.append(f"Catégorie : {category}")
+        if course:
+            note_parts.append(f"Cours : {course}")
+        if note:
+            note_parts.append(f"Note : {note}")
+        _insert_internal_note_message(
+            conn,
+            row["lead_id"],
+            conversation_id,
+            user_id,
+            "Identification à vérifier. " + " · ".join(note_parts),
+            now,
+        )
+        insert_event(
+            conn,
+            row["lead_id"],
+            "temporary_identity_updated",
+            user_id=user_id,
+            previous={
+                "first_name": row.get("first_name"),
+                "last_name": row.get("last_name"),
+                "course_category_short_title": row.get("course_category_short_title"),
+                "course_title": row.get("course_title"),
+                "identity_review_note": row.get("identity_review_note"),
+            },
+            new={
+                "first_name": first_name,
+                "last_name": last_name,
+                "course_category_short_title": category,
+                "course_title": course,
+                "identity_status": row.get("identity_status")
+                or IDENTITY_STATUS_NEEDS_IDENTIFICATION,
+                "identity_review_note": note,
+            },
+            metadata={"conversation_id": conversation_id},
+        )
+    return True, "Identification temporaire mise à jour."
+
+
 def update_lead_qualification(
     lead_id: int,
     user_id: int,
@@ -3586,18 +3877,12 @@ def record_inbound_message(
                     "duplicate": True,
                 }
 
+        candidates: list[dict[str, Any]] = []
+        identity_match_status = "explicit_lead" if lead_id is not None else "unknown"
+        identity_candidate_count = 0
         if lead_id is None:
-            row = conn.execute(
-                """
-                SELECT l.id AS lead_id, c.id AS conversation_id, l.setter_user_id
-                FROM leads l
-                JOIN conversations c ON c.lead_id = l.id
-                WHERE l.phone_e164 = ? OR c.recipient_phone_e164 = ?
-                ORDER BY c.id DESC
-                LIMIT 1
-                """,
-                (from_phone, from_phone),
-            ).fetchone()
+            row, candidates, identity_match_status = _select_inbound_match(conn, from_phone)
+            identity_candidate_count = len(candidates)
         else:
             row = conn.execute(
                 """
@@ -3614,29 +3899,24 @@ def record_inbound_message(
         if row:
             found = row_to_dict(row)
             lead_id = found["lead_id"]
-            conversation_id = found["conversation_id"]
+            conversation_id = _ensure_conversation_for_lead(
+                conn,
+                lead_id,
+                from_phone,
+                now,
+                found.get("conversation_id"),
+            )
             setter_user_id = found.get("setter_user_id")
         else:
             setter_user_id = _default_active_user_id(conn, "setter")
-            cursor = conn.execute(
-                """
-                INSERT INTO leads (
-                    first_name, last_name, phone_e164, phone_raw, source,
-                    acquisition_type, lead_status, contact_status, sales_stage,
-                    temperature, setter_user_id
-                ) VALUES ('Inconnu(e)', '', ?, ?, 'twilio_webhook_mock',
-                    'unknown', 'neutral', 'contact_allowed', 'new', 'warm', ?)
-                """,
-                (from_phone, from_phone, setter_user_id),
+            lead_id, conversation_id, _identity_status = _create_temporary_identity_lead(
+                conn,
+                from_phone=from_phone,
+                setter_user_id=setter_user_id,
+                candidates=candidates if lead_id is None else [],
+                match_status=identity_match_status,
+                now=now,
             )
-            lead_id = cursor.lastrowid
-            conversation_id = conn.execute(
-                """
-                INSERT INTO conversations (lead_id, recipient_phone_e164, last_inbound_at)
-                VALUES (?, ?, ?)
-                """,
-                (lead_id, from_phone, now),
-            ).lastrowid
 
         cursor = conn.execute(
             """
@@ -3672,6 +3952,8 @@ def record_inbound_message(
             metadata={
                 "source": "api",
                 "twilio_message_sid": twilio_message_sid,
+                "identity_match_status": identity_match_status,
+                "identity_candidate_count": identity_candidate_count,
                 "raw_payload": raw_payload or {},
             },
         )
@@ -3763,6 +4045,9 @@ def list_tasks(status: str = "open") -> list[dict[str, Any]]:
                 l.lead_status,
                 l.contact_status,
                 l.sales_stage,
+                l.identity_status,
+                l.identity_review_note,
+                l.identity_candidates_json,
                 u.full_name AS assigned_to_name,
                 u.role AS assigned_to_role,
                 u.email AS assigned_to_email,

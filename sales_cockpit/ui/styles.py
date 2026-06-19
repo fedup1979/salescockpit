@@ -295,6 +295,20 @@ h1, h2, h3 {
   letter-spacing: 0;
 }
 
+.sc-identity-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: .4rem;
+  padding: .08rem .38rem;
+  border: 1px solid oklch(0.82 0.085 82);
+  border-radius: 999px;
+  background: oklch(0.97 0.035 82);
+  color: oklch(0.42 0.095 42);
+  font-size: .68rem;
+  font-weight: 760;
+  text-transform: none;
+}
+
 .sc-conversation-title {
   color: var(--sc-text);
   font-size: .98rem;

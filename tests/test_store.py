@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from sales_cockpit.db import seed_initial_data
+from sales_cockpit.db import connect, seed_initial_data
 from sales_cockpit.services.twilio_content import TwilioContentTemplate
 from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
 from sales_cockpit.store import (
@@ -31,6 +31,7 @@ from sales_cockpit.store import (
     set_conversation_status,
     sync_twilio_templates,
     update_lead_qualification,
+    update_temporary_identity,
 )
 from sales_cockpit.services.front_import import upsert_front_history
 from scripts.schooldrive_smoke import build_smoke_steps
@@ -235,6 +236,89 @@ def test_unknown_inbound_message_uses_french_fallback_name() -> None:
     assert conversation["last_name"] == ""
     assert "WhatsApp Unknown" not in action["title"]
     assert "Inconnu(e)" in action["title"]
+
+
+def test_unknown_inbound_message_is_marked_for_identity_review() -> None:
+    seed_initial_data()
+    phone = unique_phone()
+    result = record_inbound_message(phone, "Bonjour, je veux des informations.")
+
+    conversation = get_conversation(result["conversation_id"])
+
+    assert conversation["identity_status"] == "needs_identification"
+    assert conversation["schooldrive_lead_id"] is None
+
+
+def test_ambiguous_inbound_phone_creates_temporary_review_record() -> None:
+    seed_initial_data()
+    phone = unique_phone()
+    with connect() as conn:
+        for index in range(2):
+            lead_id = conn.execute(
+                """
+                INSERT INTO leads (
+                    schooldrive_lead_id, first_name, last_name, phone_e164,
+                    source, lead_status, contact_status, sales_stage,
+                    temperature, identity_status
+                ) VALUES (?, ?, ?, ?, 'schooldrive_webhook', 'neutral',
+                    'contact_allowed', 'new', 'warm', 'verified')
+                """,
+                (f"lead:test-{index}", f"Test{index}", "Ambigu", phone),
+            ).lastrowid
+            conn.execute(
+                """
+                INSERT INTO conversations (lead_id, recipient_phone_e164, status)
+                VALUES (?, ?, 'open')
+                """,
+                (lead_id, phone),
+            )
+
+    result = record_inbound_message(phone, "Je ne sais pas quelle fiche utiliser.")
+    conversation = get_conversation(result["conversation_id"])
+
+    assert conversation["identity_status"] == "ambiguous_identity"
+    assert conversation["first_name"] == "Inconnu(e)"
+    assert conversation["identity_candidates_json"]
+    assert "lead:test-0" in conversation["identity_candidates_json"]
+    assert "lead:test-1" in conversation["identity_candidates_json"]
+
+
+def test_inbound_reuses_existing_temporary_identity_record() -> None:
+    seed_initial_data()
+    phone = unique_phone()
+    first = record_inbound_message(phone, "Premier message.")
+    second = record_inbound_message(phone, "Deuxième message.")
+
+    assert second["lead_id"] == first["lead_id"]
+    assert second["conversation_id"] == first["conversation_id"]
+
+
+def test_temporary_identity_can_be_completed_manually() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Bonjour.")
+
+    ok, message = update_temporary_identity(
+        result["conversation_id"],
+        admin["id"],
+        "Samira",
+        "Essai",
+        "APP",
+        "APP GE P26",
+        "À vérifier dans SchoolDrive.",
+    )
+
+    conversation = get_conversation(result["conversation_id"])
+    messages = list_messages(result["conversation_id"])
+
+    assert ok is True
+    assert "mise à jour" in message
+    assert conversation["first_name"] == "Samira"
+    assert conversation["last_name"] == "Essai"
+    assert conversation["course_category_short_title"] == "APP"
+    assert conversation["course_title"] == "APP GE P26"
+    assert conversation["identity_status"] == "needs_identification"
+    assert any("Identification à vérifier" in item["body"] for item in messages)
 
 
 def test_do_not_contact_inbound_creates_contact_review() -> None:

@@ -36,6 +36,12 @@ Une conversation terminée signifie qu'il n'y a plus rien à faire pour le momen
 
 La conversation active ou terminée est différente de la fenêtre WhatsApp ouverte ou fermée. Une conversation peut être active alors que la fenêtre WhatsApp est fermée. Dans ce cas, la suite doit passer par un modèle approuvé.
 
+## Fiches à identifier
+
+Quand un message WhatsApp arrive d'un numéro que le cockpit ne sait pas rattacher avec certitude, la fiche affiche **À identifier**. Cela veut dire soit qu'aucune fiche SchoolDrive connue ne correspond au numéro, soit que plusieurs fiches correspondent.
+
+Dans ce cas, l'équipe peut répondre au message, mais elle doit compléter les informations temporaires dans **Statuts** : prénom, nom, cours ou catégorie, et une note d'identification. Ces informations servent à travailler tout de suite. Elles doivent rester à vérifier dans SchoolDrive.
+
 ## Actions, statuts et preuves
 
 Une action est l'unité de travail du cockpit. Elle dit qui doit faire quoi, pour quel prospect, et à quel moment. Les actions principales sont : répondre au message, envoyer une relance, faire un appel setting, faire un appel closing et revoir un contact.

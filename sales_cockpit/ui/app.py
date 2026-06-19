@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import json
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 import sys
@@ -63,6 +64,7 @@ from sales_cockpit.store import (
     sync_twilio_templates,
     update_template_request_status,
     update_lead_qualification,
+    update_temporary_identity,
 )
 from sales_cockpit.ui.styles import APP_CSS
 
@@ -160,6 +162,9 @@ DISPLAY_LABELS = {
     "matched": "Correspondance trouvée",
     "unmatched": "Non retrouvé",
     "ambiguous": "Ambigu",
+    "ambiguous_identity": "À identifier",
+    "needs_identification": "À identifier",
+    "verified": "Identifié",
     "active": "Active",
     "manual_review": "Revue manuelle",
     "ready_to_convert": "Prête à basculer",
@@ -418,6 +423,7 @@ def conversation_row_html(conv: dict) -> str:
     due = format_due(conv.get("next_action_due_at"))
     name = escape_html(lead_display_name(conv))
     lead_type = escape_html(labelize(conv.get("lead_type") or "lead"))
+    identity_badge = identity_badge_html(conv)
     course = escape_html(conversation_course_label(conv))
     owner_html = escape_html(owner)
     preview_html = escape_html(preview)
@@ -432,7 +438,7 @@ def conversation_row_html(conv: dict) -> str:
     )
     return f"""
         <div class="sc-conversation-row">
-          <div class="sc-lead-type-line">{lead_type}</div>
+          <div class="sc-lead-type-line">{lead_type}{identity_badge}</div>
           <div class="sc-conversation-title"><strong>{name}</strong></div>
           <div class="sc-row-meta">{course} · {owner_html}</div>
           {waiting_html}
@@ -599,6 +605,16 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
                 st.rerun()
 
 
+def identity_needs_review(item: dict) -> bool:
+    return item.get("identity_status") in {"needs_identification", "ambiguous_identity"}
+
+
+def identity_badge_html(item: dict) -> str:
+    if not identity_needs_review(item):
+        return ""
+    return '<span class="sc-identity-badge">À identifier</span>'
+
+
 def state_chip_html(label: str, value: str) -> str:
     return f'<span><strong>{escape_html(label)}</strong> {escape_html(value)}</span>'
 
@@ -620,11 +636,15 @@ def render_compact_lead_state(conv: dict) -> None:
         "Qualification",
         labelize(conv["lead_status"]),
     )
+    identity_html = ""
+    if identity_needs_review(conv):
+        identity_html = state_chip_html("Identification", "À identifier")
     st.markdown(
         f"""
         <div class="sc-compact-state">
           {stage_html}
           {qualification_html}
+          {identity_html}
           {contact_html}
         </div>
         """,
@@ -948,7 +968,87 @@ def render_template_request_form(user: dict, conv: dict, action: dict | None) ->
             st.rerun()
 
 
+def render_identity_review(user: dict, conv: dict) -> None:
+    if not identity_needs_review(conv):
+        return
+
+    st.warning(
+        "Cette fiche est temporaire ou ambiguë. Complétez les informations utiles ici, puis vérifiez SchoolDrive dès que possible."
+    )
+    candidates = identity_candidates(conv)
+    if candidates:
+        st.caption("Correspondances possibles détectées par téléphone")
+        st.dataframe(
+            [
+                {
+                    "Lead SC": item.get("lead_id") or "",
+                    "SchoolDrive": item.get("schooldrive_lead_id") or "",
+                    "Nom": item.get("name") or "Inconnu(e)",
+                    "Cours": item.get("course") or "",
+                }
+                for item in candidates
+            ],
+            hide_index=True,
+            use_container_width=True,
+            height=min(180, 38 + 34 * len(candidates)),
+        )
+
+    with st.form(f"identity_review_{conv['id']}"):
+        col_a, col_b = st.columns(2)
+        with col_a:
+            first_name = st.text_input(
+                "Prénom temporaire",
+                value="" if conv.get("first_name") == "Inconnu(e)" else conv.get("first_name") or "",
+            )
+        with col_b:
+            last_name = st.text_input("Nom temporaire", value=conv.get("last_name") or "")
+        category = st.text_input(
+            "Catégorie de cours",
+            value=conv.get("course_category_short_title") or "",
+            placeholder="Ex. APP, FSM, AS",
+        )
+        course = st.text_input(
+            "Cours / session",
+            value=conv.get("course_title") or "",
+            placeholder="Ex. APP GE P26",
+        )
+        note = st.text_area(
+            "Note d'identification",
+            value=conv.get("identity_review_note") or "",
+            height=80,
+            placeholder="Ex. prospect retrouvé par téléphone, fiche SD à créer ou à vérifier.",
+        )
+        submitted = st.form_submit_button("Enregistrer l'identification temporaire")
+    if submitted:
+        ok, message = update_temporary_identity(
+            conv["id"],
+            user["id"],
+            first_name,
+            last_name,
+            category,
+            course,
+            note,
+        )
+        show_result(ok, message)
+        if ok:
+            st.rerun()
+
+
+def identity_candidates(conv: dict) -> list[dict]:
+    raw = conv.get("identity_candidates_json")
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict)]
+
+
 def render_qualification(user: dict, conv: dict) -> None:
+    render_identity_review(user, conv)
     with st.form(f"qualification_{conv['lead_id']}"):
         lead_status = st.selectbox(
             "Qualification (probabilité que le client s'inscrive)",
@@ -1441,6 +1541,7 @@ def render_action_rows(tasks: list[dict], bucket: str) -> None:
 
 def action_row_html(task: dict) -> str:
     lead_type = escape_html(labelize(task.get("lead_type") or "lead"))
+    identity_badge = identity_badge_html(task)
     name = escape_html(lead_display_name(task))
     course = escape_html(conversation_course_label(task))
     owner = escape_html(display_assignee_name(task))
@@ -1456,7 +1557,7 @@ def action_row_html(task: dict) -> str:
     )
     return f"""
         <div class="sc-conversation-row">
-          <div class="sc-lead-type-line">{lead_type}</div>
+          <div class="sc-lead-type-line">{lead_type}{identity_badge}</div>
           <div class="sc-conversation-title"><strong>{name}</strong></div>
           <div class="sc-row-meta">{course} · {owner}</div>
           {waiting_html}
@@ -1514,6 +1615,12 @@ def render_user_guide() -> None:
         Une conversation terminée signifie qu'il n'y a plus rien à faire pour le moment. Elle peut être réactivée, mais il faut alors choisir immédiatement une prochaine action : répondre, relancer, appeler en setting ou appeler en closing.
 
         La conversation active ou terminée est différente de la fenêtre WhatsApp ouverte ou fermée. Une conversation peut être active alors que la fenêtre WhatsApp est fermée. Dans ce cas, la suite doit passer par un modèle approuvé.
+
+        ### Fiches à identifier
+
+        Quand un message WhatsApp arrive d'un numéro que le cockpit ne sait pas rattacher avec certitude, la fiche affiche **À identifier**. Cela veut dire soit qu'aucune fiche SchoolDrive connue ne correspond au numéro, soit que plusieurs fiches correspondent.
+
+        Dans ce cas, l'équipe peut répondre au message, mais elle doit compléter les informations temporaires dans **Statuts** : prénom, nom, cours ou catégorie, et une note d'identification. Ces informations servent à travailler tout de suite. Elles doivent rester à vérifier dans SchoolDrive.
 
         ### Actions, statuts et preuves
 

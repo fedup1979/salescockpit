@@ -63,6 +63,9 @@ CREATE TABLE IF NOT EXISTS leads (
     schooldrive_archived_at TEXT,
     schooldrive_archive_reason TEXT,
     schooldrive_payload_json TEXT,
+    identity_status TEXT NOT NULL DEFAULT 'verified',
+    identity_review_note TEXT,
+    identity_candidates_json TEXT,
     last_schooldrive_sync_at TEXT,
     last_notion_sync_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -429,6 +432,9 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
             ("schooldrive_archived_at", "TEXT"),
             ("schooldrive_archive_reason", "TEXT"),
             ("schooldrive_payload_json", "TEXT"),
+            ("identity_status", "TEXT NOT NULL DEFAULT 'verified'"),
+            ("identity_review_note", "TEXT"),
+            ("identity_candidates_json", "TEXT"),
         ],
     )
     add_missing_columns(
@@ -535,6 +541,13 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
         WHERE lead_status IS NULL
            OR trim(lead_status) = ''
            OR lead_status IN ('new', 'lead', 'prospect')
+        """
+    )
+    conn.execute(
+        """
+        UPDATE leads
+        SET identity_status = 'verified'
+        WHERE identity_status IS NULL OR trim(identity_status) = ''
         """
     )
     conn.execute(

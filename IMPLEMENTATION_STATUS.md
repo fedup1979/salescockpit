@@ -123,6 +123,8 @@ V1 staging build is runnable. Staging is connected to a real Twilio DEV WhatsApp
 - Test template `sc_dev_accuse_reception_fr_001` was submitted for WhatsApp approval and is currently `pending`; closed-window template validation still waits for approval.
 - Staging pre-cutover check passed and automated backup cron is installed on the droplet.
 - Documented Twilio WhatsApp sender migration strategy in `docs/TWILIO_SENDER_MIGRATION.md`.
+- Inbound WhatsApp identity guardrail added: exact phone match attaches automatically; zero or multiple matches create a temporary `À identifier` lead with manual name/course fields.
+- V2 identity-resolution debt is documented in `docs/TECHNICAL_DEBT.md`.
 
 ## Next Checkpoints
 
@@ -138,7 +140,8 @@ V1 staging build is runnable. Staging is connected to a real Twilio DEV WhatsApp
 10. After additional SchoolDrive backfill, run Front rematch, review conversion dry-run, then execute matched conversion only if rows are ready.
 11. Keep Front read-only and avoid attaching history until matched rows are reviewed.
 12. Review whether attached Front history should appear by default or behind a conversation filter.
-13. Add Notion historical enrichment.
+13. Add the real V2 identity-resolution workflow: SchoolDrive recrawl/search, temporary lead merge, ambiguous candidate selection, and Front unmatched reconciliation.
+14. Add Notion historical enrichment.
 
 ## Integration Policy
 

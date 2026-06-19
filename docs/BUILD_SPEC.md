@@ -92,6 +92,7 @@ Work queue labels:
 Operational rules:
 
 - New inbound WhatsApp message creates or updates a `reply` action assigned to the setter.
+- Inbound WhatsApp identity matching is strict: one phone match attaches automatically; zero or multiple matches create an `À identifier` temporary record.
 - Setter can plan a follow-up, pass to closer, resolve, or create a manual action.
 - Passing to closer completes current open actions, moves the lead to `closing`, and creates a `closing_call` action for the closer.
 - `Non pertinent` and `A signé` are commercial qualifications that stop follow-ups and resolve open conversations.
@@ -163,6 +164,7 @@ Right panel:
 - Prospect messages aligned left.
 - ESSR/team messages aligned right.
 - Private notes yellow and aligned right.
+- Temporary or ambiguous identity records show an `À identifier` badge.
 - Reply tools directly under the message thread.
 - If WhatsApp window is open: free-form composer is enabled.
 - If WhatsApp window is closed: free-form composer is blocked and template send remains available.
@@ -172,8 +174,9 @@ Right panel:
 
 Fields:
 
-- Parcours.
 - Qualification.
+- Contact status.
+- Temporary identity fields when the lead is marked `À identifier`.
 
 Dropdown labels are displayed in French. Internal values remain in English.
 
