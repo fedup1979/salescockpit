@@ -63,7 +63,7 @@ Seeded accounts:
 - Template send allowed only with approved templates.
 - Template requests linked to blocked follow-up actions.
 - Structured follow-up sequences and sequence steps.
-- Template creation in local draft or approved mock status.
+- Admin-only Twilio template synchronization, creation, and WhatsApp approval submission for text templates.
 - Work queues: `À traiter`, `En suspens`, `Terminées`, `Toutes`. `Envoyer relance` is an action type, not a separate main queue.
 - Next-action creation, scheduling, completion, and setter-to-closer handoff.
 - Contextual Actions tab where WhatsApp actions are normally completed by sent-message proof, while calls require result and note.
@@ -73,7 +73,9 @@ Seeded accounts:
 - Bug reporting with activity logs.
 - Scenario reset script for clean local validation.
 - FastAPI endpoints for future webhooks.
-- Twilio sandbox-ready inbound webhook, status callback, signature validation, and SDK client while keeping mock mode as the default.
+- Twilio sandbox inbound webhook, outbound send, status callback, signature validation, SDK client, and delivery checks while keeping mock mode as the local default.
+- SchoolDrive snapshot webhook for lead and presubscription upserts.
+- Read-only Front API client foundation for future historical imports.
 
 ## Safety
 
@@ -85,6 +87,7 @@ Deployment preparation is documented in:
 
 - `docs/DEPLOYMENT.md`
 - `docs/TWILIO_SANDBOX.md`
+- `docs/FRONT_IMPORT.md`
 - `deploy/README.md`
 
 Planned UI ports:
@@ -109,6 +112,7 @@ Before continuing work, read:
 - `docs/DEPLOYMENT.md`
 - `docs/SCHOOLDRIVE_WEBHOOK.md`
 - `docs/TWILIO_SANDBOX.md`
+- `docs/FRONT_IMPORT.md`
 - `PRODUCT.md`
 - `DESIGN.md`
 

@@ -88,6 +88,9 @@ V1 staging build is runnable. Twilio sandbox messaging is connected for staging.
 - Admin-only Twilio template creation and WhatsApp approval submission are implemented for text templates.
 - Non-admin users can request missing templates but cannot create or synchronize Twilio templates.
 - In sandbox/live mode, sendable approved templates exclude local `HX_MOCK` demo templates.
+- SchoolDrive staging webhook was probed successfully with a synthetic create + archive payload.
+- Added read-only Front API client foundation for future historical imports: conversation listing, search, and message listing.
+- Documented Front historical import plan in `docs/FRONT_IMPORT.md`.
 
 ## Next Checkpoints
 
@@ -96,8 +99,9 @@ V1 staging build is runnable. Twilio sandbox messaging is connected for staging.
 3. Only after scenario validation, do a moderate refactor of the large files into UI pages/components, workflow services, seed/reset, and repositories.
 4. Validate a real SchoolDrive staging POST and backfill replay.
 5. Test Twilio template synchronization and template creation from staging.
-6. Add Notion historical enrichment.
-7. Define and automate SQLite backups before PROD.
+6. Run a small Front pilot import once a Front API token and inbox IDs are available.
+7. Add Notion historical enrichment.
+8. Define and automate SQLite backups before PROD.
 
 ## Integration Policy
 

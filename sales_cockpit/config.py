@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     twilio_status_callback_url: str | None = None
     schooldrive_mcp_url: str | None = None
     schooldrive_webhook_token: str | None = None
+    front_api_token: str | None = None
+    front_import_query: str | None = None
+    front_import_inbox_ids: str | None = None
     notion_token: str | None = None
 
     model_config = SettingsConfigDict(

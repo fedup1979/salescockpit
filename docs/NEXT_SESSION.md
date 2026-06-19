@@ -76,6 +76,7 @@ The app has been iteratively reviewed by François and is currently in a good st
 - Twilio templates are synchronized from the Twilio Content API through `sales_cockpit/services/twilio_content.py`.
 - In `sandbox` or `live` mode, approved templates are sendable only if they have a real Twilio `twilio_content_sid`; `HX_MOCK` demo templates are excluded from the send list.
 - Delivery statuses are shown in conversation messages with WhatsApp-style checks: sent, delivered, read, failed, or queued/sending.
+- Front must remain read-only until an explicit import/cutover decision. The current Front work is only a read-only API client plus documentation for historical import.
 - Lead-relative reminders follow `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
 - Course-date reminders win over lead-relative reminders. The losing lead-relative reminder is cancelled.
 - Minimum outbound WhatsApp follow-up delay is 24h.
@@ -121,8 +122,10 @@ The app has been iteratively reviewed by François and is currently in a good st
 
 Latest known validation:
 
-- `pytest`: 61 tests passing.
+- `pytest`: 65 tests passing.
 - `compileall`: passed for `sales_cockpit`, `scripts`, and `tests`.
+- SchoolDrive staging API probe passed with a synthetic create + archive payload.
+- Twilio staging template sync passed and imported 5 DEV templates, all currently `draft`.
 - `scripts/reset_demo.py`: verified on a temporary SQLite database and creates 19 `SD-DEMO-*` leads.
 - Streamlit AppTest smoke covers reply-action guidance and absence of the generic `Terminer l'action` button in the main Actions flow.
 - Pytest uses an isolated temporary SQLite database via `tests/conftest.py`; it should not create test leads in the local app database.
@@ -158,6 +161,7 @@ Stop-Process -Id <PID> -Force
 - Notion connector is placeholder only.
 - Twilio is mock by default locally. Staging is configured in sandbox mode and real inbound/outbound WhatsApp has been tested.
 - Twilio Content API synchronization exists. Real template approval and closed-window template sending still need an end-to-end staging validation with an approved Twilio template.
+- Front import is not connected. The read-only client exists, but persistence, UI filtering, and a pilot import command still need to be built after we have a Front token and inbox IDs.
 - Attachments UI exists but persistence/send is not implemented.
 - Auth is local password-based only.
 - GitHub remote exists: `https://github.com/fedup1979/salescockpit`.
@@ -176,6 +180,7 @@ Stop-Process -Id <PID> -Force
 5. Validate real SchoolDrive staging payloads and backfill replay.
 6. Implement Notion historical enrichment.
 7. Validate Twilio template synchronization, creation, approval status, and closed-window sending on staging.
+8. Build and test a small Front historical import pilot after Front credentials are available.
 
 ## Files Most Likely to Change Next
 
@@ -187,5 +192,7 @@ Stop-Process -Id <PID> -Force
 - `sales_cockpit/services/notion.py`
 - `sales_cockpit/services/twilio_client.py`
 - `sales_cockpit/services/twilio_content.py`
+- `sales_cockpit/services/front_client.py`
 - `docs/TWILIO_SANDBOX.md`
+- `docs/FRONT_IMPORT.md`
 - `tests/test_store.py`
