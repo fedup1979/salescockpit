@@ -128,6 +128,28 @@ def test_list_front_import_records_shows_matching_status() -> None:
     assert records[0]["front_message_count"] == 1
 
 
+def test_list_front_import_records_filters_review_queue() -> None:
+    _seed_lead_with_conversation("+41767270073")
+    upsert_front_history(
+        _front_conversation("cnv_matched", "+41767270073", status="assigned"),
+        messages=[_front_message("msg_matched", is_inbound=True)],
+    )
+    upsert_front_history(
+        _front_conversation("cnv_unmatched", "+41760000000", status="archived"),
+        messages=[_front_message("msg_unmatched", is_inbound=False)],
+    )
+
+    matched = list_front_import_records(match_status="matched")
+    resolved = list_front_import_records(migration_status="resolved")
+    reply = list_front_import_records(migration_action_type="reply")
+    no_action = list_front_import_records(migration_action_type="none")
+
+    assert [item["front_conversation_id"] for item in matched] == ["cnv_matched"]
+    assert [item["front_conversation_id"] for item in resolved] == ["cnv_unmatched"]
+    assert [item["front_conversation_id"] for item in reply] == ["cnv_matched"]
+    assert [item["front_conversation_id"] for item in no_action] == ["cnv_unmatched"]
+
+
 def _seed_lead_with_conversation(phone: str) -> tuple[int, int]:
     init_db()
     with connect() as conn:
@@ -150,13 +172,17 @@ def _seed_lead_with_conversation(phone: str) -> tuple[int, int]:
     return lead_id, int(conversation_cursor.lastrowid)
 
 
-def _front_conversation() -> dict:
+def _front_conversation(
+    conversation_id: str = "cnv_1",
+    phone: str = "+41767270073",
+    status: str = "assigned",
+) -> dict:
     return {
-        "id": "cnv_1",
-        "subject": "WhatsApp thread with +41767270073",
-        "status": "assigned",
+        "id": conversation_id,
+        "subject": f"WhatsApp thread with {phone}",
+        "status": status,
         "assignee": {"name": "info@essr.ch"},
-        "_links": {"self": "https://essr.api.frontapp.com/conversations/cnv_1"},
+        "_links": {"self": f"https://essr.api.frontapp.com/conversations/{conversation_id}"},
     }
 
 

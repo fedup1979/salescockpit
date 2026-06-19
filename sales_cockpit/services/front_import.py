@@ -311,10 +311,30 @@ def upsert_front_history(
     }
 
 
-def list_front_import_records(limit: int = 100) -> list[dict[str, Any]]:
+def list_front_import_records(
+    limit: int = 100,
+    match_status: str = "all",
+    migration_status: str = "all",
+    migration_action_type: str = "all",
+) -> list[dict[str, Any]]:
+    filters: list[str] = []
+    params: list[Any] = []
+    if match_status != "all":
+        filters.append("fc.match_status = ?")
+        params.append(match_status)
+    if migration_status != "all":
+        filters.append("fc.migration_status = ?")
+        params.append(migration_status)
+    if migration_action_type != "all":
+        if migration_action_type == "none":
+            filters.append("fc.migration_action_type IS NULL")
+        else:
+            filters.append("fc.migration_action_type = ?")
+            params.append(migration_action_type)
+    where = f"WHERE {' AND '.join(filters)}" if filters else ""
     with connect() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT
                 fc.*,
                 l.schooldrive_lead_id,
@@ -325,11 +345,12 @@ def list_front_import_records(limit: int = 100) -> list[dict[str, Any]]:
             FROM front_conversations fc
             LEFT JOIN leads l ON l.id = fc.lead_id
             LEFT JOIN front_messages fm ON fm.front_conversation_row_id = fc.id
+            {where}
             GROUP BY fc.id
             ORDER BY datetime(fc.updated_at) DESC, fc.id DESC
             LIMIT ?
             """,
-            (limit,),
+            (*params, limit),
         ).fetchall()
     return rows_to_dicts(rows)
 

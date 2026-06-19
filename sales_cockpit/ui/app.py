@@ -156,6 +156,12 @@ DISPLAY_LABELS = {
     "pending": "En attente",
     "approved": "Approuvé",
     "rejected": "Rejeté",
+    "matched": "Correspondance trouvée",
+    "unmatched": "Non retrouvé",
+    "ambiguous": "Ambigu",
+    "active": "Active",
+    "manual_review": "Revue manuelle",
+    "none": "Aucune",
     "twilio/text": "Texte",
     "twilio/call-to-action": "Bouton",
     "twilio/quick-reply": "Réponse rapide",
@@ -1893,9 +1899,65 @@ def render_admin(user: dict) -> None:
             """
         )
         st.subheader("Front.io historique")
-        front_records = list_front_import_records(100)
+        filter_cols = st.columns([0.25, 0.25, 0.25, 0.25], vertical_alignment="bottom")
+        with filter_cols[0]:
+            front_match_filter = st.selectbox(
+                "Matching",
+                ["all", "matched", "unmatched", "ambiguous"],
+                format_func=labelize,
+                key="front_match_filter",
+            )
+        with filter_cols[1]:
+            front_migration_filter = st.selectbox(
+                "Migration",
+                ["all", "active", "resolved", "manual_review"],
+                format_func=labelize,
+                key="front_migration_filter",
+            )
+        with filter_cols[2]:
+            front_action_filter = st.selectbox(
+                "Action recommandée",
+                ["all", "reply", "follow_up", "none"],
+                format_func=labelize,
+                key="front_action_filter",
+            )
+        with filter_cols[3]:
+            front_limit = st.number_input(
+                "Limite",
+                min_value=10,
+                max_value=500,
+                value=100,
+                step=10,
+                key="front_limit",
+            )
+        front_records = list_front_import_records(
+            int(front_limit),
+            match_status=front_match_filter,
+            migration_status=front_migration_filter,
+            migration_action_type=front_action_filter,
+        )
         if front_records:
-            st.dataframe(front_records, hide_index=True, use_container_width=True, height=360)
+            front_review_rows = [
+                {
+                    "Front ID": item["front_conversation_id"],
+                    "Téléphone": item.get("phone_e164") or "",
+                    "Matching": labelize(item.get("match_status")),
+                    "Migration": labelize(item.get("migration_status")),
+                    "Action": labelize(item.get("migration_action_type") or "none"),
+                    "Messages": item.get("front_message_count") or 0,
+                    "Attachés": item.get("attached_message_count") or 0,
+                    "Prospect": lead_display_name(item) if item.get("lead_id") else "",
+                    "SD ID": item.get("schooldrive_lead_id") or "",
+                    "Statut Front": item.get("front_status") or "",
+                    "Sujet": compact_text(item.get("subject") or "", 90),
+                    "Raison": compact_text(item.get("migration_reason") or item.get("match_reason") or "", 120),
+                }
+                for item in front_records
+            ]
+            st.dataframe(front_review_rows, hide_index=True, use_container_width=True, height=360)
+            st.caption(
+                "Ces lignes restent en zone tampon. Elles ne créent aucune action et n'attachent aucun message au fil tant que l'import historique n'est pas explicitement lancé avec attachement."
+            )
         else:
             st.info("Aucune conversation Front importée dans la zone tampon.")
 

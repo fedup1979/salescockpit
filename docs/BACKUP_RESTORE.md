@@ -82,12 +82,29 @@ Then open:
 http://139.59.158.77:8502
 ```
 
-## Cron Recommendation
+## Automated Cron Backups
 
-For staging, manual backups before integration tests are enough. Before production cutover, add a daily cron:
+Install the standard cron file from the deployed app:
 
-```cron
-15 2 * * * root bash /opt/sales-cockpit/prod/app/deploy/scripts/backup_sqlite.sh prod >> /var/log/sales-cockpit-backup.log 2>&1
+```bash
+sudo bash /opt/sales-cockpit/staging/app/deploy/scripts/install_backup_cron.sh
 ```
 
-Do not enable automated production backups before the prod environment exists and the restore path has been tested once.
+This writes:
+
+```text
+/etc/cron.d/sales-cockpit-backups
+```
+
+Schedule, in UTC:
+
+- staging: daily at `01:17`, 14-day retention;
+- prod: daily at `01:37`, 30-day retention.
+
+Logs go to:
+
+```text
+/var/log/sales-cockpit-backup.log
+```
+
+The cron is safe to install once both staging and prod databases exist and restore has been tested once.

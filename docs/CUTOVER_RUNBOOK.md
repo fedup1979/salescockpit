@@ -57,6 +57,20 @@ python scripts/schooldrive_replay_payloads.py payloads/schooldrive \
    - archived SchoolDrive records are terminated;
    - Tanjona +72h follow-ups exist only when expected.
 
+6. Run the automated pre-cutover check on the droplet:
+
+```bash
+cd /opt/sales-cockpit/staging/app
+set -a
+source /opt/sales-cockpit/staging/.env
+set +a
+.venv/bin/python scripts/pre_cutover_check.py \
+  --api-base http://127.0.0.1:8602 \
+  --ui-url http://127.0.0.1:8502
+```
+
+The check must pass before a cutover rehearsal. For cold PROD preparation only, `--allow-cold-prod` can be used to avoid failing simply because SchoolDrive and Front have not been connected yet.
+
 ## T-1: Front Buffer Import
 
 1. Preview a tiny Front sample:
@@ -90,6 +104,12 @@ sudo bash /opt/sales-cockpit/prod/app/deploy/scripts/backup_sqlite.sh prod
 ```
 
 Keep the backup path and checksum in the deployment notes.
+
+Automated daily backups should already be installed:
+
+```bash
+sudo bash /opt/sales-cockpit/staging/app/deploy/scripts/install_backup_cron.sh
+```
 
 ## T0: Freeze Front
 
