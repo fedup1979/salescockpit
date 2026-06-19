@@ -22,6 +22,10 @@ La fenêtre WhatsApp est ouverte pendant 24 heures après un message entrant du 
 
 Quand la fenêtre est fermée, vous ne pouvez pas envoyer de message libre. Vous devez utiliser un modèle WhatsApp approuvé. Si aucun modèle ne correspond à la situation, créez une demande de modèle depuis l'action concernée. L'action reste alors bloquée jusqu'à ce qu'un modèle adapté soit disponible.
 
+Seuls les admins peuvent créer, synchroniser et soumettre des modèles à Twilio. Les autres utilisateurs peuvent chercher les modèles existants et demander un nouveau modèle si rien ne convient.
+
+Dans le fil de conversation, les messages envoyés par l'équipe peuvent afficher des coches : une coche signifie envoyé, deux coches signifient reçu, deux coches bleues signifient lu, et un point d'exclamation signale un échec.
+
 Le premier WhatsApp automatique envoyé après une demande d'information ne suffit pas à ouvrir la fenêtre. La fenêtre s'ouvre seulement quand le prospect répond.
 
 ## Conversations actives et terminées

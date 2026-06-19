@@ -2,7 +2,7 @@
 
 ## Current State
 
-Sales Cockpit is a runnable local mock MVP.
+Sales Cockpit is a runnable staging prototype.
 
 Local URLs:
 
@@ -18,7 +18,7 @@ DigitalOcean staging:
 - Host: `salescockpit-prod-01`
 - Services: `sales-cockpit-ui@staging.service`, `sales-cockpit-api@staging.service`
 
-The app has been iteratively reviewed by François and is currently in a good mock-prototype state.
+The app has been iteratively reviewed by François and is currently in a good staging prototype state.
 
 ## Important Recent Decisions
 
@@ -71,6 +71,11 @@ The app has been iteratively reviewed by François and is currently in a good mo
 - The Actions tab is contextual: WhatsApp actions explain where to send, call actions collect result + mandatory note, blocked relances show template-request state, and the standard planner can create `reply`, `follow_up`, `setting_call`, or `closing_call`.
 - `Actions avancées` should stay minimal. In V1 it only contains `Message fait hors cockpit`. Do not reintroduce generic manual action creation, manual handoff to closer, manual data correction, or conversation reopen there.
 - Setting and closing calls can be completed with business outcomes that create the next action.
+- Only admins can create, synchronize, or submit WhatsApp templates to Twilio.
+- Non-admin users can search templates and create template requests only.
+- Twilio templates are synchronized from the Twilio Content API through `sales_cockpit/services/twilio_content.py`.
+- In `sandbox` or `live` mode, approved templates are sendable only if they have a real Twilio `twilio_content_sid`; `HX_MOCK` demo templates are excluded from the send list.
+- Delivery statuses are shown in conversation messages with WhatsApp-style checks: sent, delivered, read, failed, or queued/sending.
 - Lead-relative reminders follow `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
 - Course-date reminders win over lead-relative reminders. The losing lead-relative reminder is cancelled.
 - Minimum outbound WhatsApp follow-up delay is 24h.
@@ -116,7 +121,7 @@ The app has been iteratively reviewed by François and is currently in a good mo
 
 Latest known validation:
 
-- `pytest`: 59 tests passing.
+- `pytest`: 61 tests passing.
 - `compileall`: passed for `sales_cockpit`, `scripts`, and `tests`.
 - `scripts/reset_demo.py`: verified on a temporary SQLite database and creates 19 `SD-DEMO-*` leads.
 - Streamlit AppTest smoke covers reply-action guidance and absence of the generic `Terminer l'action` button in the main Actions flow.
@@ -151,7 +156,8 @@ Stop-Process -Id <PID> -Force
 - SchoolDrive snapshot webhook exists; real staging payload validation is still pending.
 - SchoolDrive URL format is provided by Tiago's webhook contract and should be checked during the first staging replay.
 - Notion connector is placeholder only.
-- Twilio is mock by default. Sandbox-ready SDK sending, signed inbound webhook handling, and status callbacks are implemented but not yet configured with real credentials.
+- Twilio is mock by default locally. Staging is configured in sandbox mode and real inbound/outbound WhatsApp has been tested.
+- Twilio Content API synchronization exists. Real template approval and closed-window template sending still need an end-to-end staging validation with an approved Twilio template.
 - Attachments UI exists but persistence/send is not implemented.
 - Auth is local password-based only.
 - GitHub remote exists: `https://github.com/fedup1979/salescockpit`.
@@ -169,7 +175,7 @@ Stop-Process -Id <PID> -Force
 4. Send Tiago the SchoolDrive staging webhook URL and token.
 5. Validate real SchoolDrive staging payloads and backfill replay.
 6. Implement Notion historical enrichment.
-7. Configure Twilio sandbox credentials on staging and run a real sandbox inbound/outbound test.
+7. Validate Twilio template synchronization, creation, approval status, and closed-window sending on staging.
 
 ## Files Most Likely to Change Next
 
@@ -180,5 +186,6 @@ Stop-Process -Id <PID> -Force
 - `sales_cockpit/services/schooldrive.py`
 - `sales_cockpit/services/notion.py`
 - `sales_cockpit/services/twilio_client.py`
+- `sales_cockpit/services/twilio_content.py`
 - `docs/TWILIO_SANDBOX.md`
 - `tests/test_store.py`

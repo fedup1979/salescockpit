@@ -125,6 +125,9 @@ CREATE TABLE IF NOT EXISTS attachments (
 CREATE TABLE IF NOT EXISTS whatsapp_templates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     twilio_content_sid TEXT,
+    twilio_content_type TEXT,
+    twilio_payload_json TEXT,
+    last_twilio_sync_at TEXT,
     name TEXT NOT NULL,
     language TEXT NOT NULL DEFAULT 'fr',
     category TEXT NOT NULL DEFAULT 'utility',
@@ -394,6 +397,15 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
             ("twilio_status", "TEXT"),
             ("twilio_error_code", "TEXT"),
             ("twilio_error_message", "TEXT"),
+        ],
+    )
+    add_missing_columns(
+        conn,
+        "whatsapp_templates",
+        [
+            ("twilio_content_type", "TEXT"),
+            ("twilio_payload_json", "TEXT"),
+            ("last_twilio_sync_at", "TEXT"),
         ],
     )
     add_missing_columns(

@@ -81,6 +81,21 @@ Outbound sending:
 - templates use `ContentSid` and `ContentVariables`;
 - `SALES_COCKPIT_TWILIO_STATUS_CALLBACK_URL` is passed as `StatusCallback` when configured.
 
+Template management:
+
+- admins can synchronize templates from Twilio Content API;
+- admins can create a text template in Twilio from Sales Cockpit;
+- admins can submit the new template for WhatsApp approval;
+- non-admin users can browse templates and create template requests, but cannot create or synchronize Twilio templates.
+
+Delivery checks in the conversation thread:
+
+- `...` means queued or sending;
+- `✓` means sent;
+- `✓✓` means delivered;
+- blue `✓✓` means read;
+- `!` means failed or undelivered.
+
 ## Important Template Constraint
 
 When Twilio mode is `sandbox` or `live`, approved templates must have a real Twilio `twilio_content_sid`.

@@ -9,8 +9,16 @@ from sales_cockpit.business_rules import (
     STOP_CONTACT_STATUSES,
     STOP_QUALIFICATION_STATUSES,
 )
+from sales_cockpit.config import get_settings
 from sales_cockpit.db import connect, init_db, insert_event, row_to_dict, rows_to_dicts
 from sales_cockpit.security import verify_password
+from sales_cockpit.services.twilio_content import (
+    TwilioContentError,
+    TwilioContentTemplate,
+    create_twilio_text_template,
+    list_twilio_templates,
+    submit_twilio_template_for_whatsapp_approval,
+)
 from sales_cockpit.services.twilio_client import (
     TwilioConfigurationError,
     TwilioMessageError,
@@ -2144,6 +2152,10 @@ def list_templates(search: str = "", approved_only: bool = False) -> list[dict[s
     params: list[Any] = []
     if approved_only:
         filters.append("status = 'approved'")
+        if (get_settings().twilio_mode or "mock").lower() != "mock":
+            filters.append(
+                "twilio_content_sid IS NOT NULL AND twilio_content_sid NOT LIKE 'HX_MOCK_%'"
+            )
     if search:
         like = f"%{search.lower()}%"
         filters.append("(lower(name) LIKE ? OR lower(body) LIKE ? OR lower(category) LIKE ?)")
@@ -2179,6 +2191,20 @@ def get_template(template_id: int) -> dict[str, Any] | None:
     return template
 
 
+def _is_admin_user(conn: Any, user_id: int) -> bool:
+    row = conn.execute(
+        "SELECT role FROM users WHERE id = ? AND active = 1",
+        (user_id,),
+    ).fetchone()
+    return bool(row and row["role"] == "admin")
+
+
+def _require_admin_user(conn: Any, user_id: int) -> tuple[bool, str]:
+    if _is_admin_user(conn, user_id):
+        return True, ""
+    return False, "Seuls les admins peuvent créer ou synchroniser des modèles WhatsApp."
+
+
 def create_template(
     user_id: int,
     name: str,
@@ -2187,14 +2213,37 @@ def create_template(
     language: str = "fr",
     category: str = "utility",
     placeholders: dict[str, str] | None = None,
+    twilio_content_sid: str | None = None,
+    twilio_content_type: str | None = None,
+    twilio_payload: dict[str, Any] | None = None,
 ) -> int:
     with connect() as conn:
+        ok, message = _require_admin_user(conn, user_id)
+        if not ok:
+            raise PermissionError(message)
         cursor = conn.execute(
             """
-            INSERT INTO whatsapp_templates (name, language, category, body, status, created_by_user_id)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO whatsapp_templates (
+                twilio_content_sid, twilio_content_type, twilio_payload_json,
+                last_twilio_sync_at, name, language, category, body, status,
+                created_by_user_id, submitted_at, approved_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (name, language, category, body, status, user_id),
+            (
+                twilio_content_sid,
+                twilio_content_type,
+                json.dumps(twilio_payload or {}, ensure_ascii=False) if twilio_payload else None,
+                iso_utc() if twilio_payload else None,
+                name,
+                language,
+                category,
+                body,
+                status,
+                user_id,
+                iso_utc() if status == "pending" else None,
+                iso_utc() if status == "approved" else None,
+            ),
         )
         template_id = cursor.lastrowid
         for key, example in (placeholders or {}).items():
@@ -2227,6 +2276,268 @@ def create_template(
             ),
         )
     return int(template_id)
+
+
+def sync_twilio_templates(user_id: int) -> tuple[bool, str]:
+    with connect() as conn:
+        ok, message = _require_admin_user(conn, user_id)
+        if not ok:
+            return False, message
+
+    try:
+        remote_templates = list_twilio_templates()
+    except TwilioContentError as exc:
+        return False, str(exc)
+
+    now = iso_utc()
+    created = 0
+    updated = 0
+    with connect() as conn:
+        for remote in remote_templates:
+            changed = _upsert_twilio_template(conn, remote, user_id, now)
+            if changed == "created":
+                created += 1
+            elif changed == "updated":
+                updated += 1
+        conn.execute(
+            """
+            INSERT INTO user_activity_log (
+                user_id, event_type, entity_type, metadata_json, created_at
+            ) VALUES (?, 'twilio_templates_synced', 'whatsapp_template', ?, ?)
+            """,
+            (
+                user_id,
+                json.dumps(
+                    {"created": created, "updated": updated, "total": len(remote_templates)},
+                    ensure_ascii=False,
+                ),
+                now,
+            ),
+        )
+    return True, f"Synchronisation Twilio terminée : {created} créé(s), {updated} mis à jour."
+
+
+def create_and_submit_twilio_template(
+    user_id: int,
+    name: str,
+    body: str,
+    language: str = "fr",
+    category: str = "utility",
+    placeholders: dict[str, str] | None = None,
+    submit_for_approval: bool = True,
+) -> tuple[bool, str, int | None]:
+    name = name.strip()
+    body = body.strip()
+    if not name or not body:
+        return False, "Ajoutez un nom et un corps de modèle.", None
+    with connect() as conn:
+        ok, message = _require_admin_user(conn, user_id)
+        if not ok:
+            return False, message, None
+    variables = {
+        key: value or _placeholder_example(key)
+        for key, value in (placeholders or {}).items()
+        if key
+    }
+    try:
+        remote = create_twilio_text_template(
+            name=name,
+            body=body,
+            language=language,
+            variables=variables,
+        )
+        approval_result = None
+        if submit_for_approval:
+            approval_result = submit_twilio_template_for_whatsapp_approval(
+                content_sid=remote.content_sid,
+                approval_name=name,
+                category=category,
+            )
+            remote = TwilioContentTemplate(
+                content_sid=remote.content_sid,
+                name=remote.name,
+                language=remote.language,
+                category=(approval_result.get("category") or category).lower(),
+                body=remote.body,
+                status=_map_twilio_local_status(str(approval_result.get("status") or "pending")),
+                rejection_reason=approval_result.get("rejection_reason") or None,
+                content_type=remote.content_type,
+                variables=remote.variables,
+                payload={**remote.payload, "approval_submission": approval_result},
+            )
+    except TwilioContentError as exc:
+        return False, str(exc), None
+
+    now = iso_utc()
+    with connect() as conn:
+        template_id = _upsert_twilio_template(conn, remote, user_id, now, return_id=True)
+        conn.execute(
+            """
+            INSERT INTO user_activity_log (
+                user_id, event_type, entity_type, entity_id, metadata_json, created_at
+            ) VALUES (?, 'twilio_template_created', 'whatsapp_template', ?, ?, ?)
+            """,
+            (
+                user_id,
+                template_id,
+                json.dumps(
+                    {
+                        "name": name,
+                        "content_sid": remote.content_sid,
+                        "submitted": submit_for_approval,
+                    },
+                    ensure_ascii=False,
+                ),
+                now,
+            ),
+        )
+    if submit_for_approval:
+        return True, "Modèle créé dans Twilio et soumis pour approbation WhatsApp.", template_id
+    return True, "Modèle créé dans Twilio, non soumis.", template_id
+
+
+def _upsert_twilio_template(
+    conn: Any,
+    remote: TwilioContentTemplate,
+    user_id: int,
+    now: str,
+    return_id: bool = False,
+) -> str | int:
+    existing = row_to_dict(
+        conn.execute(
+            "SELECT * FROM whatsapp_templates WHERE twilio_content_sid = ?",
+            (remote.content_sid,),
+        ).fetchone()
+    )
+    if not existing:
+        existing = row_to_dict(
+            conn.execute(
+                """
+                SELECT *
+                FROM whatsapp_templates
+                WHERE twilio_content_sid IS NULL
+                  AND lower(name) = lower(?)
+                ORDER BY id
+                LIMIT 1
+                """,
+                (remote.name,),
+            ).fetchone()
+        )
+
+    payload_json = json.dumps(remote.payload or {}, ensure_ascii=False)
+    rejection_reason = remote.rejection_reason
+    if existing:
+        template_id = int(existing["id"])
+        conn.execute(
+            """
+            UPDATE whatsapp_templates
+            SET twilio_content_sid = ?,
+                twilio_content_type = ?,
+                twilio_payload_json = ?,
+                last_twilio_sync_at = ?,
+                name = ?,
+                language = ?,
+                category = ?,
+                body = ?,
+                status = ?,
+                rejection_reason = ?,
+                submitted_at = CASE WHEN ? = 'pending' AND submitted_at IS NULL THEN ? ELSE submitted_at END,
+                approved_at = CASE WHEN ? = 'approved' THEN coalesce(approved_at, ?) ELSE approved_at END,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                remote.content_sid,
+                remote.content_type,
+                payload_json,
+                now,
+                remote.name,
+                remote.language,
+                remote.category,
+                remote.body,
+                remote.status,
+                rejection_reason,
+                remote.status,
+                now,
+                remote.status,
+                now,
+                now,
+                template_id,
+            ),
+        )
+        _replace_template_placeholders(conn, template_id, remote.variables)
+        return template_id if return_id else "updated"
+
+    cursor = conn.execute(
+        """
+        INSERT INTO whatsapp_templates (
+            twilio_content_sid, twilio_content_type, twilio_payload_json,
+            last_twilio_sync_at, name, language, category, body, status,
+            rejection_reason, created_by_user_id, submitted_at, approved_at,
+            created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            remote.content_sid,
+            remote.content_type,
+            payload_json,
+            now,
+            remote.name,
+            remote.language,
+            remote.category,
+            remote.body,
+            remote.status,
+            rejection_reason,
+            user_id,
+            now if remote.status == "pending" else None,
+            now if remote.status == "approved" else None,
+            now,
+            now,
+        ),
+    )
+    template_id = int(cursor.lastrowid)
+    _replace_template_placeholders(conn, template_id, remote.variables)
+    return template_id if return_id else "created"
+
+
+def _replace_template_placeholders(
+    conn: Any,
+    template_id: int,
+    variables: dict[str, str],
+) -> None:
+    conn.execute("DELETE FROM template_placeholders WHERE template_id = ?", (template_id,))
+    for key, example in variables.items():
+        conn.execute(
+            """
+            INSERT INTO template_placeholders (
+                template_id, placeholder_key, source_field, example_value, required
+            ) VALUES (?, ?, ?, ?, 1)
+            """,
+            (template_id, key, key, example),
+        )
+
+
+def _map_twilio_local_status(status: str) -> str:
+    value = status.strip().lower()
+    if value == "approved":
+        return "approved"
+    if value in {"received", "pending"}:
+        return "pending"
+    if value == "rejected":
+        return "rejected"
+    return "draft"
+
+
+def _placeholder_example(key: str) -> str:
+    examples = {
+        "first_name": "Camille",
+        "course_title": "APP",
+        "course_name": "APP GE P26",
+        "1": "Camille",
+        "2": "APP",
+    }
+    return examples.get(key, key)
 
 
 def list_sequences() -> list[dict[str, Any]]:

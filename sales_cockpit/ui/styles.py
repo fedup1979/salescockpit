@@ -218,6 +218,32 @@ h1, h2, h3 {
   text-align: right;
 }
 
+.sc-delivery-status {
+  display: inline-block;
+  margin-left: .28rem;
+  font-size: .84rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  vertical-align: baseline;
+}
+
+.sc-delivery-pending {
+  color: oklch(0.55 0.018 250);
+}
+
+.sc-delivery-sent,
+.sc-delivery-delivered {
+  color: oklch(0.48 0.025 250);
+}
+
+.sc-delivery-read {
+  color: oklch(0.58 0.15 230);
+}
+
+.sc-delivery-failed {
+  color: oklch(0.52 0.17 28);
+}
+
 .sc-reply-anchor {
   margin-top: 1.1rem;
   padding-top: .85rem;

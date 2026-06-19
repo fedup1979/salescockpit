@@ -2,12 +2,14 @@ from datetime import timedelta
 from uuid import uuid4
 
 from sales_cockpit.db import seed_initial_data
+from sales_cockpit.services.twilio_content import TwilioContentTemplate
 from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
 from sales_cockpit.store import (
     assign_standard_next_action,
     authenticate,
     complete_action_with_workflow,
     create_bug_report,
+    create_template,
     create_template_request,
     get_conversation,
     get_next_action_for_lead,
@@ -25,6 +27,7 @@ from sales_cockpit.store import (
     send_freeform_message,
     send_template_message,
     set_conversation_status,
+    sync_twilio_templates,
     update_lead_qualification,
 )
 
@@ -545,6 +548,49 @@ def test_seed_includes_setter2_and_demo_templates() -> None:
     )
     templates = list_templates("demo_")
     assert len(templates) >= 10
+
+
+def test_only_admin_can_create_template() -> None:
+    seed_initial_data()
+    setter = authenticate("service.etudiants@essr.ch", "ChangeMe!2026")
+
+    try:
+        create_template(
+            setter["id"],
+            "setter_should_not_create",
+            "Bonjour {{first_name}}",
+            placeholders={"first_name": "Camille"},
+        )
+    except PermissionError as exc:
+        assert "admins" in str(exc)
+    else:
+        raise AssertionError("Non-admin template creation should fail.")
+
+
+def test_sync_twilio_templates_upserts_content_sid(monkeypatch) -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    remote = TwilioContentTemplate(
+        content_sid="HX1234567890abcdef1234567890abcdef",
+        name="twilio_relance_test",
+        language="fr",
+        category="utility",
+        body="Bonjour {{first_name}}, ceci est un test.",
+        status="approved",
+        content_type="twilio/text",
+        variables={"first_name": "Camille"},
+        payload={"sid": "HX1234567890abcdef1234567890abcdef"},
+    )
+    monkeypatch.setattr("sales_cockpit.store.list_twilio_templates", lambda: [remote])
+
+    ok, message = sync_twilio_templates(admin["id"])
+
+    assert ok is True
+    assert "Synchronisation" in message
+    templates = list_templates("twilio_relance_test")
+    assert len(templates) == 1
+    assert templates[0]["twilio_content_sid"] == "HX1234567890abcdef1234567890abcdef"
+    assert templates[0]["status"] == "approved"
 
 
 def test_seeded_conversations_include_schooldrive_lead_types() -> None:

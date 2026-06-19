@@ -35,6 +35,7 @@ from sales_cockpit.store import (
     assign_standard_next_action,
     authenticate,
     complete_action_with_workflow,
+    create_and_submit_twilio_template,
     create_bug_report,
     create_template_request,
     create_template,
@@ -55,6 +56,7 @@ from sales_cockpit.store import (
     send_freeform_message,
     send_template_message,
     set_conversation_status,
+    sync_twilio_templates,
     update_template_request_status,
     update_lead_qualification,
 )
@@ -150,6 +152,12 @@ DISPLAY_LABELS = {
     "draft": "Brouillon",
     "pending": "En attente",
     "approved": "Approuvé",
+    "rejected": "Rejeté",
+    "twilio/text": "Texte",
+    "twilio/call-to-action": "Bouton",
+    "twilio/quick-reply": "Réponse rapide",
+    "twilio/list-picker": "Liste",
+    "twilio/media": "Média",
     "utility": "Utilitaire",
     "marketing": "Marketing",
     "admin": "Admin",
@@ -631,17 +639,43 @@ def render_messages(conversation_id: int, show_internal_notes: bool = True) -> N
             sender = normalize_user_display_name(message.get("sender_email"), message.get("sender_name") or "ESSR")
         created = format_dt(message.get("created_at"))
         template = f" · modèle: {message['template_name']}" if message.get("template_name") else ""
+        delivery = render_delivery_status(message)
         st.markdown(
             f"""
             <div class="sc-message-row {row_css}">
               <div class="sc-message {css}">
-                <div class="sc-message-meta">{sender} · {created}{template}</div>
+                <div class="sc-message-meta">{sender} · {created}{template}{delivery}</div>
                 <div>{escape_html(message['body'])}</div>
               </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
+
+
+def render_delivery_status(message: dict) -> str:
+    if message.get("direction") != "outbound":
+        return ""
+    status = (message.get("twilio_status") or "").lower()
+    error = message.get("twilio_error_message") or message.get("twilio_error_code") or ""
+    labels = {
+        "accepted": ("…", "En file", "pending"),
+        "queued": ("…", "En file", "pending"),
+        "scheduled": ("…", "En file", "pending"),
+        "sending": ("…", "Envoi", "pending"),
+        "sent": ("✓", "Envoyé", "sent"),
+        "delivered": ("✓✓", "Reçu", "delivered"),
+        "read": ("✓✓", "Lu", "read"),
+        "failed": ("!", f"Échec{': ' + error if error else ''}", "failed"),
+        "undelivered": ("!", f"Non reçu{': ' + error if error else ''}", "failed"),
+    }
+    icon, title, css = labels.get(status, ("", "", ""))
+    if not icon:
+        return ""
+    return (
+        f' <span class="sc-delivery-status sc-delivery-{css}" '
+        f'title="{escape_html(title)}">{escape_html(icon)}</span>'
+    )
 
 
 def next_action_context(conv: dict) -> dict | None:
@@ -1455,6 +1489,10 @@ def render_user_guide() -> None:
 
         Quand la fenêtre est fermée, vous ne pouvez pas envoyer de message libre. Vous devez utiliser un modèle WhatsApp approuvé. Si aucun modèle ne correspond à la situation, créez une demande de modèle depuis l'action concernée. L'action reste alors bloquée jusqu'à ce qu'un modèle adapté soit disponible.
 
+        Seuls les admins peuvent créer, synchroniser et soumettre des modèles à Twilio. Les autres utilisateurs peuvent chercher les modèles existants et demander un nouveau modèle si rien ne convient.
+
+        Dans le fil de conversation, les messages envoyés par l'équipe peuvent afficher des coches : une coche signifie envoyé, deux coches signifient reçu, deux coches bleues signifient lu, et un point d'exclamation signale un échec.
+
         Le premier WhatsApp automatique envoyé après une demande d'information ne suffit pas à ouvrir la fenêtre. La fenêtre s'ouvre seulement quand le prospect répond.
 
         ### Conversations actives et terminées
@@ -1490,9 +1528,23 @@ def render_user_guide() -> None:
 
 def render_templates(user: dict) -> None:
     st.title("Modèles WhatsApp")
+    is_admin = user.get("role") == "admin"
     request_flash = st.session_state.pop("template_page_flash", None)
     if request_flash:
         st.success(request_flash)
+
+    if is_admin:
+        sync_col, sync_note_col = st.columns([0.22, 0.78], vertical_alignment="center")
+        with sync_col:
+            if st.button("Synchroniser Twilio", use_container_width=True):
+                ok, message = sync_twilio_templates(user["id"])
+                show_result(ok, message)
+                if ok:
+                    st.rerun()
+        with sync_note_col:
+            st.caption("Récupère les templates Twilio DEV, leurs ContentSid et leurs statuts d'approbation WhatsApp.")
+    else:
+        st.info("Vous pouvez consulter les modèles. Seuls les admins peuvent créer ou synchroniser des modèles WhatsApp.")
 
     st.subheader("Demandes de modèles à créer")
     requests = [
@@ -1501,53 +1553,61 @@ def render_templates(user: dict) -> None:
     ]
     if requests:
         st.dataframe(requests, hide_index=True, use_container_width=True, height=220)
-        with st.expander("Créer un modèle depuis une demande", expanded=False):
-            with st.form("create_template_from_request"):
-                request = st.selectbox(
-                    "Demande",
-                    requests,
-                    format_func=lambda item: f"#{item['id']} · {lead_display_name(item)} · {item.get('reason') or 'Sans motif'}",
-                )
-                name = st.text_input("Nom interne", value=f"demande_modele_{request['id']}")
-                body = st.text_area(
-                    "Corps du modèle",
-                    value="",
-                    placeholder="Bonjour {{first_name}}, ...",
-                    height=120,
-                )
-                status = st.selectbox("Statut mock", ["draft", "pending", "approved"], index=1, format_func=labelize)
-                placeholders_raw = st.text_input("Placeholders", value="first_name, course_title")
-                submitted = st.form_submit_button("Créer et lier à la demande")
-            if submitted:
-                if not name.strip() or not body.strip():
-                    st.error("Ajoutez un nom et un corps de modèle.")
-                    return
-                placeholders = {
-                    item.strip(): ""
-                    for item in placeholders_raw.split(",")
-                    if item.strip()
-                }
-                template_id = create_template(
-                    user["id"],
-                    name.strip(),
-                    body.strip(),
-                    status=status,
-                    placeholders=placeholders,
-                )
-                request_status = "approved" if status == "approved" else "submitted"
-                ok, message = update_template_request_status(
-                    request["id"],
-                    user["id"],
-                    request_status,
-                    template_id,
-                )
-                show_result(ok, message)
-                if ok:
-                    st.session_state.template_page_flash = (
-                        "Modèle créé et lié à la demande. "
-                        "Si le modèle est approuvé, la relance bloquée est débloquée."
+        if is_admin:
+            with st.expander("Créer un modèle Twilio depuis une demande", expanded=False):
+                with st.form("create_template_from_request"):
+                    request = st.selectbox(
+                        "Demande",
+                        requests,
+                        format_func=lambda item: f"#{item['id']} · {lead_display_name(item)} · {item.get('reason') or 'Sans motif'}",
                     )
-                    st.rerun()
+                    name = st.text_input("Nom Twilio", value=f"demande_modele_{request['id']}")
+                    body = st.text_area(
+                        "Corps du modèle",
+                        value="",
+                        placeholder="Bonjour {{first_name}}, ...",
+                        height=120,
+                    )
+                    category = st.selectbox(
+                        "Catégorie WhatsApp",
+                        ["utility", "marketing", "authentication"],
+                        format_func=labelize,
+                    )
+                    placeholders_raw = st.text_input("Placeholders", value="first_name, course_title")
+                    submitted = st.form_submit_button("Créer dans Twilio et soumettre")
+                if submitted:
+                    if not name.strip() or not body.strip():
+                        st.error("Ajoutez un nom et un corps de modèle.")
+                        return
+                    placeholders = {
+                        item.strip(): ""
+                        for item in placeholders_raw.split(",")
+                        if item.strip()
+                    }
+                    ok, message, template_id = create_and_submit_twilio_template(
+                        user["id"],
+                        name.strip(),
+                        body.strip(),
+                        category=category,
+                        placeholders=placeholders,
+                        submit_for_approval=True,
+                    )
+                    if ok and template_id:
+                        update_template_request_status(
+                            request["id"],
+                            user["id"],
+                            "submitted",
+                            template_id,
+                        )
+                    show_result(ok, message)
+                    if ok:
+                        st.session_state.template_page_flash = (
+                            "Modèle créé dans Twilio et lié à la demande. "
+                            "Il sera utilisable dès approbation WhatsApp."
+                        )
+                        st.rerun()
+        else:
+            st.caption("Les demandes seront traitées par Laura, François ou Tiago.")
     else:
         st.info("Aucune demande de modèle à traiter.")
 
@@ -1558,22 +1618,42 @@ def render_templates(user: dict) -> None:
     st.caption(f"{len(templates)} modèle(s) affiché(s). La recherche porte sur le nom, le contenu et la catégorie.")
     for template in templates:
         with st.container(border=True):
-            st.write(f"**{template['name']}**")
-            st.caption(f"{labelize(template['status'])} · {template['language']} · {labelize(template['category'])}")
+            cols = st.columns([0.58, 0.22, 0.20], vertical_alignment="center")
+            with cols[0]:
+                st.write(f"**{template['name']}**")
+                sid = template.get("twilio_content_sid") or "Aucun ContentSid"
+                content_type = labelize(template.get("twilio_content_type") or "twilio/text")
+                st.caption(f"{sid} · {content_type}")
+            with cols[1]:
+                st.caption(f"{labelize(template['status'])} · {template['language']} · {labelize(template['category'])}")
+            with cols[2]:
+                if template.get("last_twilio_sync_at"):
+                    st.caption(f"Sync {format_dt(template['last_twilio_sync_at'])}")
             st.write(template["body"])
+            if template.get("rejection_reason"):
+                st.error(f"Rejet WhatsApp : {template['rejection_reason']}")
 
     st.divider()
     st.subheader("Créer un modèle")
-    with st.form("create_template"):
-        name = st.text_input("Nom interne", placeholder="relance_financement_fsm")
+    if not is_admin:
+        st.info("Création réservée aux admins.")
+        return
+
+    with st.form("create_twilio_template"):
+        name = st.text_input("Nom Twilio", placeholder="relance_financement_fsm")
         body = st.text_area(
             "Corps du modèle",
             placeholder="Bonjour {{first_name}}, je reviens vers vous au sujet de {{course_title}}.",
             height=120,
         )
-        status = st.selectbox("Statut mock", ["draft", "pending", "approved"], index=0, format_func=labelize)
+        category = st.selectbox(
+            "Catégorie WhatsApp",
+            ["utility", "marketing", "authentication"],
+            format_func=labelize,
+        )
         placeholders_raw = st.text_input("Placeholders", placeholder="first_name, course_title")
-        submitted = st.form_submit_button("Créer le modèle")
+        submit_for_approval = st.checkbox("Soumettre immédiatement pour approbation WhatsApp", value=True)
+        submitted = st.form_submit_button("Créer le modèle Twilio")
     if submitted:
         if not name.strip() or not body.strip():
             st.error("Ajoutez un nom et un corps de modèle.")
@@ -1583,9 +1663,17 @@ def render_templates(user: dict) -> None:
             for item in placeholders_raw.split(",")
             if item.strip()
         }
-        create_template(user["id"], name.strip(), body.strip(), status=status, placeholders=placeholders)
-        st.success("Modèle créé localement.")
-        st.rerun()
+        ok, message, _template_id = create_and_submit_twilio_template(
+            user["id"],
+            name.strip(),
+            body.strip(),
+            category=category,
+            placeholders=placeholders,
+            submit_for_approval=submit_for_approval,
+        )
+        show_result(ok, message)
+        if ok:
+            st.rerun()
 
 
 def page_access_matrix() -> list[dict]:

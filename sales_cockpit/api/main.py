@@ -149,15 +149,18 @@ def templates(search: str = "", approved_only: bool = False) -> list[dict]:
 
 @app.post("/templates")
 def create_whatsapp_template(request: TemplateCreateRequest) -> dict:
-    template_id = create_template(
-        user_id=request.user_id,
-        name=request.name,
-        body=request.body,
-        status=request.status,
-        language=request.language,
-        category=request.category,
-        placeholders=request.placeholders,
-    )
+    try:
+        template_id = create_template(
+            user_id=request.user_id,
+            name=request.name,
+            body=request.body,
+            status=request.status,
+            language=request.language,
+            category=request.category,
+            placeholders=request.placeholders,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     return {"status": "ok", "template_id": template_id}
 
 

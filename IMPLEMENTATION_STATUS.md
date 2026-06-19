@@ -2,7 +2,7 @@
 
 ## Current Status
 
-V1 local mock build is runnable.
+V1 staging build is runnable. Twilio sandbox messaging is connected for staging.
 
 ## Completed
 
@@ -82,17 +82,22 @@ V1 local mock build is runnable.
 - Implemented SchoolDrive snapshot webhook with bearer auth, environment guard, `event_id` idempotency, `schooldrive_id` upsert, `aggregated_updated_at` ordering, autoresponder replacement, and archival handling.
 - SchoolDrive `url` is stored and used by the UI SchoolDrive link.
 - Implemented Twilio sandbox-ready integration: SDK send client, inbound WhatsApp form webhook, `X-Twilio-Signature` validation, inbound idempotency by `MessageSid`, status callback storage, and legacy JSON mock compatibility.
+- Twilio sandbox has been configured and tested on staging for inbound and outbound WhatsApp messages.
+- Twilio delivery status is displayed in the conversation thread with WhatsApp-style checks.
+- Admin-only Twilio template synchronization is implemented through the Twilio Content API.
+- Admin-only Twilio template creation and WhatsApp approval submission are implemented for text templates.
+- Non-admin users can request missing templates but cannot create or synchronize Twilio templates.
+- In sandbox/live mode, sendable approved templates exclude local `HX_MOCK` demo templates.
 
 ## Next Checkpoints
 
 1. Run the focused scenario validation in `docs/TEST_PLAN.md` after `scripts/reset_demo.py`.
 2. Fix any scenario failures before adding new features.
 3. Only after scenario validation, do a moderate refactor of the large files into UI pages/components, workflow services, seed/reset, and repositories.
-4. Send SchoolDrive staging webhook URL and token to Tiago.
-5. Validate a real SchoolDrive staging POST and backfill replay.
+4. Validate a real SchoolDrive staging POST and backfill replay.
+5. Test Twilio template synchronization and template creation from staging.
 6. Add Notion historical enrichment.
-7. Configure Twilio sandbox credentials on staging and run a real sandbox message test.
-8. Define and automate SQLite backups before PROD.
+7. Define and automate SQLite backups before PROD.
 
 ## Integration Policy
 
