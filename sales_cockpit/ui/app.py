@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime, time, timedelta, timezone
+from html import escape
 from pathlib import Path
 import sys
 
@@ -2765,20 +2766,16 @@ def render_pilotage_conflict_rules() -> None:
         "Les lignes `Actif` décrivent le comportement actuellement attendu du cockpit. "
         "Les lignes `Partiel / à valider` ou `V2 / à valider` signalent les règles connues mais non finalisées."
     )
-    st.dataframe(
+    render_wrapped_table(
         pilotage_rows_with_natural_language(PILOTAGE_VALIDATION_CASES, "validation_case"),
-        hide_index=True,
-        use_container_width=True,
-        height=760,
+        max_height_rem=48,
     )
 
     st.markdown("### Règles métier de référence")
     st.caption("Table brute des règles générales utilisées par le système et par la matrice ci-dessus.")
-    st.dataframe(
+    render_wrapped_table(
         pilotage_rows_with_natural_language(OPERATING_RULES, "operating_rule"),
-        hide_index=True,
-        use_container_width=True,
-        height=360,
+        max_height_rem=28,
     )
 
     st.markdown("### Table technique de transition")
@@ -2786,11 +2783,37 @@ def render_pilotage_conflict_rules() -> None:
         "Vue plus technique : action courante + trigger + résultat -> prochaine action. "
         "Elle complète la matrice métier et sert de garde-fou pour l'implémentation."
     )
-    st.dataframe(
+    render_wrapped_table(
         pilotage_rows_with_natural_language(WORKFLOW_TRANSITIONS, "workflow_transition"),
-        hide_index=True,
-        use_container_width=True,
-        height=460,
+        max_height_rem=34,
+    )
+
+
+def render_wrapped_table(rows: list[dict], max_height_rem: int = 42) -> None:
+    if not rows:
+        st.info("Aucune donnée.")
+        return
+
+    headers = list(rows[0].keys())
+    head_html = "".join(f"<th>{escape(str(header))}</th>" for header in headers)
+    body_html = []
+    for row in rows:
+        cells = "".join(
+            f"<td>{escape(str(row.get(header, '')))}</td>"
+            for header in headers
+        )
+        body_html.append(f"<tr>{cells}</tr>")
+
+    st.markdown(
+        f"""
+        <div class="sc-wrapped-table-frame" style="max-height: {max_height_rem}rem;">
+          <table class="sc-wrapped-table">
+            <thead><tr>{head_html}</tr></thead>
+            <tbody>{''.join(body_html)}</tbody>
+          </table>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
 

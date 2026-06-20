@@ -510,6 +510,47 @@ h1, h2, h3 {
   line-height: 1.32;
 }
 
+.sc-wrapped-table-frame {
+  max-height: 42rem;
+  overflow: auto;
+  border: 1px solid var(--sc-border);
+  border-radius: 8px;
+  background: oklch(0.99 0.004 250);
+}
+
+.sc-wrapped-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: .82rem;
+  line-height: 1.34;
+}
+
+.sc-wrapped-table th,
+.sc-wrapped-table td {
+  padding: .48rem .55rem;
+  border-bottom: 1px solid var(--sc-border);
+  border-right: 1px solid var(--sc-border);
+  color: var(--sc-text);
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.sc-wrapped-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--sc-panel);
+  color: var(--sc-muted);
+  font-weight: 700;
+}
+
+.sc-wrapped-table th:last-child,
+.sc-wrapped-table td:last-child {
+  width: 32%;
+}
+
 .sc-readiness-ready {
   border-color: oklch(0.78 0.07 145);
   background: oklch(0.968 0.025 145);
