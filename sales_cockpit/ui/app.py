@@ -179,6 +179,68 @@ PILOTAGE_CONFLICT_RULES = [
         "Règle": "Si la session de référence est déjà commencée quand le lead ou la préinscription arrive, le flux lié au début du cours ne doit pas être lancé sur cette session. Il faut choisir ou configurer la prochaine session de référence.",
     },
 ]
+PILOTAGE_STATE_ROWS = [
+    {
+        "État": "Nouveau prospect",
+        "Code": "new",
+        "Sens": "Le prospect vient d'arriver ou n'a pas encore de parcours commercial avancé.",
+        "Suite normale": "Réponse Setter I si le prospect écrit, ou relance Setter II si aucun message entrant.",
+    },
+    {
+        "État": "Échange avec setter",
+        "Code": "setting",
+        "Sens": "Le prospect échange avec Setter I, mais aucun appel n'est encore fixé.",
+        "Suite normale": "Fixer un appel setting, fixer directement un appel closing, ou relancer si l'échange s'arrête.",
+    },
+    {
+        "État": "Appel setting prévu",
+        "Code": "appointment_booked",
+        "Sens": "Un rendez-vous de setting est prévu.",
+        "Suite normale": "Documenter l'appel setting quand le moment de l'appel arrive.",
+    },
+    {
+        "État": "Appel closing",
+        "Code": "closing",
+        "Sens": "Le prospect est passé au closer ou un appel closing est prévu.",
+        "Suite normale": "Documenter l'appel closing puis décider : signé, va signer, indécis, non joint ou non pertinent.",
+    },
+    {
+        "État": "Va signer",
+        "Code": "will_sign",
+        "Sens": "Le closer estime que le prospect va signer.",
+        "Suite normale": "Suivre le flux de relance Va signer jusqu'à signature ou fin du suivi.",
+    },
+    {
+        "État": "Inscription confirmée",
+        "Code": "won",
+        "Sens": "Le prospect a signé. La vente est gagnée.",
+        "Suite normale": "Clôturer la conversation et arrêter les relances commerciales.",
+    },
+    {
+        "État": "Sans suite",
+        "Code": "lost",
+        "Sens": "Le suivi commercial est terminé sans inscription.",
+        "Suite normale": "Conversation clôturée, sauf si le prospect réécrit plus tard.",
+    },
+    {
+        "État": "Hors cible",
+        "Code": "not_interesting",
+        "Sens": "Le prospect n'est pas une opportunité commerciale utile.",
+        "Suite normale": "Clôturer la conversation et arrêter les relances.",
+    },
+    {
+        "État": "Absent au rendez-vous",
+        "Code": "no_show",
+        "Sens": "Le prospect n'a pas répondu ou ne s'est pas présenté à un appel prévu.",
+        "Suite normale": "Créer les rappels d'appel prévus puis relancer si nécessaire.",
+    },
+    {
+        "État": "Bloqué",
+        "Code": "blacklist",
+        "Sens": "Le prospect ne doit plus être contacté ou le contact est bloqué.",
+        "Suite normale": "Aucun envoi tant que le statut de contact n'est pas levé.",
+    },
+]
 
 DISPLAY_LABELS = {
     "all": "Toutes",
@@ -2201,7 +2263,6 @@ def render_pilotage(user: dict) -> None:
 
 def render_pilotage_overview() -> None:
     sequences = sorted(list_sequences(), key=lambda item: pilotage_sequence_sort_key(item["code"]))
-    mappings = list_sequence_template_mappings()
     course_categories = list_course_categories()
     real_templates = [item for item in list_templates() if is_real_twilio_template(item)]
     approved_real = [item for item in real_templates if is_approved_real_twilio_template(item)]
@@ -2264,7 +2325,11 @@ def render_pilotage_overview() -> None:
         use_container_width=True,
     )
 
-    st.markdown("### Flux principaux")
+    st.markdown("### Tous les états")
+    st.caption("Ces états correspondent au parcours commercial visible sur la fiche du prospect.")
+    st.dataframe(PILOTAGE_STATE_ROWS, hide_index=True, use_container_width=True, height=360)
+
+    st.markdown("### Tous les flux")
     overview_rows = [
         {
             "Ordre": pilotage_sequence_rank(item["code"]),
@@ -2278,16 +2343,30 @@ def render_pilotage_overview() -> None:
     ]
     st.dataframe(overview_rows, hide_index=True, use_container_width=True, height=300)
 
-    st.markdown("### Points à régler avec l'équipe commerciale")
-    st.caption(
-        "Chaque ligne représente une décision à prendre : flux × événement × cours. "
-        "Un template générique `Tous` peut dépanner, mais l'admin doit valider le template exact pour chaque cours traité."
+    st.markdown("### Toutes les actions")
+    action_rows = [
+        {
+            "Famille": "Principale",
+            "Action": item["label"],
+            "Code": item["type"],
+            "Sens": item["meaning"],
+            "Responsable par défaut": item["default_owner"],
+            "Preuve attendue": item["expected_proof"],
+        }
+        for item in MAIN_ACTION_TYPES
+    ]
+    action_rows.extend(
+        {
+            "Famille": "Support",
+            "Action": item["support"],
+            "Code": "",
+            "Sens": item["role"],
+            "Responsable par défaut": "",
+            "Preuve attendue": item["queue_visible_when"],
+        }
+        for item in SUPPORT_ACTIONS
     )
-    tuning_rows = build_pilotage_tuning_rows(mappings)
-    if tuning_rows:
-        st.dataframe(tuning_rows, hide_index=True, use_container_width=True, height=360)
-    else:
-        st.success("Toutes les étapes avec template disposent déjà d'une recommandation.")
+    st.dataframe(action_rows, hide_index=True, use_container_width=True, height=360)
 
 
 def render_pilotage_course_categories(user: dict) -> None:
@@ -2823,46 +2902,6 @@ def render_sequence_timeline(user: dict, sequence_code: str, lead_type: str, cat
                     st.warning("Template obligatoire non défini pour cette relance WhatsApp.")
             else:
                 st.caption("Cette étape ne demande pas de template WhatsApp.")
-
-
-def build_pilotage_tuning_rows(mappings: list[dict]) -> list[dict]:
-    rows = []
-    steps = [
-        step for step in list_sequence_steps()
-        if step.get("requires_template")
-    ]
-    steps = sorted(
-        steps,
-        key=lambda step: (
-            pilotage_sequence_sort_key(step["sequence_code"]),
-            int(step["step_index"]),
-        ),
-    )
-    for step in steps:
-        for category in pilotage_active_categories():
-            exact = find_mapping_for_category(mappings, step, category, exact_only=True)
-            fallback = find_mapping_for_category(mappings, step, category, exact_only=False)
-            mapping = exact or fallback
-            if exact:
-                decision = "Défini pour ce cours"
-            elif fallback:
-                decision = "Fallback Tous à confirmer"
-            else:
-                decision = "À décider"
-            rows.append(
-                {
-                    "Flux": label_sequence_code(step["sequence_code"]),
-                    "Étape": step["step_index"],
-                    "Cours": category,
-                    "Quand": sequence_step_timing_label(step),
-                    "Événement": step["meaning"],
-                    "Décision": decision,
-                    "Template": (mapping or {}).get("template_name") or "",
-                    "SID": (mapping or {}).get("twilio_content_sid") or "",
-                    "Statut": template_status_label({"status": (mapping or {}).get("template_status")}) if mapping else "",
-                }
-            )
-    return rows
 
 
 def find_mapping_for_category(
