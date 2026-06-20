@@ -90,6 +90,10 @@ Do not claim production readiness until a real AR-sent event reaches Cockpit and
 - Missing templates create `template_requests` linked to the blocked follow-up action.
 - Follow-up sequences and sequence steps are stored structurally in SQLite and displayed in Admin.
 - Pilotage lets admins edit sequence step delay/meaning/template-required/active state without code. Do not delete steps; deactivate them.
+- Sequence step timing is now absolute from the flow trigger. Use `offset_direction`, `offset_amount`, and `offset_unit`; do not treat `delay` as a relative delay from the previous step.
+- For lead-relative flows, `T` is the event that opened the sequence, for example first SchoolDrive WhatsApp sent, reply sent with no appointment, call ended undecided, or closing marked will sign.
+- For course-start flows, `T` is the course start date, so steps are usually before the trigger.
+- Relance WhatsApp steps are `action_type='follow_up'` and must have a recommended approved real Twilio template for each operational category.
 - Pilotage lets admins assign approved real Twilio templates by flow, step, lead type and course category.
 - Template mappings must only use real Twilio templates approved by WhatsApp. Draft, pending, rejected, local demo, and `HX_MOCK_*` templates are deliberately ignored/rejected for operational recommendations.
 - Structured course categories live in `course_categories`. V1 seeds `FSM`, `APP`, and `AS`. Unsupported SchoolDrive categories are stored, displayed, and routed to a Setter I review task instead of receiving an automated Tanjona relance sequence.

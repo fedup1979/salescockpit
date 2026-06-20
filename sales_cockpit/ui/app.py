@@ -67,6 +67,7 @@ from sales_cockpit.store import (
     list_bug_reports,
     list_user_activity_log,
     list_users,
+    reactivate_sequence_step,
     send_freeform_message,
     send_template_message,
     set_conversation_status,
@@ -109,6 +110,23 @@ REPLY_SEND_OUTCOME_LABELS = {
 }
 CALL_ACTION_TYPES = {"setting_call", "closing_call"}
 PILOTAGE_SUPPORTED_CATEGORIES = ["FSM", "APP", "AS"]
+SEQUENCE_STEP_ACTION_TYPES = ["follow_up", "setting_call", "closing_call", "other"]
+SEQUENCE_STEP_ACTION_LABELS = {
+    "follow_up": "Relance WhatsApp",
+    "setting_call": "Appel setting",
+    "closing_call": "Appel closing",
+    "other": "Revue humaine",
+}
+SEQUENCE_STEP_OFFSET_UNITS = ["hours", "days"]
+SEQUENCE_STEP_OFFSET_UNIT_LABELS = {
+    "hours": "heures",
+    "days": "jours",
+}
+SEQUENCE_STEP_OFFSET_DIRECTIONS = ["after", "before"]
+SEQUENCE_STEP_OFFSET_DIRECTION_LABELS = {
+    "after": "après le déclencheur",
+    "before": "avant le déclencheur",
+}
 PILOTAGE_SEQUENCE_ORDER = {
     "lead_no_reply": 10,
     "setter_no_next_step": 20,
@@ -1964,11 +1982,31 @@ def render_templates(user: dict) -> None:
 
 
 def format_sequence_step(step: dict) -> str:
-    template = step.get("template_name") or "appel / sans template"
+    action = sequence_step_action_label(step.get("action_type"))
     return (
-        f"{step['sequence_code']} #{step['step_index']} · {step['delay']} · "
-        f"{template} · {step['meaning']}"
+        f"{step['sequence_code']} #{step['step_index']} · "
+        f"{sequence_step_timing_label(step)} · {action} · {step['meaning']}"
     )
+
+
+def sequence_step_action_label(action_type: str | None) -> str:
+    return SEQUENCE_STEP_ACTION_LABELS.get(action_type or "", labelize(action_type))
+
+
+def sequence_step_timing_label(step: dict) -> str:
+    amount = int(step.get("offset_amount") or 0)
+    unit = SEQUENCE_STEP_OFFSET_UNIT_LABELS.get(step.get("offset_unit"), "heures")
+    direction = step.get("offset_direction") or "after"
+    if direction == "before":
+        return f"Déclencheur - {amount} {unit}"
+    return f"Déclencheur + {amount} {unit}"
+
+
+def sequence_step_delay_short(step: dict) -> str:
+    amount = int(step.get("offset_amount") or 0)
+    unit = "j" if step.get("offset_unit") == "days" else "h"
+    sign = "-" if step.get("offset_direction") == "before" else "+"
+    return f"T{sign}{amount}{unit}"
 
 
 def template_matches_source_filter(template: dict, source_filter: str) -> bool:
@@ -2319,8 +2357,8 @@ def render_pilotage_default_sessions(user: dict) -> None:
 def render_pilotage_sequence_steps(user: dict) -> None:
     st.markdown("### Étapes des flux")
     st.caption(
-        "Laura peut modifier le nombre de relances et leur timing dans un flux existant. "
-        "On désactive une étape au lieu de la supprimer, pour conserver l'historique de réglage."
+        "Chaque étape est exprimée par rapport au déclencheur du flux. "
+        "Une relance WhatsApp doit avoir un template recommandé dans Flux par scénario."
     )
     st.info(
         "Ces changements affectent seulement les nouvelles séquences. Les actions déjà ouvertes ne sont pas recalculées automatiquement en V1."
@@ -2341,9 +2379,9 @@ def render_pilotage_sequence_steps(user: dict) -> None:
         rows = [
             {
                 "Étape": item["step_index"],
-                "Active": bool(item.get("active")),
-                "Quand": item["delay"],
-                "Template requis": bool(item.get("requires_template")),
+                "État": "Active" if item.get("active") else "Inactive",
+                "Type": sequence_step_action_label(item.get("action_type")),
+                "Quand": sequence_step_timing_label(item),
                 "Événement": item["meaning"],
             }
             for item in steps
@@ -2362,42 +2400,74 @@ def render_pilotage_sequence_steps(user: dict) -> None:
                     steps,
                     format_func=lambda item: (
                         f"Étape {item['step_index']} · "
-                        f"{'active' if item.get('active') else 'inactive'} · {item['delay']}"
+                        f"{'active' if item.get('active') else 'inactive'} · "
+                        f"{sequence_step_timing_label(item)}"
                     ),
                 )
-                delay = st.text_input("Délai", value=selected.get("delay") or "+72h")
+                action_type = st.selectbox(
+                    "Type d'action",
+                    SEQUENCE_STEP_ACTION_TYPES,
+                    index=SEQUENCE_STEP_ACTION_TYPES.index(selected.get("action_type") or "follow_up")
+                    if (selected.get("action_type") or "follow_up") in SEQUENCE_STEP_ACTION_TYPES
+                    else 0,
+                    format_func=sequence_step_action_label,
+                )
+                timing_cols = st.columns([0.8, 0.8, 1.2])
+                with timing_cols[0]:
+                    offset_amount = st.number_input(
+                        "Délai",
+                        min_value=0,
+                        max_value=365,
+                        value=int(selected.get("offset_amount") or 0),
+                        step=1,
+                    )
+                with timing_cols[1]:
+                    offset_unit = st.selectbox(
+                        "Unité",
+                        SEQUENCE_STEP_OFFSET_UNITS,
+                        index=SEQUENCE_STEP_OFFSET_UNITS.index(selected.get("offset_unit") or "hours")
+                        if (selected.get("offset_unit") or "hours") in SEQUENCE_STEP_OFFSET_UNITS
+                        else 0,
+                        format_func=lambda value: SEQUENCE_STEP_OFFSET_UNIT_LABELS[value],
+                    )
+                with timing_cols[2]:
+                    offset_direction = st.selectbox(
+                        "Point de départ",
+                        SEQUENCE_STEP_OFFSET_DIRECTIONS,
+                        index=SEQUENCE_STEP_OFFSET_DIRECTIONS.index(selected.get("offset_direction") or "after")
+                        if (selected.get("offset_direction") or "after") in SEQUENCE_STEP_OFFSET_DIRECTIONS
+                        else 0,
+                        format_func=lambda value: SEQUENCE_STEP_OFFSET_DIRECTION_LABELS[value],
+                    )
                 meaning = st.text_area(
                     "Événement",
                     value=selected.get("meaning") or "",
                     height=100,
                 )
-                requires_template = st.checkbox(
-                    "Template requis",
-                    value=bool(selected.get("requires_template")),
-                )
-                active = st.checkbox("Étape active", value=bool(selected.get("active")))
                 submitted = st.form_submit_button("Enregistrer l'étape")
             if submitted:
                 ok, message = upsert_sequence_step(
                     user["id"],
                     selected["sequence_code"],
                     int(selected["step_index"]),
-                    delay,
                     meaning,
-                    requires_template=requires_template,
-                    active=active,
+                    action_type=action_type,
+                    offset_direction=offset_direction,
+                    offset_amount=int(offset_amount),
+                    offset_unit=offset_unit,
                 )
                 show_result(ok, message)
                 if ok:
                     st.rerun()
 
             active_steps = [item for item in steps if item.get("active")]
+            inactive_steps = [item for item in steps if not item.get("active")]
             if active_steps:
                 with st.form("pilotage_sequence_step_deactivate_form"):
                     step = st.selectbox(
                         "Désactiver",
                         active_steps,
-                        format_func=lambda item: f"Étape {item['step_index']} · {item['delay']}",
+                        format_func=lambda item: f"Étape {item['step_index']} · {sequence_step_timing_label(item)}",
                     )
                     submitted = st.form_submit_button("Désactiver l'étape")
                 if submitted:
@@ -2405,26 +2475,72 @@ def render_pilotage_sequence_steps(user: dict) -> None:
                     show_result(ok, message)
                     if ok:
                         st.rerun()
+            if inactive_steps:
+                with st.form("pilotage_sequence_step_reactivate_form"):
+                    step = st.selectbox(
+                        "Réactiver",
+                        inactive_steps,
+                        format_func=lambda item: f"Étape {item['step_index']} · {sequence_step_timing_label(item)}",
+                    )
+                    submitted = st.form_submit_button("Réactiver l'étape")
+                if submitted:
+                    ok, message = reactivate_sequence_step(user["id"], int(step["id"]))
+                    show_result(ok, message)
+                    if ok:
+                        st.rerun()
 
     with add_col:
         st.markdown("**Ajouter une étape en fin de flux**")
         with st.form("pilotage_sequence_step_add_form"):
-            delay = st.text_input("Délai", value="+72h", key="pilotage_step_add_delay")
+            action_type = st.selectbox(
+                "Type d'action",
+                SEQUENCE_STEP_ACTION_TYPES,
+                index=0,
+                format_func=sequence_step_action_label,
+                key="pilotage_step_add_action",
+            )
+            timing_cols = st.columns([0.8, 0.8, 1.2])
+            with timing_cols[0]:
+                offset_amount = st.number_input(
+                    "Délai",
+                    min_value=0,
+                    max_value=365,
+                    value=72,
+                    step=1,
+                    key="pilotage_step_add_amount",
+                )
+            with timing_cols[1]:
+                offset_unit = st.selectbox(
+                    "Unité",
+                    SEQUENCE_STEP_OFFSET_UNITS,
+                    index=0,
+                    format_func=lambda value: SEQUENCE_STEP_OFFSET_UNIT_LABELS[value],
+                    key="pilotage_step_add_unit",
+                )
+            with timing_cols[2]:
+                offset_direction = st.selectbox(
+                    "Point de départ",
+                    SEQUENCE_STEP_OFFSET_DIRECTIONS,
+                    index=0,
+                    format_func=lambda value: SEQUENCE_STEP_OFFSET_DIRECTION_LABELS[value],
+                    key="pilotage_step_add_direction",
+                )
             meaning = st.text_area(
                 "Événement",
                 height=100,
                 placeholder="Ex. Relance supplémentaire après une semaine sans réponse.",
                 key="pilotage_step_add_meaning",
             )
-            requires_template = st.checkbox("Template requis", value=True, key="pilotage_step_add_requires_tpl")
             submitted = st.form_submit_button("Ajouter l'étape")
         if submitted:
             ok, message = add_sequence_step(
                 user["id"],
                 sequence["code"],
-                delay,
                 meaning,
-                requires_template=requires_template,
+                action_type=action_type,
+                offset_direction=offset_direction,
+                offset_amount=int(offset_amount),
+                offset_unit=offset_unit,
             )
             show_result(ok, message)
             if ok:
@@ -2449,62 +2565,7 @@ def render_pilotage_scenario_tables(user: dict) -> None:
             format_func=label_sequence_code,
         )
 
-    render_sequence_timeline(sequence_code, "all", category)
-    render_pilotage_template_mapping_form(user, sequence_code, category)
-
-
-def render_pilotage_template_mapping_form(user: dict, sequence_code: str, category: str) -> None:
-    st.markdown("### Associer un template approuvé")
-    st.caption(
-        "Seuls les templates Twilio approuvés par WhatsApp sont proposés. "
-        "Le choix s'applique aux nouvelles actions créées après enregistrement."
-    )
-    steps = [
-        item for item in list_sequence_steps(sequence_code)
-        if item.get("requires_template")
-    ]
-    templates = [item for item in list_templates() if is_approved_real_twilio_template(item)]
-    if not steps:
-        st.info("Ce flux n'a aucune étape nécessitant un template.")
-        return
-    if not templates:
-        st.warning("Aucun template Twilio approuvé n'est disponible. Synchronise d'abord les templates dans Modèles.")
-        return
-    with st.form(f"pilotage_mapping_form_{sequence_code}_{category}"):
-        step = st.selectbox(
-            "Étape",
-            steps,
-            format_func=lambda item: f"Étape {item['step_index']} · {item['delay']} · {item['meaning']}",
-        )
-        lead_type = st.selectbox(
-            "Type SchoolDrive",
-            ["all", "lead", "presubscription"],
-            format_func=lambda value: {
-                "all": "Lead et Préinscription",
-                "lead": "Lead",
-                "presubscription": "Préinscription",
-            }.get(value, labelize(value)),
-        )
-        template = st.selectbox(
-            "Template approuvé",
-            templates,
-            format_func=lambda item: f"{item['name']} · {item['language']} · {item.get('twilio_content_sid')}",
-        )
-        note = st.text_input("Note interne", placeholder="Ex. APP relance 2 validée avec Laura.")
-        submitted = st.form_submit_button("Enregistrer ce template")
-    if submitted:
-        ok, message = upsert_sequence_template_mapping(
-            user["id"],
-            step["sequence_code"],
-            int(step["step_index"]),
-            lead_type,
-            category,
-            int(template["id"]),
-            note,
-        )
-        show_result(ok, message)
-        if ok:
-            st.rerun()
+    render_sequence_timeline(user, sequence_code, "all", category)
 
 
 def render_pilotage_conflict_rules() -> None:
@@ -2572,9 +2633,10 @@ def render_pilotage_simulator() -> None:
         st.dataframe(rows, hide_index=True, use_container_width=True)
 
 
-def render_sequence_timeline(sequence_code: str, lead_type: str, category: str) -> None:
+def render_sequence_timeline(user: dict, sequence_code: str, lead_type: str, category: str) -> None:
     steps = list_sequence_steps(sequence_code)
     mappings = list_sequence_template_mappings()
+    approved_templates = [item for item in list_templates() if is_approved_real_twilio_template(item)]
     if not steps:
         st.warning("Aucune étape pour ce flux.")
         return
@@ -2597,30 +2659,71 @@ def render_sequence_timeline(sequence_code: str, lead_type: str, category: str) 
             }
 
         with st.container(border=True):
-            top_cols = st.columns([0.6, 1.2, 1.2, 1.1], vertical_alignment="top")
+            top_cols = st.columns([0.45, 0.9, 1.0, 1.4], vertical_alignment="top")
             top_cols[0].markdown(f"**Étape {step['step_index']}**")
-            top_cols[1].markdown(f"**Quand**  \n{step['delay']}")
-            top_cols[2].markdown(f"**Événement**  \n{step['meaning']}")
-            if template:
-                top_cols[3].markdown(
-                    f"**Template**  \n{template.get('name') or 'Sans nom'}  \n"
-                    f"`{template.get('twilio_content_sid') or 'SID absent'}`"
-                )
-            else:
-                top_cols[3].markdown("**Template**  \nAucun")
+            top_cols[1].markdown(f"**Quand**  \n{sequence_step_timing_label(step)}")
+            top_cols[2].markdown(f"**Action**  \n{sequence_step_action_label(step.get('action_type'))}")
+            top_cols[3].markdown(f"**Événement**  \n{step['meaning']}")
 
-            if template:
-                status_cols = st.columns([0.5, 0.5, 2.0])
-                status_cols[0].markdown(f"**Statut**  \n{template_status_label(template)}")
-                status_cols[1].markdown(f"**Catégorie**  \n{labelize(template.get('category'))}")
-                mapping_note = (mapping or {}).get("note") if mapping else ""
-                status_cols[2].caption(mapping_note or "Mapping exact, spécifique ou fallback Tous selon disponibilité.")
-                st.markdown("**Message complet**")
-                st.code(template.get("body") or "Corps de message indisponible.", language="text")
-            elif step.get("requires_template"):
-                st.warning("Aucun template n'est encore associé à cette étape.")
+            if step.get("action_type") == "follow_up":
+                if not approved_templates:
+                    st.warning("Aucun template Twilio approuvé n'est disponible. Synchronise d'abord les templates dans Modèles.")
+                else:
+                    exact_mapping = find_mapping_for_category(mappings, step, category, exact_only=True)
+                    selected_mapping = exact_mapping or mapping
+                    options = [{"id": 0, "name": "Aucun template sélectionné", "body": "", "twilio_content_sid": ""}] + approved_templates
+                    selected_id = int((selected_mapping or {}).get("template_id") or 0)
+                    selected_index = next(
+                        (index for index, item in enumerate(options) if int(item["id"]) == selected_id),
+                        0,
+                    )
+                    with st.form(f"pilotage_inline_mapping_{sequence_code}_{step['step_index']}_{category}"):
+                        template_choice = st.selectbox(
+                            "Template recommandé",
+                            options,
+                            index=selected_index,
+                            format_func=lambda item: (
+                                "Aucun template sélectionné"
+                                if int(item["id"]) == 0
+                                else f"{item['name']} · {item['language']} · {item.get('twilio_content_sid')}"
+                            ),
+                            key=f"pilotage_inline_tpl_{sequence_code}_{step['step_index']}_{category}",
+                        )
+                        note = st.text_input(
+                            "Note interne",
+                            value=(exact_mapping or {}).get("note") or "",
+                            placeholder="Ex. Validé avec Laura.",
+                            key=f"pilotage_inline_note_{sequence_code}_{step['step_index']}_{category}",
+                        )
+                        submitted = st.form_submit_button("Enregistrer le template")
+                    if submitted:
+                        if int(template_choice["id"]) == 0:
+                            show_result(False, "Une relance WhatsApp doit avoir un template recommandé.")
+                        else:
+                            ok, message = upsert_sequence_template_mapping(
+                                user["id"],
+                                step["sequence_code"],
+                                int(step["step_index"]),
+                                "all",
+                                category,
+                                int(template_choice["id"]),
+                                note,
+                            )
+                            show_result(ok, message)
+                            if ok:
+                                st.rerun()
+                if template:
+                    status_cols = st.columns([0.5, 0.5, 2.0])
+                    status_cols[0].markdown(f"**Statut**  \n{template_status_label(template)}")
+                    status_cols[1].markdown(f"**Catégorie**  \n{labelize(template.get('category'))}")
+                    mapping_note = (mapping or {}).get("note") if mapping else ""
+                    status_cols[2].caption(mapping_note or "Mapping exact, spécifique ou fallback Tous selon disponibilité.")
+                    st.markdown("**Message complet**")
+                    st.code(template.get("body") or "Corps de message indisponible.", language="text")
+                else:
+                    st.warning("Template obligatoire non défini pour cette relance WhatsApp.")
             else:
-                st.info("Cette étape ne requiert pas de template.")
+                st.caption("Cette étape ne demande pas de template WhatsApp.")
 
 
 def build_pilotage_tuning_rows(mappings: list[dict]) -> list[dict]:
@@ -2652,7 +2755,7 @@ def build_pilotage_tuning_rows(mappings: list[dict]) -> list[dict]:
                     "Flux": label_sequence_code(step["sequence_code"]),
                     "Étape": step["step_index"],
                     "Cours": category,
-                    "Quand": step["delay"],
+                    "Quand": sequence_step_timing_label(step),
                     "Événement": step["meaning"],
                     "Décision": decision,
                     "Template": (mapping or {}).get("template_name") or "",
@@ -2770,46 +2873,28 @@ def build_simulated_timeline(sequence_code: str, course_start_date) -> list[dict
     anchor = utc_now()
     rows = []
     for step in list_sequence_steps(sequence_code):
-        due_label = simulate_due_label(step["delay"], anchor, course_start_date)
+        due_label = simulate_due_label(step, anchor, course_start_date)
         rows.append(
             {
                 "Étape": step["step_index"],
-                "Quand": step["delay"],
+                "Quand": sequence_step_timing_label(step),
                 "Date simulée": due_label,
-                "Action": step["meaning"],
-                "Template requis": "Oui" if step.get("requires_template") else "Non",
+                "Type": sequence_step_action_label(step.get("action_type")),
+                "Événement": step["meaning"],
+                "Template": "Obligatoire" if step.get("action_type") == "follow_up" else "",
             }
         )
-        if step["delay"].startswith("+"):
-            anchor = advance_anchor(anchor, step["delay"])
     return rows
 
 
-def simulate_due_label(delay: str, anchor: datetime, course_start_date) -> str:
-    value = (delay or "").strip()
-    if value.startswith("J-"):
-        try:
-            days = int(value.replace("J-", ""))
-            return (course_start_date - timedelta(days=days)).isoformat()
-        except ValueError:
-            return value
-    due = advance_anchor(anchor, value)
+def simulate_due_label(step: dict, anchor: datetime, course_start_date) -> str:
+    amount = int(step.get("offset_amount") or 0)
+    unit = step.get("offset_unit") or "hours"
+    delta = timedelta(days=amount) if unit == "days" else timedelta(hours=amount)
+    if step.get("offset_direction") == "before":
+        return (course_start_date - delta).isoformat()
+    due = anchor + delta
     return due.strftime("%Y-%m-%d %H:%M")
-
-
-def advance_anchor(anchor: datetime, delay: str) -> datetime:
-    value = (delay or "").strip().lower()
-    if "72h" in value:
-        return anchor + timedelta(hours=72)
-    if "24h" in value:
-        return anchor + timedelta(hours=24)
-    if "2h" in value:
-        return anchor + timedelta(hours=2)
-    if "30j" in value:
-        return anchor + timedelta(days=30)
-    if "7j" in value:
-        return anchor + timedelta(days=7)
-    return anchor
 
 
 def render_admin(user: dict) -> None:

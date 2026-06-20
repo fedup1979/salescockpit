@@ -202,6 +202,10 @@ CREATE TABLE IF NOT EXISTS sequence_steps (
     sequence_code TEXT NOT NULL,
     step_index INTEGER NOT NULL,
     delay TEXT NOT NULL,
+    action_type TEXT NOT NULL DEFAULT 'follow_up',
+    offset_direction TEXT NOT NULL DEFAULT 'after',
+    offset_amount INTEGER NOT NULL DEFAULT 72,
+    offset_unit TEXT NOT NULL DEFAULT 'hours',
     template_name TEXT,
     requires_template INTEGER NOT NULL DEFAULT 1,
     meaning TEXT NOT NULL,
@@ -532,6 +536,10 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
         "sequence_steps",
         [
             ("requires_template", "INTEGER NOT NULL DEFAULT 1"),
+            ("action_type", "TEXT NOT NULL DEFAULT 'follow_up'"),
+            ("offset_direction", "TEXT NOT NULL DEFAULT 'after'"),
+            ("offset_amount", "INTEGER NOT NULL DEFAULT 0"),
+            ("offset_unit", "TEXT NOT NULL DEFAULT 'hours'"),
         ],
     )
     add_missing_columns(
@@ -611,12 +619,24 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
         UPDATE sequence_steps
-        SET requires_template = CASE
+        SET action_type = CASE
+            WHEN action_type IS NULL OR trim(action_type) = '' THEN
+                CASE
+                    WHEN sequence_code = 'setting_call_not_reached' AND step_index IN (1, 2) THEN 'setting_call'
+                    WHEN sequence_code = 'closing_call_not_reached' AND step_index IN (1, 2) THEN 'closing_call'
+                    WHEN template_name IS NULL OR trim(template_name) = '' THEN 'other'
+                    ELSE 'follow_up'
+                END
+            ELSE action_type
+        END,
+            requires_template = CASE
+            WHEN action_type = 'follow_up' THEN 1
             WHEN template_name IS NULL OR trim(template_name) = '' THEN 0
             ELSE requires_template
         END
         """
     )
+    _backfill_sequence_step_offsets(conn)
 
 
 def add_missing_columns(
@@ -631,6 +651,75 @@ def add_missing_columns(
     for column_name, definition in migrations:
         if column_name not in columns:
             conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+
+
+def _backfill_sequence_step_offsets(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """
+        SELECT id, sequence_code, step_index, delay, offset_amount, offset_unit, offset_direction
+        FROM sequence_steps
+        ORDER BY sequence_code, step_index
+        """
+    ).fetchall()
+    cumulative: dict[str, int] = {}
+    for row in rows:
+        delay = (row["delay"] or "").strip()
+        if row["offset_amount"] and row["offset_unit"] and row["offset_direction"]:
+            continue
+        direction, minutes = _sequence_delay_to_minutes(delay)
+        sequence_code = row["sequence_code"]
+        if direction == "before":
+            offset_minutes = abs(minutes)
+            cumulative[sequence_code] = 0
+        else:
+            cumulative[sequence_code] = cumulative.get(sequence_code, 0) + abs(minutes)
+            offset_minutes = cumulative[sequence_code]
+        amount, unit = _minutes_to_sequence_offset(offset_minutes)
+        conn.execute(
+            """
+            UPDATE sequence_steps
+            SET offset_direction = ?,
+                offset_amount = ?,
+                offset_unit = ?,
+                delay = ?
+            WHERE id = ?
+            """,
+            (
+                direction,
+                amount,
+                unit,
+                _format_sequence_delay(direction, amount, unit),
+                row["id"],
+            ),
+        )
+
+
+def _sequence_delay_to_minutes(delay: str) -> tuple[str, int]:
+    value = (delay or "").strip().lower()
+    if value.startswith("j-"):
+        number = "".join(char for char in value[2:] if char.isdigit())
+        return "before", int(number or "0") * 1440
+    direction = "after"
+    if value.startswith("+"):
+        value = value[1:]
+    number = "".join(char for char in value if char.isdigit())
+    amount = int(number or "0")
+    unit = "days" if "j" in value else "hours"
+    return direction, amount * (1440 if unit == "days" else 60)
+
+
+def _minutes_to_sequence_offset(minutes: int) -> tuple[int, str]:
+    if minutes % 1440 == 0 and minutes >= 1440:
+        return minutes // 1440, "days"
+    if minutes % 60 == 0:
+        return minutes // 60, "hours"
+    return max(1, round(minutes / 60)), "hours"
+
+
+def _format_sequence_delay(direction: str, amount: int, unit: str) -> str:
+    unit_label = "j" if unit == "days" else "h"
+    prefix = "-" if direction == "before" else "+"
+    return f"T{prefix}{amount}{unit_label}"
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -896,17 +985,30 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
         row["code"]: row["id"]
         for row in conn.execute("SELECT id, code FROM sequences").fetchall()
     }
+    sequence_cumulative_minutes: dict[str, int] = {}
     for step in SEQUENCE_STEPS:
         sequence_id = sequence_ids.get(step["sequence_code"])
         if not sequence_id:
             continue
-        requires_template = 1 if step.get("template_name") else 0
+        action_type = _sequence_step_action_type(step)
+        requires_template = 1 if action_type == "follow_up" else 0
+        direction, delta_minutes = _sequence_delay_to_minutes(step["delay"])
+        if direction == "before":
+            offset_minutes = abs(delta_minutes)
+        else:
+            sequence_cumulative_minutes[step["sequence_code"]] = (
+                sequence_cumulative_minutes.get(step["sequence_code"], 0) + abs(delta_minutes)
+            )
+            offset_minutes = sequence_cumulative_minutes[step["sequence_code"]]
+        offset_amount, offset_unit = _minutes_to_sequence_offset(offset_minutes)
+        delay = _format_sequence_delay(direction, offset_amount, offset_unit)
         conn.execute(
             """
             INSERT INTO sequence_steps (
-                sequence_id, sequence_code, step_index, delay, template_name,
+                sequence_id, sequence_code, step_index, delay, action_type,
+                offset_direction, offset_amount, offset_unit, template_name,
                 requires_template, meaning, active, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
             ON CONFLICT(sequence_code, step_index) DO UPDATE SET
                 sequence_id = excluded.sequence_id,
                 updated_at = excluded.updated_at
@@ -915,7 +1017,11 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
                 sequence_id,
                 step["sequence_code"],
                 step["step_index"],
-                step["delay"],
+                delay,
+                action_type,
+                direction,
+                offset_amount,
+                offset_unit,
                 step.get("template_name") or None,
                 requires_template,
                 step["meaning"],
@@ -938,6 +1044,16 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
                 current_time,
             ),
         )
+
+
+def _sequence_step_action_type(step: dict) -> str:
+    if step["sequence_code"] == "setting_call_not_reached" and step["step_index"] in {1, 2}:
+        return "setting_call"
+    if step["sequence_code"] == "closing_call_not_reached" and step["step_index"] in {1, 2}:
+        return "closing_call"
+    if step.get("template_name"):
+        return "follow_up"
+    return "other"
 
 
 def _normalize_lead_business_fields(conn: sqlite3.Connection) -> None:

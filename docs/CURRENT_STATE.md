@@ -105,7 +105,7 @@ Implemented in commit `6c48293`, then expanded in commit `f8e8a0b`.
 - overview of normal flows;
 - active course categories handled by structured flows;
 - default course sessions by category;
-- editable sequence steps: delay, meaning, template required, active/inactive;
+- editable sequence steps: action type, absolute offset from the flow trigger, meaning, active/inactive;
 - scenario timelines by lead type, course category and sequence;
 - full template message body, Twilio SID and template status for each step;
 - approved template assignment by flow, step, lead type and course category;
@@ -117,6 +117,10 @@ Default course sessions live in `course_default_sessions`. They are used as a pl
 Structured course categories live in `course_categories`. V1 seeds `FSM`, `APP`, and `AS`. If SchoolDrive sends a lead or presubscription with a sent WhatsApp for an unsupported category, Sales Cockpit still stores and displays the conversation, but it does not create the automated Tanjona relance sequence. Instead it creates a human review action for Setter I/Mihary with trigger `unconfigured_course_category`.
 
 V1 behavior: changing sequence steps or template mappings affects only newly created future sequences. Existing open tasks are not recalculated. V2 debt: add a controlled recalculation button.
+
+Sequence timing is expressed from the flow trigger, not from the previous step. Example: a lead no-reply sequence can be `T+3j`, `T+6j`, `T+9j`, where `T` is the first automatic WhatsApp sent by SchoolDrive. Course-start reminders use the same model with `T-14j`, `T-7j`, etc., where `T` is the course start date.
+
+If a step action type is `follow_up` / Relance WhatsApp, a template recommendation is operationally required. The UI shows the template selector directly on each scenario step and refuses mappings to non-approved, demo, pending, rejected, or draft templates.
 
 ### SchoolDrive
 

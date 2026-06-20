@@ -887,9 +887,11 @@ def test_sequence_steps_can_be_added_updated_and_deactivated() -> None:
     ok, message = add_sequence_step(
         admin["id"],
         "lead_no_reply",
-        "+14j",
         "Relance longue de test.",
-        requires_template=True,
+        action_type="follow_up",
+        offset_direction="after",
+        offset_amount=14,
+        offset_unit="days",
     )
     assert ok is True
     assert "ajout" in message
@@ -897,21 +899,26 @@ def test_sequence_steps_can_be_added_updated_and_deactivated() -> None:
     steps = list_sequence_steps("lead_no_reply", active_only=False)
     assert len(steps) == len(before) + 1
     added = steps[-1]
-    assert added["delay"] == "+14j"
+    assert added["delay"] == "T+14j"
+    assert added["action_type"] == "follow_up"
+    assert added["offset_amount"] == 14
+    assert added["offset_unit"] == "days"
     assert added["requires_template"] == 1
 
     ok, message = upsert_sequence_step(
         admin["id"],
         "lead_no_reply",
         int(added["step_index"]),
-        "+7j",
         "Relance longue ajustée.",
-        requires_template=False,
-        active=True,
+        action_type="other",
+        offset_direction="after",
+        offset_amount=7,
+        offset_unit="days",
     )
     assert ok is True
     updated = list_sequence_steps("lead_no_reply", active_only=False)[-1]
-    assert updated["delay"] == "+7j"
+    assert updated["delay"] == "T+7j"
+    assert updated["action_type"] == "other"
     assert updated["requires_template"] == 0
 
     ok, message = deactivate_sequence_step(admin["id"], int(updated["id"]))

@@ -45,6 +45,8 @@ Admins can tune active course categories, sequence steps, and template mappings 
 
 Existing open tasks keep their original due date, step index, assignee, and recommended template. This avoids silently changing work already visible in a user's queue.
 
+Sequence steps are now stored as absolute offsets from the flow trigger (`offset_direction`, `offset_amount`, `offset_unit`). Recalculation must therefore use the original sequence anchor stored on tasks as `metadata_json.sequence_anchor_at`; it must not chain from the previous task's completion time.
+
 ### V2 Debt
 
 Add a controlled recalculation workflow:

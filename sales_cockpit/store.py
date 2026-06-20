@@ -1028,7 +1028,10 @@ def _ensure_initial_schooldrive_followup(
         )
         return
     active = _first_active_action_for_lead(conn, lead_id)
-    due_at = iso_utc(parse_dt(sent_at) + timedelta(hours=72))
+    first_step = _get_sequence_step(conn, "lead_no_reply", 1)
+    if not first_step:
+        return
+    due_at = _due_for_sequence_step(sent_at, first_step)
     setter2_id = setter2_user_id(conn)
     if not setter2_id:
         return
@@ -1076,6 +1079,7 @@ def _ensure_initial_schooldrive_followup(
         trigger_reason="schooldrive_initial_autoresponder_sent",
         sequence_code="lead_no_reply",
         sequence_step_index=1,
+        metadata=_sequence_anchor_metadata(sent_at, "Premier WhatsApp automatique SchoolDrive"),
     )
     insert_event(
         conn,
@@ -2021,6 +2025,23 @@ def _insert_next_action(
     blocked_reason: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> int:
+    metadata_payload = dict(metadata or {})
+    if sequence_code and sequence_step_index and "sequence_anchor_at" not in metadata_payload and previous_action_id:
+        previous = row_to_dict(
+            conn.execute(
+                "SELECT metadata_json FROM tasks WHERE id = ?",
+                (previous_action_id,),
+            ).fetchone()
+        )
+        if previous:
+            try:
+                previous_metadata = json.loads(previous.get("metadata_json") or "{}")
+            except json.JSONDecodeError:
+                previous_metadata = {}
+            if previous_metadata.get("sequence_anchor_at"):
+                metadata_payload["sequence_anchor_at"] = previous_metadata["sequence_anchor_at"]
+            if previous_metadata.get("sequence_anchor_label"):
+                metadata_payload["sequence_anchor_label"] = previous_metadata["sequence_anchor_label"]
     cursor = conn.execute(
         """
         INSERT INTO tasks (
@@ -2045,7 +2066,7 @@ def _insert_next_action(
             sequence_step_index,
             previous_action_id,
             blocked_reason,
-            json.dumps(metadata or {}, ensure_ascii=False),
+            json.dumps(metadata_payload, ensure_ascii=False),
         ),
     )
     return int(cursor.lastrowid)
@@ -2159,6 +2180,58 @@ def _due_after(base_iso: str, delay: str) -> str:
     if normalized.startswith("+30j"):
         return iso_utc(base + timedelta(days=30))
     return iso_utc(base)
+
+
+def _format_sequence_delay(direction: str, amount: int, unit: str) -> str:
+    unit_label = "j" if unit == "days" else "h"
+    prefix = "-" if direction == "before" else "+"
+    return f"T{prefix}{amount}{unit_label}"
+
+
+def _sequence_offset_delta(amount: int, unit: str) -> timedelta:
+    return timedelta(days=amount) if unit == "days" else timedelta(hours=amount)
+
+
+def _due_for_sequence_step(anchor_iso: str, step: dict[str, Any]) -> str:
+    anchor = parse_dt(anchor_iso) or utc_now()
+    amount = int(step.get("offset_amount") or 0)
+    unit = step.get("offset_unit") or "hours"
+    delta = _sequence_offset_delta(amount, unit)
+    if step.get("offset_direction") == "before":
+        return iso_utc(anchor - delta)
+    return iso_utc(anchor + delta)
+
+
+def _get_sequence_step(
+    conn: Any,
+    sequence_code: str,
+    step_index: int,
+) -> dict[str, Any] | None:
+    return row_to_dict(
+        conn.execute(
+            """
+            SELECT *
+            FROM sequence_steps
+            WHERE sequence_code = ? AND step_index = ? AND active = 1
+            """,
+            (sequence_code, step_index),
+        ).fetchone()
+    )
+
+
+def _sequence_anchor_metadata(anchor_at: str, label: str | None = None) -> dict[str, Any]:
+    metadata: dict[str, Any] = {"sequence_anchor_at": anchor_at}
+    if label:
+        metadata["sequence_anchor_label"] = label
+    return metadata
+
+
+def _sequence_anchor_from_action(action: dict[str, Any], fallback_iso: str) -> str:
+    try:
+        metadata = json.loads(action.get("metadata_json") or "{}")
+    except json.JSONDecodeError:
+        metadata = {}
+    return metadata.get("sequence_anchor_at") or fallback_iso
 
 
 def _next_sequence_step(
@@ -2341,6 +2414,9 @@ def _close_outbound_action_and_chain(
             )
             return
 
+        first_step = _get_sequence_step(conn, "setter_no_next_step", 1)
+        if not first_step:
+            return
         assignee_id = setter2_user_id(conn) or user_id
         next_action_id = _insert_next_action(
             conn,
@@ -2351,11 +2427,12 @@ def _close_outbound_action_and_chain(
             assigned_to_user_id=assignee_id,
             created_by_user_id=user_id,
             urgency="normal",
-            due_at=_due_after(sent_at, "+72h"),
+            due_at=_due_for_sequence_step(sent_at, first_step),
             trigger_reason="reply_sent_no_setting_booked",
             sequence_code="setter_no_next_step",
             sequence_step_index=1,
             previous_action_id=action["id"],
+            metadata=_sequence_anchor_metadata(sent_at, "Dernier message setter sans rendez-vous"),
         )
         conn.execute("UPDATE tasks SET next_action_id = ? WHERE id = ?", (next_action_id, action["id"]))
         return
@@ -2387,6 +2464,7 @@ def _close_outbound_action_and_chain(
             )
             return
 
+        sequence_anchor_at = _sequence_anchor_from_action(action, sent_at)
         assignee_id = setter2_user_id(conn) or user_id
         next_action_id = _insert_next_action(
             conn,
@@ -2397,11 +2475,12 @@ def _close_outbound_action_and_chain(
             assigned_to_user_id=assignee_id,
             created_by_user_id=user_id,
             urgency="normal",
-            due_at=_due_after(sent_at, next_step["delay"]),
+            due_at=_due_for_sequence_step(sequence_anchor_at, next_step),
             trigger_reason="follow_up_sequence_continues",
             sequence_code=next_step["sequence_code"],
             sequence_step_index=next_step["step_index"],
             previous_action_id=action["id"],
+            metadata=_sequence_anchor_metadata(sequence_anchor_at),
         )
         conn.execute("UPDATE tasks SET next_action_id = ? WHERE id = ?", (next_action_id, action["id"]))
 
@@ -3163,19 +3242,32 @@ def list_sequence_steps(
 def add_sequence_step(
     user_id: int,
     sequence_code: str,
-    delay: str,
     meaning: str,
-    requires_template: bool = True,
+    action_type: str = "follow_up",
+    offset_direction: str = "after",
+    offset_amount: int = 72,
+    offset_unit: str = "hours",
 ) -> tuple[bool, str]:
     sequence_code = (sequence_code or "").strip()
-    delay = (delay or "").strip()
     meaning = (meaning or "").strip()
+    ok_step, message, normalized = _normalize_sequence_step_admin_values(
+        action_type,
+        offset_direction,
+        offset_amount,
+        offset_unit,
+    )
+    if not ok_step:
+        return False, message
     if not sequence_code:
         return False, "Flux obligatoire."
-    if not _is_valid_sequence_delay(delay):
-        return False, "Délai invalide. Utilise +72h, +24h, +7j, +30j ou J-3."
     if not meaning:
         return False, "Description de l'événement obligatoire."
+    action_type = normalized["action_type"]
+    offset_direction = normalized["offset_direction"]
+    offset_amount = normalized["offset_amount"]
+    offset_unit = normalized["offset_unit"]
+    requires_template = 1 if action_type == "follow_up" else 0
+    delay = _format_sequence_delay(offset_direction, offset_amount, offset_unit)
     now = iso_utc()
     with connect() as conn:
         ok, message = _require_admin_user(conn, user_id)
@@ -3198,16 +3290,21 @@ def add_sequence_step(
         conn.execute(
             """
             INSERT INTO sequence_steps (
-                sequence_id, sequence_code, step_index, delay, template_name,
+                sequence_id, sequence_code, step_index, delay, action_type,
+                offset_direction, offset_amount, offset_unit, template_name,
                 requires_template, meaning, active, updated_at
-            ) VALUES (?, ?, ?, ?, NULL, ?, ?, 1, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 1, ?)
             """,
             (
                 sequence["id"],
                 sequence_code,
                 next_index,
                 delay,
-                1 if requires_template else 0,
+                action_type,
+                offset_direction,
+                offset_amount,
+                offset_unit,
+                requires_template,
                 meaning,
                 now,
             ),
@@ -3226,6 +3323,10 @@ def add_sequence_step(
                         "sequence_code": sequence_code,
                         "step_index": next_index,
                         "delay": delay,
+                        "action_type": action_type,
+                        "offset_direction": offset_direction,
+                        "offset_amount": offset_amount,
+                        "offset_unit": offset_unit,
                         "requires_template": bool(requires_template),
                     },
                     ensure_ascii=False,
@@ -3240,22 +3341,34 @@ def upsert_sequence_step(
     user_id: int,
     sequence_code: str,
     step_index: int,
-    delay: str,
     meaning: str,
-    requires_template: bool = True,
-    active: bool = True,
+    action_type: str = "follow_up",
+    offset_direction: str = "after",
+    offset_amount: int = 72,
+    offset_unit: str = "hours",
 ) -> tuple[bool, str]:
     sequence_code = (sequence_code or "").strip()
-    delay = (delay or "").strip()
     meaning = (meaning or "").strip()
+    ok_step, message, normalized = _normalize_sequence_step_admin_values(
+        action_type,
+        offset_direction,
+        offset_amount,
+        offset_unit,
+    )
+    if not ok_step:
+        return False, message
     if not sequence_code:
         return False, "Flux obligatoire."
     if not step_index:
         return False, "Étape obligatoire."
-    if not _is_valid_sequence_delay(delay):
-        return False, "Délai invalide. Utilise +72h, +24h, +7j, +30j ou J-3."
     if not meaning:
         return False, "Description de l'événement obligatoire."
+    action_type = normalized["action_type"]
+    offset_direction = normalized["offset_direction"]
+    offset_amount = normalized["offset_amount"]
+    offset_unit = normalized["offset_unit"]
+    requires_template = 1 if action_type == "follow_up" else 0
+    delay = _format_sequence_delay(offset_direction, offset_amount, offset_unit)
     now = iso_utc()
     with connect() as conn:
         ok, message = _require_admin_user(conn, user_id)
@@ -3275,17 +3388,23 @@ def upsert_sequence_step(
             """
             UPDATE sequence_steps
             SET delay = ?,
+                action_type = ?,
+                offset_direction = ?,
+                offset_amount = ?,
+                offset_unit = ?,
                 meaning = ?,
                 requires_template = ?,
-                active = ?,
                 updated_at = ?
             WHERE id = ?
             """,
             (
                 delay,
+                action_type,
+                offset_direction,
+                offset_amount,
+                offset_unit,
                 meaning,
-                1 if requires_template else 0,
-                1 if active else 0,
+                requires_template,
                 now,
                 step["id"],
             ),
@@ -3304,8 +3423,11 @@ def upsert_sequence_step(
                         "sequence_code": sequence_code,
                         "step_index": step_index,
                         "delay": delay,
+                        "action_type": action_type,
+                        "offset_direction": offset_direction,
+                        "offset_amount": offset_amount,
+                        "offset_unit": offset_unit,
                         "requires_template": bool(requires_template),
-                        "active": bool(active),
                     },
                     ensure_ascii=False,
                 ),
@@ -3313,6 +3435,44 @@ def upsert_sequence_step(
             ),
         )
     return True, "Étape enregistrée. Elle s'appliquera aux nouvelles séquences."
+
+
+def reactivate_sequence_step(user_id: int, step_id: int) -> tuple[bool, str]:
+    now = iso_utc()
+    with connect() as conn:
+        ok, message = _require_admin_user(conn, user_id)
+        if not ok:
+            return False, message
+        step = conn.execute(
+            "SELECT id, sequence_code, step_index FROM sequence_steps WHERE id = ? AND active = 0",
+            (step_id,),
+        ).fetchone()
+        if not step:
+            return False, "Étape inactive introuvable."
+        conn.execute(
+            "UPDATE sequence_steps SET active = 1, updated_at = ? WHERE id = ?",
+            (now, step_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO user_activity_log (
+                user_id, event_type, entity_type, entity_id, metadata_json, created_at
+            ) VALUES (?, 'sequence_step_reactivated', 'sequence_step', ?, ?, ?)
+            """,
+            (
+                user_id,
+                step_id,
+                json.dumps(
+                    {
+                        "sequence_code": step["sequence_code"],
+                        "step_index": step["step_index"],
+                    },
+                    ensure_ascii=False,
+                ),
+                now,
+            ),
+        )
+    return True, "Étape réactivée."
 
 
 def deactivate_sequence_step(user_id: int, step_id: int) -> tuple[bool, str]:
@@ -3353,17 +3513,35 @@ def deactivate_sequence_step(user_id: int, step_id: int) -> tuple[bool, str]:
     return True, "Étape désactivée. Elle ne sera pas utilisée pour les nouvelles séquences."
 
 
-def _is_valid_sequence_delay(delay: str) -> bool:
-    value = (delay or "").strip().lower()
-    if value in {"now", "immédiat", "immediat"}:
-        return True
-    if value.startswith("+") and len(value) >= 3:
-        amount = value[1:-1]
-        unit = value[-1]
-        return amount.isdigit() and unit in {"h", "j"}
-    if value.startswith("j-"):
-        return value[2:].isdigit()
-    return False
+def _normalize_sequence_step_admin_values(
+    action_type: str,
+    offset_direction: str,
+    offset_amount: int,
+    offset_unit: str,
+) -> tuple[bool, str, dict[str, Any]]:
+    normalized_action = (action_type or "").strip()
+    if normalized_action not in {"follow_up", "setting_call", "closing_call", "other"}:
+        return False, "Type d'action invalide.", {}
+    normalized_direction = (offset_direction or "").strip()
+    if normalized_direction not in {"after", "before"}:
+        return False, "Point temporel invalide.", {}
+    normalized_unit = (offset_unit or "").strip()
+    if normalized_unit not in {"hours", "days"}:
+        return False, "Unité invalide.", {}
+    try:
+        amount = int(offset_amount)
+    except (TypeError, ValueError):
+        return False, "Délai invalide.", {}
+    if amount < 0:
+        return False, "Le délai ne peut pas être négatif.", {}
+    if amount == 0 and normalized_action == "follow_up":
+        return False, "Une relance WhatsApp doit avoir un délai supérieur à zéro.", {}
+    return True, "", {
+        "action_type": normalized_action,
+        "offset_direction": normalized_direction,
+        "offset_amount": amount,
+        "offset_unit": normalized_unit,
+    }
 
 
 def list_course_categories(active_only: bool = True) -> list[dict[str, Any]]:
@@ -3666,13 +3844,15 @@ def upsert_sequence_template_mapping(
             return False, message
         step = conn.execute(
             """
-            SELECT id FROM sequence_steps
+            SELECT id, action_type FROM sequence_steps
             WHERE sequence_code = ? AND step_index = ? AND active = 1
             """,
             (sequence_code, sequence_step_index),
         ).fetchone()
         if not step:
             return False, "Étape de séquence introuvable."
+        if step["action_type"] != "follow_up":
+            return False, "Un template ne peut être recommandé que pour une relance WhatsApp."
         template = conn.execute(
             """
             SELECT id, status, twilio_content_sid
@@ -5068,10 +5248,17 @@ def complete_action_with_workflow(
             due_at: str,
             step_index: int = 1,
             trigger_reason: str = "workflow_outcome",
+            sequence_anchor_at: str | None = None,
+            sequence_anchor_label: str | None = None,
         ) -> int | None:
             assignee_id = setter2_user_id(conn) or assigned_to_user_id or user_id
             if not conversation_id:
                 return None
+            metadata = (
+                _sequence_anchor_metadata(sequence_anchor_at, sequence_anchor_label)
+                if sequence_anchor_at
+                else None
+            )
             return _insert_next_action(
                 conn,
                 lead_id=task["lead_id"],
@@ -5087,6 +5274,7 @@ def complete_action_with_workflow(
                 sequence_code=sequence_code,
                 sequence_step_index=step_index,
                 previous_action_id=task_id,
+                metadata=metadata,
             )
 
         def resolve(reason: str) -> None:
@@ -5122,10 +5310,15 @@ def complete_action_with_workflow(
         next_action_id = None
         if task["type"] == "reply":
             if outcome == "reply_no_appointment":
+                first_step = _get_sequence_step(conn, "setter_no_next_step", 1)
+                if not first_step:
+                    return False, "Étape de relance introuvable."
                 next_action_id = create_followup(
                     "setter_no_next_step",
-                    _due_after(now, "+72h"),
+                    _due_for_sequence_step(now, first_step),
                     trigger_reason="reply_sent_no_setting_booked",
+                    sequence_anchor_at=now,
+                    sequence_anchor_label="Réponse setter sans rendez-vous",
                 )
             elif outcome == "setting_booked":
                 if not conversation_id:
@@ -5206,8 +5399,12 @@ def complete_action_with_workflow(
                     previous_action_id=task_id,
                 )
             elif outcome == "not_reached":
+                anchor = _sequence_anchor_from_action(task, now)
                 count = _count_completed_outcomes(conn, task["lead_id"], "setting_call", "not_reached")
                 if count <= 1 and conversation_id:
+                    step = _get_sequence_step(conn, "setting_call_not_reached", 1)
+                    if not step:
+                        return False, "Étape de rappel setting introuvable."
                     next_action_id = _insert_next_action(
                         conn,
                         lead_id=task["lead_id"],
@@ -5217,14 +5414,18 @@ def complete_action_with_workflow(
                         assigned_to_user_id=task["assigned_to_user_id"] or user_id,
                         created_by_user_id=user_id,
                         urgency="high",
-                        due_at=_due_after(now, "+2h"),
+                        due_at=_due_for_sequence_step(anchor, step),
                         description=note,
                         trigger_reason="setting_call_not_reached",
                         sequence_code="setting_call_not_reached",
                         sequence_step_index=1,
                         previous_action_id=task_id,
+                        metadata=_sequence_anchor_metadata(anchor, "Appel setting non joint"),
                     )
                 elif count <= 2 and conversation_id:
+                    step = _get_sequence_step(conn, "setting_call_not_reached", 2)
+                    if not step:
+                        return False, "Étape de rappel setting introuvable."
                     next_action_id = _insert_next_action(
                         conn,
                         lead_id=task["lead_id"],
@@ -5234,25 +5435,36 @@ def complete_action_with_workflow(
                         assigned_to_user_id=task["assigned_to_user_id"] or user_id,
                         created_by_user_id=user_id,
                         urgency="high",
-                        due_at=_due_after(now, "+24h"),
+                        due_at=_due_for_sequence_step(anchor, step),
                         description=note,
                         trigger_reason="setting_call_not_reached",
                         sequence_code="setting_call_not_reached",
                         sequence_step_index=2,
                         previous_action_id=task_id,
+                        metadata=_sequence_anchor_metadata(anchor, "Appel setting non joint"),
                     )
                 else:
+                    step = _get_sequence_step(conn, "setting_call_not_reached", 3)
+                    if not step:
+                        return False, "Étape de relance setting introuvable."
                     next_action_id = create_followup(
                         "setting_call_not_reached",
-                        _due_after(now, "+72h"),
+                        _due_for_sequence_step(anchor, step),
                         step_index=3,
                         trigger_reason="setting_call_not_reached_retries_exhausted",
+                        sequence_anchor_at=anchor,
+                        sequence_anchor_label="Appel setting non joint",
                     )
             elif outcome == "not_ready":
+                first_step = _get_sequence_step(conn, "setter_no_next_step", 1)
+                if not first_step:
+                    return False, "Étape de relance introuvable."
                 next_action_id = create_followup(
                     "setter_no_next_step",
-                    _due_after(now, "+72h"),
+                    _due_for_sequence_step(now, first_step),
                     trigger_reason="setting_call_no_next_step",
+                    sequence_anchor_at=now,
+                    sequence_anchor_label="Appel setting sans suite claire",
                 )
             elif outcome in {"not_relevant", "do_not_contact"}:
                 resolve(outcome)
@@ -5265,14 +5477,23 @@ def complete_action_with_workflow(
                     "UPDATE leads SET lead_status = 'will_sign', updated_at = ? WHERE id = ?",
                     (now, task["lead_id"]),
                 )
+                first_step = _get_sequence_step(conn, "closer_will_sign", 1)
+                if not first_step:
+                    return False, "Étape de relance Va signer introuvable."
                 next_action_id = create_followup(
                     "closer_will_sign",
-                    _due_after(now, "+72h"),
+                    _due_for_sequence_step(now, first_step),
                     trigger_reason="closing_call_will_sign",
+                    sequence_anchor_at=now,
+                    sequence_anchor_label="Closing qualifié Va signer",
                 )
             elif outcome == "not_reached":
+                anchor = _sequence_anchor_from_action(task, now)
                 count = _count_completed_outcomes(conn, task["lead_id"], "closing_call", "not_reached")
                 if count <= 1 and conversation_id:
+                    step = _get_sequence_step(conn, "closing_call_not_reached", 1)
+                    if not step:
+                        return False, "Étape de rappel closing introuvable."
                     next_action_id = _insert_next_action(
                         conn,
                         lead_id=task["lead_id"],
@@ -5282,14 +5503,18 @@ def complete_action_with_workflow(
                         assigned_to_user_id=task["assigned_to_user_id"] or user_id,
                         created_by_user_id=user_id,
                         urgency="high",
-                        due_at=_due_after(now, "+2h"),
+                        due_at=_due_for_sequence_step(anchor, step),
                         description=note,
                         trigger_reason="closing_call_not_reached",
                         sequence_code="closing_call_not_reached",
                         sequence_step_index=1,
                         previous_action_id=task_id,
+                        metadata=_sequence_anchor_metadata(anchor, "Appel closing non joint"),
                     )
                 elif count <= 2 and conversation_id:
+                    step = _get_sequence_step(conn, "closing_call_not_reached", 2)
+                    if not step:
+                        return False, "Étape de rappel closing introuvable."
                     next_action_id = _insert_next_action(
                         conn,
                         lead_id=task["lead_id"],
@@ -5299,25 +5524,36 @@ def complete_action_with_workflow(
                         assigned_to_user_id=task["assigned_to_user_id"] or user_id,
                         created_by_user_id=user_id,
                         urgency="high",
-                        due_at=_due_after(now, "+24h"),
+                        due_at=_due_for_sequence_step(anchor, step),
                         description=note,
                         trigger_reason="closing_call_not_reached",
                         sequence_code="closing_call_not_reached",
                         sequence_step_index=2,
                         previous_action_id=task_id,
+                        metadata=_sequence_anchor_metadata(anchor, "Appel closing non joint"),
                     )
                 else:
+                    step = _get_sequence_step(conn, "closing_call_not_reached", 3)
+                    if not step:
+                        return False, "Étape de relance closing introuvable."
                     next_action_id = create_followup(
                         "closing_call_not_reached",
-                        _due_after(now, "+72h"),
+                        _due_for_sequence_step(anchor, step),
                         step_index=3,
                         trigger_reason="closing_call_not_reached_retries_exhausted",
+                        sequence_anchor_at=anchor,
+                        sequence_anchor_label="Appel closing non joint",
                     )
             elif outcome == "undecided":
+                first_step = _get_sequence_step(conn, "post_call_undecided", 1)
+                if not first_step:
+                    return False, "Étape de relance post-appel introuvable."
                 next_action_id = create_followup(
                     "post_call_undecided",
-                    _due_after(now, "+72h"),
+                    _due_for_sequence_step(now, first_step),
                     trigger_reason="closing_call_undecided",
+                    sequence_anchor_at=now,
+                    sequence_anchor_label="Closing sans décision claire",
                 )
             elif outcome == "not_relevant":
                 resolve("not_relevant")
@@ -5332,11 +5568,13 @@ def complete_action_with_workflow(
                     task.get("sequence_step_index"),
                 )
                 if next_step:
+                    anchor = _sequence_anchor_from_action(task, now)
                     next_action_id = create_followup(
                         next_step["sequence_code"],
-                        _due_after(now, next_step["delay"]),
+                        _due_for_sequence_step(anchor, next_step),
                         step_index=next_step["step_index"],
                         trigger_reason="follow_up_sequence_continues",
+                        sequence_anchor_at=anchor,
                     )
                 else:
                     resolve("sequence_completed_no_reply")
