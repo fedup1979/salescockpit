@@ -990,7 +990,7 @@ def _schooldrive_autoresponder_message_body(
 def _latest_sent_schooldrive_autoresponder_at(conn: Any, lead_id: int) -> str | None:
     row = conn.execute(
         """
-        SELECT MAX(sent_at) AS sent_at
+        SELECT MIN(sent_at) AS sent_at
         FROM schooldrive_whatsapp_autoresponders
         WHERE lead_id = ? AND status = 'sent' AND sent_at IS NOT NULL
         """,
@@ -1010,7 +1010,7 @@ def _ensure_initial_schooldrive_followup(
     lead = row_to_dict(
         conn.execute(
             """
-            SELECT first_name, last_name, lead_status, contact_status
+            SELECT first_name, last_name, lead_status, contact_status, course_category_short_title
             FROM leads
             WHERE id = ?
             """,
@@ -1018,6 +1018,14 @@ def _ensure_initial_schooldrive_followup(
         ).fetchone()
     )
     if not lead or followups_are_blocked(lead):
+        return
+    if not _course_category_is_supported(conn, lead.get("course_category_short_title")):
+        _ensure_unconfigured_course_category_review(
+            conn,
+            lead_id=lead_id,
+            conversation_id=conversation_id,
+            lead=lead,
+        )
         return
     active = _first_active_action_for_lead(conn, lead_id)
     due_at = iso_utc(parse_dt(sent_at) + timedelta(hours=72))
@@ -1039,6 +1047,21 @@ def _ensure_initial_schooldrive_followup(
                 (setter2_id, due_at, iso_utc(), active["id"]),
             )
         return
+    existing_initial_followup = conn.execute(
+        """
+        SELECT id
+        FROM tasks
+        WHERE lead_id = ?
+          AND trigger_reason IN (
+            'schooldrive_initial_autoresponder_sent',
+            'schooldrive_initial_followup_updated'
+          )
+        LIMIT 1
+        """,
+        (lead_id,),
+    ).fetchone()
+    if existing_initial_followup:
+        return
     action_id = _insert_next_action(
         conn,
         lead_id=lead_id,
@@ -1059,6 +1082,71 @@ def _ensure_initial_schooldrive_followup(
         lead_id,
         "followup_scheduled_from_schooldrive_autoresponder",
         new={"task_id": action_id, "due_at": due_at, "assigned_to_user_id": setter2_id},
+        metadata={"conversation_id": conversation_id},
+    )
+
+
+def _course_category_is_supported(conn: Any, category: str | None) -> bool:
+    normalized = (category or "").strip().upper()
+    if not normalized:
+        return False
+    row = conn.execute(
+        """
+        SELECT id
+        FROM course_categories
+        WHERE course_category = ? AND active = 1
+        """,
+        (normalized,),
+    ).fetchone()
+    return bool(row)
+
+
+def _ensure_unconfigured_course_category_review(
+    conn: Any,
+    lead_id: int,
+    conversation_id: int,
+    lead: dict[str, Any],
+) -> None:
+    existing = conn.execute(
+        """
+        SELECT id
+        FROM tasks
+        WHERE lead_id = ?
+          AND status IN ('open', 'planned', 'in_progress', 'blocked')
+          AND trigger_reason = 'unconfigured_course_category'
+        LIMIT 1
+        """,
+        (lead_id,),
+    ).fetchone()
+    if existing:
+        return
+    assignee_id = setter1_user_id(conn) or _default_active_user_id(conn, "setter")
+    if not assignee_id:
+        return
+    now = iso_utc()
+    category = (lead.get("course_category_short_title") or "non renseignée").strip()
+    action_id = _insert_next_action(
+        conn,
+        lead_id=lead_id,
+        conversation_id=conversation_id,
+        action_type="other",
+        title=f"Revoir catégorie {category} pour {lead_full_name(lead)}",
+        assigned_to_user_id=assignee_id,
+        created_by_user_id=None,
+        urgency="normal",
+        due_at=now,
+        status="open",
+        trigger_reason="unconfigured_course_category",
+        description=(
+            "Catégorie de cours non pilotée dans Sales Cockpit. "
+            "Lire la conversation et décider du suivi manuel."
+        ),
+    )
+    insert_event(
+        conn,
+        lead_id,
+        "unconfigured_course_category_review_created",
+        new={"task_id": action_id, "course_category": category},
         metadata={"conversation_id": conversation_id},
     )
 
@@ -2080,15 +2168,18 @@ def _next_sequence_step(
 ) -> dict[str, Any] | None:
     if not sequence_code:
         return None
-    next_index = (current_step_index or 0) + 1
     return row_to_dict(
         conn.execute(
             """
             SELECT *
             FROM sequence_steps
-            WHERE sequence_code = ? AND step_index = ? AND active = 1
+            WHERE sequence_code = ?
+              AND step_index > ?
+              AND active = 1
+            ORDER BY step_index
+            LIMIT 1
             """,
-            (sequence_code, next_index),
+            (sequence_code, current_step_index or 0),
         ).fetchone()
     )
 
@@ -3044,23 +3135,353 @@ def list_sequences() -> list[dict[str, Any]]:
     return rows_to_dicts(rows)
 
 
-def list_sequence_steps(sequence_code: str | None = None) -> list[dict[str, Any]]:
-    filters = ["active = 1"]
+def list_sequence_steps(
+    sequence_code: str | None = None,
+    active_only: bool = True,
+) -> list[dict[str, Any]]:
+    filters = []
     params: list[Any] = []
+    if active_only:
+        filters.append("active = 1")
     if sequence_code:
         filters.append("sequence_code = ?")
         params.append(sequence_code)
+    where = f"WHERE {' AND '.join(filters)}" if filters else ""
     with connect() as conn:
         rows = conn.execute(
             f"""
             SELECT *
             FROM sequence_steps
-            WHERE {' AND '.join(filters)}
+            {where}
             ORDER BY sequence_code, step_index
             """,
             params,
         ).fetchall()
     return rows_to_dicts(rows)
+
+
+def add_sequence_step(
+    user_id: int,
+    sequence_code: str,
+    delay: str,
+    meaning: str,
+    requires_template: bool = True,
+) -> tuple[bool, str]:
+    sequence_code = (sequence_code or "").strip()
+    delay = (delay or "").strip()
+    meaning = (meaning or "").strip()
+    if not sequence_code:
+        return False, "Flux obligatoire."
+    if not _is_valid_sequence_delay(delay):
+        return False, "Délai invalide. Utilise +72h, +24h, +7j, +30j ou J-3."
+    if not meaning:
+        return False, "Description de l'événement obligatoire."
+    now = iso_utc()
+    with connect() as conn:
+        ok, message = _require_admin_user(conn, user_id)
+        if not ok:
+            return False, message
+        sequence = conn.execute(
+            "SELECT id FROM sequences WHERE code = ? AND active = 1",
+            (sequence_code,),
+        ).fetchone()
+        if not sequence:
+            return False, "Flux introuvable."
+        next_index = conn.execute(
+            """
+            SELECT coalesce(max(step_index), 0) + 1 AS next_index
+            FROM sequence_steps
+            WHERE sequence_code = ?
+            """,
+            (sequence_code,),
+        ).fetchone()["next_index"]
+        conn.execute(
+            """
+            INSERT INTO sequence_steps (
+                sequence_id, sequence_code, step_index, delay, template_name,
+                requires_template, meaning, active, updated_at
+            ) VALUES (?, ?, ?, ?, NULL, ?, ?, 1, ?)
+            """,
+            (
+                sequence["id"],
+                sequence_code,
+                next_index,
+                delay,
+                1 if requires_template else 0,
+                meaning,
+                now,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO user_activity_log (
+                user_id, event_type, entity_type, entity_id, metadata_json, created_at
+            ) VALUES (?, 'sequence_step_added', 'sequence_step', ?, ?, ?)
+            """,
+            (
+                user_id,
+                next_index,
+                json.dumps(
+                    {
+                        "sequence_code": sequence_code,
+                        "step_index": next_index,
+                        "delay": delay,
+                        "requires_template": bool(requires_template),
+                    },
+                    ensure_ascii=False,
+                ),
+                now,
+            ),
+        )
+    return True, "Étape ajoutée. Elle s'appliquera aux nouvelles séquences."
+
+
+def upsert_sequence_step(
+    user_id: int,
+    sequence_code: str,
+    step_index: int,
+    delay: str,
+    meaning: str,
+    requires_template: bool = True,
+    active: bool = True,
+) -> tuple[bool, str]:
+    sequence_code = (sequence_code or "").strip()
+    delay = (delay or "").strip()
+    meaning = (meaning or "").strip()
+    if not sequence_code:
+        return False, "Flux obligatoire."
+    if not step_index:
+        return False, "Étape obligatoire."
+    if not _is_valid_sequence_delay(delay):
+        return False, "Délai invalide. Utilise +72h, +24h, +7j, +30j ou J-3."
+    if not meaning:
+        return False, "Description de l'événement obligatoire."
+    now = iso_utc()
+    with connect() as conn:
+        ok, message = _require_admin_user(conn, user_id)
+        if not ok:
+            return False, message
+        step = conn.execute(
+            """
+            SELECT id
+            FROM sequence_steps
+            WHERE sequence_code = ? AND step_index = ?
+            """,
+            (sequence_code, step_index),
+        ).fetchone()
+        if not step:
+            return False, "Étape de séquence introuvable."
+        conn.execute(
+            """
+            UPDATE sequence_steps
+            SET delay = ?,
+                meaning = ?,
+                requires_template = ?,
+                active = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                delay,
+                meaning,
+                1 if requires_template else 0,
+                1 if active else 0,
+                now,
+                step["id"],
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO user_activity_log (
+                user_id, event_type, entity_type, entity_id, metadata_json, created_at
+            ) VALUES (?, 'sequence_step_updated', 'sequence_step', ?, ?, ?)
+            """,
+            (
+                user_id,
+                step["id"],
+                json.dumps(
+                    {
+                        "sequence_code": sequence_code,
+                        "step_index": step_index,
+                        "delay": delay,
+                        "requires_template": bool(requires_template),
+                        "active": bool(active),
+                    },
+                    ensure_ascii=False,
+                ),
+                now,
+            ),
+        )
+    return True, "Étape enregistrée. Elle s'appliquera aux nouvelles séquences."
+
+
+def deactivate_sequence_step(user_id: int, step_id: int) -> tuple[bool, str]:
+    now = iso_utc()
+    with connect() as conn:
+        ok, message = _require_admin_user(conn, user_id)
+        if not ok:
+            return False, message
+        step = conn.execute(
+            "SELECT id, sequence_code, step_index FROM sequence_steps WHERE id = ? AND active = 1",
+            (step_id,),
+        ).fetchone()
+        if not step:
+            return False, "Étape active introuvable."
+        conn.execute(
+            "UPDATE sequence_steps SET active = 0, updated_at = ? WHERE id = ?",
+            (now, step_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO user_activity_log (
+                user_id, event_type, entity_type, entity_id, metadata_json, created_at
+            ) VALUES (?, 'sequence_step_deactivated', 'sequence_step', ?, ?, ?)
+            """,
+            (
+                user_id,
+                step_id,
+                json.dumps(
+                    {
+                        "sequence_code": step["sequence_code"],
+                        "step_index": step["step_index"],
+                    },
+                    ensure_ascii=False,
+                ),
+                now,
+            ),
+        )
+    return True, "Étape désactivée. Elle ne sera pas utilisée pour les nouvelles séquences."
+
+
+def _is_valid_sequence_delay(delay: str) -> bool:
+    value = (delay or "").strip().lower()
+    if value in {"now", "immédiat", "immediat"}:
+        return True
+    if value.startswith("+") and len(value) >= 3:
+        amount = value[1:-1]
+        unit = value[-1]
+        return amount.isdigit() and unit in {"h", "j"}
+    if value.startswith("j-"):
+        return value[2:].isdigit()
+    return False
+
+
+def list_course_categories(active_only: bool = True) -> list[dict[str, Any]]:
+    filters = []
+    if active_only:
+        filters.append("active = 1")
+    where = f"WHERE {' AND '.join(filters)}" if filters else ""
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM course_categories
+            {where}
+            ORDER BY course_category
+            """
+        ).fetchall()
+    return rows_to_dicts(rows)
+
+
+def upsert_course_category(
+    user_id: int,
+    course_category: str,
+    label: str = "",
+    note: str = "",
+) -> tuple[bool, str]:
+    category = (course_category or "").strip().upper()
+    clean_label = (label or "").strip() or category
+    clean_note = (note or "").strip()
+    if not category:
+        return False, "Catégorie obligatoire."
+    now = iso_utc()
+    with connect() as conn:
+        ok, message = _require_admin_user(conn, user_id)
+        if not ok:
+            return False, message
+        conn.execute(
+            """
+            INSERT INTO course_categories (
+                course_category, label, active, note,
+                created_by_user_id, updated_by_user_id, created_at, updated_at
+            ) VALUES (?, ?, 1, ?, ?, ?, ?, ?)
+            ON CONFLICT(course_category) DO UPDATE SET
+                label = excluded.label,
+                note = excluded.note,
+                active = 1,
+                updated_by_user_id = excluded.updated_by_user_id,
+                updated_at = excluded.updated_at
+            """,
+            (
+                category,
+                clean_label,
+                clean_note or None,
+                user_id,
+                user_id,
+                now,
+                now,
+            ),
+        )
+        row = conn.execute(
+            "SELECT id FROM course_categories WHERE course_category = ?",
+            (category,),
+        ).fetchone()
+        conn.execute(
+            """
+            INSERT INTO user_activity_log (
+                user_id, event_type, entity_type, entity_id, metadata_json, created_at
+            ) VALUES (?, 'course_category_upserted', 'course_category', ?, ?, ?)
+            """,
+            (
+                user_id,
+                row["id"] if row else None,
+                json.dumps(
+                    {"course_category": category, "label": clean_label},
+                    ensure_ascii=False,
+                ),
+                now,
+            ),
+        )
+    return True, "Catégorie enregistrée."
+
+
+def deactivate_course_category(user_id: int, category_id: int) -> tuple[bool, str]:
+    now = iso_utc()
+    with connect() as conn:
+        ok, message = _require_admin_user(conn, user_id)
+        if not ok:
+            return False, message
+        existing = conn.execute(
+            "SELECT id, course_category FROM course_categories WHERE id = ? AND active = 1",
+            (category_id,),
+        ).fetchone()
+        if not existing:
+            return False, "Catégorie active introuvable."
+        conn.execute(
+            """
+            UPDATE course_categories
+            SET active = 0, updated_by_user_id = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (user_id, now, category_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO user_activity_log (
+                user_id, event_type, entity_type, entity_id, metadata_json, created_at
+            ) VALUES (?, 'course_category_deactivated', 'course_category', ?, ?, ?)
+            """,
+            (
+                user_id,
+                category_id,
+                json.dumps(
+                    {"course_category": existing["course_category"]},
+                    ensure_ascii=False,
+                ),
+                now,
+            ),
+        )
+    return True, "Catégorie désactivée."
 
 
 def list_sequence_template_mappings() -> list[dict[str, Any]]:
@@ -3253,11 +3674,17 @@ def upsert_sequence_template_mapping(
         if not step:
             return False, "Étape de séquence introuvable."
         template = conn.execute(
-            "SELECT id FROM whatsapp_templates WHERE id = ?",
+            """
+            SELECT id, status, twilio_content_sid
+            FROM whatsapp_templates
+            WHERE id = ?
+            """,
             (template_id,),
         ).fetchone()
         if not template:
             return False, "Modèle WhatsApp introuvable."
+        if not _is_approved_real_twilio_template(template):
+            return False, "Seuls les templates Twilio approuvés par WhatsApp peuvent être recommandés."
         conn.execute(
             """
             INSERT INTO sequence_template_mappings (
@@ -3381,6 +3808,10 @@ def get_recommended_template_for_action(action_id: int) -> dict[str, Any] | None
             FROM sequence_template_mappings stm
             JOIN whatsapp_templates wt ON wt.id = stm.template_id
             WHERE stm.active = 1
+              AND wt.status = 'approved'
+              AND wt.twilio_content_sid IS NOT NULL
+              AND wt.twilio_content_sid LIKE 'HX%'
+              AND wt.twilio_content_sid NOT LIKE 'HX_MOCK_%'
               AND stm.sequence_code = ?
               AND stm.sequence_step_index = ?
               AND stm.lead_type IN ('all', ?)
@@ -3401,6 +3832,13 @@ def get_recommended_template_for_action(action_id: int) -> dict[str, Any] | None
             ),
         ).fetchone()
     return row_to_dict(mapping)
+
+
+def _is_approved_real_twilio_template(template: Any) -> bool:
+    status = template["status"] or ""
+    sid = template["twilio_content_sid"] or ""
+    sid = str(sid)
+    return status == "approved" and sid.startswith("HX") and not sid.startswith("HX_MOCK_")
 
 
 def _normalize_mapping_dimension(value: str, uppercase: bool = False) -> str:

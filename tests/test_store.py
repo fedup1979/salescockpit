@@ -13,6 +13,8 @@ from sales_cockpit.store import (
     create_bug_report,
     create_template,
     create_template_request,
+    add_sequence_step,
+    deactivate_sequence_step,
     deactivate_course_default_session,
     get_conversation,
     get_integration_readiness,
@@ -23,6 +25,7 @@ from sales_cockpit.store import (
     list_actions_for_lead,
     list_conversations,
     list_course_default_sessions,
+    list_sequence_steps,
     list_messages,
     list_sequence_template_mappings,
     list_template_requests,
@@ -39,6 +42,7 @@ from sales_cockpit.store import (
     upsert_course_default_session,
     update_lead_qualification,
     update_temporary_identity,
+    upsert_sequence_step,
     upsert_sequence_template_mapping,
 )
 from sales_cockpit.services.front_import import upsert_front_history
@@ -832,6 +836,88 @@ def test_sequence_template_mapping_recommends_matching_twilio_template(monkeypat
     assert recommended is not None
     assert recommended["template_id"] == template["id"]
     assert recommended["template_name"] == "app_relance_1"
+
+
+def test_sequence_template_mapping_rejects_non_approved_or_demo_template() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    draft_id = create_template(
+        admin["id"],
+        "draft_relance",
+        "Bonjour {{first_name}}",
+        status="draft",
+        twilio_content_sid="HXbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    )
+    demo_id = create_template(
+        admin["id"],
+        "demo_relance",
+        "Bonjour {{first_name}}",
+        status="approved",
+        twilio_content_sid="HX_MOCK_demo_relance",
+    )
+
+    ok, message = upsert_sequence_template_mapping(
+        admin["id"],
+        "lead_no_reply",
+        1,
+        "lead",
+        "APP",
+        draft_id,
+    )
+    assert ok is False
+    assert "approuv" in message
+
+    ok, message = upsert_sequence_template_mapping(
+        admin["id"],
+        "lead_no_reply",
+        1,
+        "lead",
+        "APP",
+        demo_id,
+    )
+    assert ok is False
+    assert "approuv" in message
+
+
+def test_sequence_steps_can_be_added_updated_and_deactivated() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+
+    before = list_sequence_steps("lead_no_reply", active_only=False)
+    ok, message = add_sequence_step(
+        admin["id"],
+        "lead_no_reply",
+        "+14j",
+        "Relance longue de test.",
+        requires_template=True,
+    )
+    assert ok is True
+    assert "ajout" in message
+
+    steps = list_sequence_steps("lead_no_reply", active_only=False)
+    assert len(steps) == len(before) + 1
+    added = steps[-1]
+    assert added["delay"] == "+14j"
+    assert added["requires_template"] == 1
+
+    ok, message = upsert_sequence_step(
+        admin["id"],
+        "lead_no_reply",
+        int(added["step_index"]),
+        "+7j",
+        "Relance longue ajustée.",
+        requires_template=False,
+        active=True,
+    )
+    assert ok is True
+    updated = list_sequence_steps("lead_no_reply", active_only=False)[-1]
+    assert updated["delay"] == "+7j"
+    assert updated["requires_template"] == 0
+
+    ok, message = deactivate_sequence_step(admin["id"], int(updated["id"]))
+    assert ok is True
+    active_ids = {item["id"] for item in list_sequence_steps("lead_no_reply")}
+    assert updated["id"] not in active_ids
 
 
 def test_course_default_session_can_be_configured_and_deactivated() -> None:

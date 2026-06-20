@@ -203,11 +203,24 @@ CREATE TABLE IF NOT EXISTS sequence_steps (
     step_index INTEGER NOT NULL,
     delay TEXT NOT NULL,
     template_name TEXT,
+    requires_template INTEGER NOT NULL DEFAULT 1,
     meaning TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(sequence_code, step_index)
+);
+
+CREATE TABLE IF NOT EXISTS course_categories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    course_category TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    note TEXT,
+    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS sequence_template_mappings (
@@ -516,6 +529,13 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
     )
     add_missing_columns(
         conn,
+        "sequence_steps",
+        [
+            ("requires_template", "INTEGER NOT NULL DEFAULT 1"),
+        ],
+    )
+    add_missing_columns(
+        conn,
         "front_conversations",
         [
             ("migration_status", "TEXT NOT NULL DEFAULT 'manual_review'"),
@@ -586,6 +606,15 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
         UPDATE tasks
         SET type = 'setting_call'
         WHERE type = 'call'
+        """
+    )
+    conn.execute(
+        """
+        UPDATE sequence_steps
+        SET requires_template = CASE
+            WHEN template_name IS NULL OR trim(template_name) = '' THEN 0
+            ELSE requires_template
+        END
         """
     )
 
@@ -871,18 +900,15 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
         sequence_id = sequence_ids.get(step["sequence_code"])
         if not sequence_id:
             continue
+        requires_template = 1 if step.get("template_name") else 0
         conn.execute(
             """
             INSERT INTO sequence_steps (
                 sequence_id, sequence_code, step_index, delay, template_name,
-                meaning, active, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+                requires_template, meaning, active, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
             ON CONFLICT(sequence_code, step_index) DO UPDATE SET
                 sequence_id = excluded.sequence_id,
-                delay = excluded.delay,
-                template_name = excluded.template_name,
-                meaning = excluded.meaning,
-                active = 1,
                 updated_at = excluded.updated_at
             """,
             (
@@ -891,7 +917,24 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
                 step["step_index"],
                 step["delay"],
                 step.get("template_name") or None,
+                requires_template,
                 step["meaning"],
+                current_time,
+            ),
+        )
+
+    for category in ("FSM", "APP", "AS"):
+        conn.execute(
+            """
+            INSERT INTO course_categories (
+                course_category, label, active, note, updated_at
+            ) VALUES (?, ?, 1, ?, ?)
+            ON CONFLICT(course_category) DO NOTHING
+            """,
+            (
+                category,
+                category,
+                "Catégorie pilotée par défaut pour Sales Cockpit V1.",
                 current_time,
             ),
         )

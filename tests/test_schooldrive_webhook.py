@@ -24,6 +24,8 @@ def schooldrive_payload(
     lead_type: str = "lead",
     first_name: str = "Marie",
     last_name: str = "Favre",
+    course_category: str = "FSM",
+    autoresponders: list[dict] | None = None,
     is_archived: bool = False,
 ) -> dict:
     return {
@@ -47,13 +49,13 @@ def schooldrive_payload(
                 "email": "marie.favre@example.ch",
             },
             "course": {
-                "category": "FSM",
+                "category": course_category,
                 "course_name": None if lead_type == "lead" else "FSM DISTANCE E26",
                 "session_name": None,
                 "start_date": None,
             },
             "status": "lead" if lead_type == "lead" else "pre_subscription",
-            "whatsapp_autoresponders": [
+            "whatsapp_autoresponders": autoresponders if autoresponders is not None else [
                 {
                     "message_id": "armsg:1019771",
                     "autoresponder_id": 2063,
@@ -89,6 +91,79 @@ def test_schooldrive_snapshot_creates_lead_conversation_messages_and_followup() 
     assert action["sequence_code"] == "lead_no_reply"
     assert action["sequence_step_index"] == 1
     assert action["due_at"].startswith("2026-06-21T09:34:20")
+
+
+def test_schooldrive_sent_whatsapp_for_unconfigured_category_creates_human_review() -> None:
+    seed_initial_data()
+
+    result = ingest_schooldrive_snapshot(
+        schooldrive_payload(
+            event_id="evt_unconfigured_category",
+            schooldrive_id="lead:999001",
+            course_category="NUTR",
+        )
+    )
+
+    assert result["status"] == "created"
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["course_category_short_title"] == "NUTR"
+    messages = list_messages(result["conversation_id"])
+    assert any(message["channel"] == "schooldrive_autoresponder" for message in messages)
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "other"
+    assert action["trigger_reason"] == "unconfigured_course_category"
+    assert action["assigned_to_email"] == "service.etudiants@essr.ch"
+
+
+def test_schooldrive_later_autoresponder_does_not_recreate_initial_followup() -> None:
+    seed_initial_data()
+    first = ingest_schooldrive_snapshot(schooldrive_payload())
+    first_action = get_next_action_for_lead(first["lead_id"])
+    assert first_action["due_at"].startswith("2026-06-21T09:34:20")
+
+    update = schooldrive_payload(
+        event_id="evt_sd_later_ar",
+        occurred_at="2026-06-19T12:05:00Z",
+        aggregated_updated_at="2026-06-19T12:05:00Z",
+        autoresponders=[
+            {
+                "message_id": "armsg:1019771",
+                "autoresponder_id": 2063,
+                "template": "mkt_fsm_ln_subs_01",
+                "status": "sent",
+                "sent_at": "2026-06-18T09:34:20Z",
+            },
+            {
+                "message_id": "armsg:1019999",
+                "autoresponder_id": 2064,
+                "template": "mkt_fsm_extra_01",
+                "status": "sent",
+                "sent_at": "2026-06-19T12:00:00Z",
+            },
+        ],
+    )
+    result = ingest_schooldrive_snapshot(update)
+
+    assert result["status"] == "updated"
+    action = get_next_action_for_lead(first["lead_id"])
+    assert action["type"] == "follow_up"
+    assert action["sequence_code"] == "lead_no_reply"
+    assert action["sequence_step_index"] == 1
+    assert action["due_at"].startswith("2026-06-21T09:34:20")
+    with connect() as conn:
+        total_initial = conn.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM tasks
+            WHERE lead_id = ?
+              AND trigger_reason IN (
+                'schooldrive_initial_autoresponder_sent',
+                'schooldrive_initial_followup_updated'
+              )
+            """,
+            (first["lead_id"],),
+        ).fetchone()["total"]
+    assert total_initial == 1
 
 
 def test_schooldrive_snapshot_accepts_real_subscription_payload_fields() -> None:

@@ -41,7 +41,10 @@ from sales_cockpit.store import (
     create_bug_report,
     create_template_request,
     create_template,
+    add_sequence_step,
+    deactivate_course_category,
     deactivate_course_default_session,
+    deactivate_sequence_step,
     deactivate_sequence_template_mapping,
     get_conversation,
     get_integration_readiness,
@@ -51,6 +54,7 @@ from sales_cockpit.store import (
     get_template,
     list_actions_for_lead,
     list_conversations,
+    list_course_categories,
     list_course_default_sessions,
     list_front_import_records,
     list_messages,
@@ -67,7 +71,9 @@ from sales_cockpit.store import (
     send_template_message,
     set_conversation_status,
     sync_twilio_templates,
+    upsert_course_category,
     upsert_course_default_session,
+    upsert_sequence_step,
     upsert_sequence_template_mapping,
     update_template_request_status,
     update_lead_qualification,
@@ -1983,9 +1989,22 @@ def is_demo_template(template: dict) -> bool:
     return sid.startswith("HX_MOCK_") or not sid
 
 
+def is_approved_real_twilio_template(template: dict) -> bool:
+    return is_real_twilio_template(template) and template.get("status") == "approved"
+
+
+def mapping_has_approved_real_template(mapping: dict) -> bool:
+    sid = str(mapping.get("twilio_content_sid") or "")
+    return (
+        mapping.get("template_status") == "approved"
+        and sid.startswith("HX")
+        and not sid.startswith("HX_MOCK_")
+    )
+
+
 def template_source_label(template: dict) -> str:
     if is_real_twilio_template(template):
-        return "Twilio DEV"
+        return "Twilio"
     if is_demo_template(template):
         return "Démo locale"
     return "Local"
@@ -2049,7 +2068,9 @@ def render_pilotage(user: dict) -> None:
 
     tabs = st.tabs([
         "Vue d'ensemble",
+        "Cours traités",
         "Sessions par défaut",
+        "Étapes des flux",
         "Flux par scénario",
         "Règles de conflit",
         "Simulateur",
@@ -2057,36 +2078,46 @@ def render_pilotage(user: dict) -> None:
     with tabs[0]:
         render_pilotage_overview()
     with tabs[1]:
-        render_pilotage_default_sessions(user)
+        render_pilotage_course_categories(user)
     with tabs[2]:
-        render_pilotage_scenario_tables()
+        render_pilotage_default_sessions(user)
     with tabs[3]:
-        render_pilotage_conflict_rules()
+        render_pilotage_sequence_steps(user)
     with tabs[4]:
+        render_pilotage_scenario_tables(user)
+    with tabs[5]:
+        render_pilotage_conflict_rules()
+    with tabs[6]:
         render_pilotage_simulator()
 
 
 def render_pilotage_overview() -> None:
     sequences = sorted(list_sequences(), key=lambda item: pilotage_sequence_sort_key(item["code"]))
     mappings = list_sequence_template_mappings()
-    default_sessions = list_course_default_sessions()
+    course_categories = list_course_categories()
     real_templates = [item for item in list_templates() if is_real_twilio_template(item)]
-    approved_real = [item for item in real_templates if item.get("status") == "approved"]
+    approved_real = [item for item in real_templates if is_approved_real_twilio_template(item)]
     metric_cols = st.columns(4)
     metric_cols[0].metric("Flux actifs", len(sequences))
     metric_cols[1].metric("Templates réels", len(real_templates))
     metric_cols[2].metric("Templates approuvés", len(approved_real))
-    metric_cols[3].metric("Sessions par défaut", len(default_sessions))
+    metric_cols[3].metric("Cours traités", len(course_categories))
+
+    category_text = ", ".join(item["course_category"] for item in course_categories) or "aucun"
+    st.info(
+        "V1 : les réglages d'étapes et de templates ne changent que les nouvelles séquences créées après enregistrement. "
+        "Les actions déjà ouvertes ne sont pas recalculées automatiquement. V2 : ajouter un bouton de recalcul contrôlé."
+    )
 
     st.markdown("### Comment lire cette page")
     st.markdown(
-        """
+        f"""
         Le réglage commercial se fait en deux temps.
 
         1. **Définir les flux** : décider combien de messages existent dans chaque flux et à quel moment ils partent.
         2. **Appliquer les flux aux cours** : pour chaque flux, chaque événement et chaque cours traité, choisir le template précis à envoyer.
 
-        Pour le moment, le système couvre uniquement **FSM**, **APP** et **AS**. Les autres cours devront être intégrés progressivement.
+        Cours actuellement pilotés : **{category_text}**. Les autres catégories reçues depuis SchoolDrive restent visibles, mais passent en revue humaine tant qu'elles ne sont pas ajoutées ici.
 
         - **Sessions de référence** : règle utilisée quand SchoolDrive envoie un Lead avec une catégorie, mais sans session précise.
         - **Flux par scénario** : liste des événements prévus, avec le template recommandé et le message complet.
@@ -2114,7 +2145,7 @@ def render_pilotage_overview() -> None:
     st.markdown("### Points à régler avec Laura")
     st.caption(
         "Chaque ligne représente une décision à prendre : flux × événement × cours. "
-        "Un template générique `Tous` peut dépanner, mais Laura doit valider le template exact pour FSM, APP et AS."
+        "Un template générique `Tous` peut dépanner, mais Laura doit valider le template exact pour chaque cours traité."
     )
     tuning_rows = build_pilotage_tuning_rows(mappings)
     if tuning_rows:
@@ -2123,13 +2154,68 @@ def render_pilotage_overview() -> None:
         st.success("Toutes les étapes avec template disposent déjà d'une recommandation.")
 
 
+def render_pilotage_course_categories(user: dict) -> None:
+    st.markdown("### Cours traités")
+    st.caption(
+        "Une catégorie active signifie que Sales Cockpit peut appliquer les flux structurés. "
+        "Une catégorie reçue depuis SchoolDrive mais non active reste visible et crée une revue humaine pour Mihary."
+    )
+    categories = list_course_categories(active_only=False)
+    active_categories = [item for item in categories if item.get("active")]
+    if active_categories:
+        rows = [
+            {
+                "Catégorie": item["course_category"],
+                "Libellé": item.get("label") or item["course_category"],
+                "Active": bool(item.get("active")),
+                "Note": item.get("note") or "",
+            }
+            for item in categories
+        ]
+        st.dataframe(rows, hide_index=True, use_container_width=True, height=240)
+    else:
+        st.warning("Aucun cours n'est piloté. Les leads SchoolDrive seront tous mis en revue humaine.")
+
+    with st.form("pilotage_course_category_form"):
+        st.markdown("**Ajouter ou réactiver une catégorie**")
+        course_category = st.text_input("Code catégorie", placeholder="Ex. NUTR")
+        label = st.text_input("Libellé", placeholder="Ex. Nutrition")
+        note = st.text_area(
+            "Note",
+            height=80,
+            placeholder="Ex. À activer quand les templates Nutrition sont validés.",
+        )
+        submitted = st.form_submit_button("Enregistrer la catégorie")
+    if submitted:
+        ok, message = upsert_course_category(user["id"], course_category, label=label, note=note)
+        show_result(ok, message)
+        if ok:
+            st.rerun()
+
+    if active_categories:
+        with st.expander("Désactiver une catégorie", expanded=False):
+            with st.form("pilotage_course_category_deactivate_form"):
+                category = st.selectbox(
+                    "Catégorie",
+                    active_categories,
+                    format_func=lambda item: f"{item['course_category']} · {item.get('label') or item['course_category']}",
+                )
+                submitted = st.form_submit_button("Désactiver")
+            if submitted:
+                ok, message = deactivate_course_category(user["id"], int(category["id"]))
+                show_result(ok, message)
+                if ok:
+                    st.rerun()
+
+
 def render_pilotage_default_sessions(user: dict) -> None:
     st.markdown("### Sessions de référence par catégorie")
     st.caption(
         "Une session de référence sert à calculer les relances liées au début du cours quand un Lead arrive avec seulement une catégorie, par exemple APP, mais sans session précise. Si SchoolDrive fournit une vraie session ou une vraie date de début, elle gagne."
     )
+    active_categories = pilotage_active_categories()
     st.info(
-        "Pour le moment, configure au minimum FSM, APP et AS. Le lien SchoolDrive est facultatif : il sert uniquement à ouvrir rapidement la fiche de la session de référence."
+        "Configure une session de référence pour chaque cours traité. Le lien SchoolDrive est facultatif : il sert uniquement à ouvrir rapidement la fiche de la session de référence."
     )
     sessions = list_course_default_sessions(active_only=False)
     active_sessions = [item for item in sessions if item.get("active")]
@@ -2147,16 +2233,18 @@ def render_pilotage_default_sessions(user: dict) -> None:
         ]
         st.dataframe(rows, hide_index=True, use_container_width=True, height=260)
     else:
-        st.info("Aucune session de référence configurée. Ajoute au minimum FSM, APP et AS avant le réglage fin des flux cours.")
+        st.info("Aucune session de référence configurée. Ajoute une session pour chaque cours traité avant le réglage fin des flux cours.")
 
     missing_categories = [
-        category for category in PILOTAGE_SUPPORTED_CATEGORIES
+        category for category in active_categories
         if category not in {item["course_category"] for item in active_sessions}
     ]
     if missing_categories:
         st.warning(f"Sessions de référence manquantes : {', '.join(missing_categories)}.")
 
-    category_options = sorted(set(PILOTAGE_SUPPORTED_CATEGORIES + [item["course_category"] for item in active_sessions]))
+    category_options = sorted(set(active_categories + [item["course_category"] for item in active_sessions]))
+    if not category_options:
+        category_options = PILOTAGE_SUPPORTED_CATEGORIES.copy()
     with st.form("course_default_session_form"):
         edit_choice = st.selectbox(
             "Catégorie",
@@ -2228,7 +2316,122 @@ def render_pilotage_default_sessions(user: dict) -> None:
                     st.rerun()
 
 
-def render_pilotage_scenario_tables() -> None:
+def render_pilotage_sequence_steps(user: dict) -> None:
+    st.markdown("### Étapes des flux")
+    st.caption(
+        "Laura peut modifier le nombre de relances et leur timing dans un flux existant. "
+        "On désactive une étape au lieu de la supprimer, pour conserver l'historique de réglage."
+    )
+    st.info(
+        "Ces changements affectent seulement les nouvelles séquences. Les actions déjà ouvertes ne sont pas recalculées automatiquement en V1."
+    )
+    sequences = sorted(list_sequences(), key=lambda item: pilotage_sequence_sort_key(item["code"]))
+    if not sequences:
+        st.warning("Aucun flux actif.")
+        return
+
+    sequence = st.selectbox(
+        "Flux",
+        sequences,
+        format_func=lambda item: item["label"],
+        key="pilotage_steps_sequence",
+    )
+    steps = list_sequence_steps(sequence["code"], active_only=False)
+    if steps:
+        rows = [
+            {
+                "Étape": item["step_index"],
+                "Active": bool(item.get("active")),
+                "Quand": item["delay"],
+                "Template requis": bool(item.get("requires_template")),
+                "Événement": item["meaning"],
+            }
+            for item in steps
+        ]
+        st.dataframe(rows, hide_index=True, use_container_width=True, height=260)
+    else:
+        st.warning("Aucune étape n'existe encore pour ce flux.")
+
+    edit_col, add_col = st.columns(2)
+    with edit_col:
+        st.markdown("**Modifier une étape**")
+        if steps:
+            with st.form("pilotage_sequence_step_edit_form"):
+                selected = st.selectbox(
+                    "Étape",
+                    steps,
+                    format_func=lambda item: (
+                        f"Étape {item['step_index']} · "
+                        f"{'active' if item.get('active') else 'inactive'} · {item['delay']}"
+                    ),
+                )
+                delay = st.text_input("Délai", value=selected.get("delay") or "+72h")
+                meaning = st.text_area(
+                    "Événement",
+                    value=selected.get("meaning") or "",
+                    height=100,
+                )
+                requires_template = st.checkbox(
+                    "Template requis",
+                    value=bool(selected.get("requires_template")),
+                )
+                active = st.checkbox("Étape active", value=bool(selected.get("active")))
+                submitted = st.form_submit_button("Enregistrer l'étape")
+            if submitted:
+                ok, message = upsert_sequence_step(
+                    user["id"],
+                    selected["sequence_code"],
+                    int(selected["step_index"]),
+                    delay,
+                    meaning,
+                    requires_template=requires_template,
+                    active=active,
+                )
+                show_result(ok, message)
+                if ok:
+                    st.rerun()
+
+            active_steps = [item for item in steps if item.get("active")]
+            if active_steps:
+                with st.form("pilotage_sequence_step_deactivate_form"):
+                    step = st.selectbox(
+                        "Désactiver",
+                        active_steps,
+                        format_func=lambda item: f"Étape {item['step_index']} · {item['delay']}",
+                    )
+                    submitted = st.form_submit_button("Désactiver l'étape")
+                if submitted:
+                    ok, message = deactivate_sequence_step(user["id"], int(step["id"]))
+                    show_result(ok, message)
+                    if ok:
+                        st.rerun()
+
+    with add_col:
+        st.markdown("**Ajouter une étape en fin de flux**")
+        with st.form("pilotage_sequence_step_add_form"):
+            delay = st.text_input("Délai", value="+72h", key="pilotage_step_add_delay")
+            meaning = st.text_area(
+                "Événement",
+                height=100,
+                placeholder="Ex. Relance supplémentaire après une semaine sans réponse.",
+                key="pilotage_step_add_meaning",
+            )
+            requires_template = st.checkbox("Template requis", value=True, key="pilotage_step_add_requires_tpl")
+            submitted = st.form_submit_button("Ajouter l'étape")
+        if submitted:
+            ok, message = add_sequence_step(
+                user["id"],
+                sequence["code"],
+                delay,
+                meaning,
+                requires_template=requires_template,
+            )
+            show_result(ok, message)
+            if ok:
+                st.rerun()
+
+
+def render_pilotage_scenario_tables(user: dict) -> None:
     st.markdown("### Flux par scénario")
     st.caption(
         "Chaque étape montre le template recommandé, son SID Twilio et le message complet. "
@@ -2247,6 +2450,61 @@ def render_pilotage_scenario_tables() -> None:
         )
 
     render_sequence_timeline(sequence_code, "all", category)
+    render_pilotage_template_mapping_form(user, sequence_code, category)
+
+
+def render_pilotage_template_mapping_form(user: dict, sequence_code: str, category: str) -> None:
+    st.markdown("### Associer un template approuvé")
+    st.caption(
+        "Seuls les templates Twilio approuvés par WhatsApp sont proposés. "
+        "Le choix s'applique aux nouvelles actions créées après enregistrement."
+    )
+    steps = [
+        item for item in list_sequence_steps(sequence_code)
+        if item.get("requires_template")
+    ]
+    templates = [item for item in list_templates() if is_approved_real_twilio_template(item)]
+    if not steps:
+        st.info("Ce flux n'a aucune étape nécessitant un template.")
+        return
+    if not templates:
+        st.warning("Aucun template Twilio approuvé n'est disponible. Synchronise d'abord les templates dans Modèles.")
+        return
+    with st.form(f"pilotage_mapping_form_{sequence_code}_{category}"):
+        step = st.selectbox(
+            "Étape",
+            steps,
+            format_func=lambda item: f"Étape {item['step_index']} · {item['delay']} · {item['meaning']}",
+        )
+        lead_type = st.selectbox(
+            "Type SchoolDrive",
+            ["all", "lead", "presubscription"],
+            format_func=lambda value: {
+                "all": "Lead et Préinscription",
+                "lead": "Lead",
+                "presubscription": "Préinscription",
+            }.get(value, labelize(value)),
+        )
+        template = st.selectbox(
+            "Template approuvé",
+            templates,
+            format_func=lambda item: f"{item['name']} · {item['language']} · {item.get('twilio_content_sid')}",
+        )
+        note = st.text_input("Note interne", placeholder="Ex. APP relance 2 validée avec Laura.")
+        submitted = st.form_submit_button("Enregistrer ce template")
+    if submitted:
+        ok, message = upsert_sequence_template_mapping(
+            user["id"],
+            step["sequence_code"],
+            int(step["step_index"]),
+            lead_type,
+            category,
+            int(template["id"]),
+            note,
+        )
+        show_result(ok, message)
+        if ok:
+            st.rerun()
 
 
 def render_pilotage_conflict_rules() -> None:
@@ -2275,14 +2533,15 @@ def render_pilotage_simulator() -> None:
     st.markdown("### Simulateur de flux")
     st.caption("Prévisualisation simple. Le simulateur ne crée aucune tâche et n'envoie aucun message.")
     default_sessions = {item["course_category"]: item for item in list_course_default_sessions()}
+    active_categories = pilotage_active_categories()
     missing = [
-        category for category in PILOTAGE_SUPPORTED_CATEGORIES
+        category for category in active_categories
         if category not in default_sessions
     ]
     if missing:
         st.warning(
             "Définis d'abord les sessions de référence pour tous les cours traités : "
-            f"{', '.join(missing)}. Le simulateur sera fiable seulement quand FSM, APP et AS sont configurés."
+            f"{', '.join(missing)}. Le simulateur sera fiable seulement quand tous les cours actifs sont configurés."
         )
         return
 
@@ -2316,7 +2575,6 @@ def render_pilotage_simulator() -> None:
 def render_sequence_timeline(sequence_code: str, lead_type: str, category: str) -> None:
     steps = list_sequence_steps(sequence_code)
     mappings = list_sequence_template_mappings()
-    templates_by_name = {item["name"]: item for item in list_templates()}
     if not steps:
         st.warning("Aucune étape pour ce flux.")
         return
@@ -2337,8 +2595,6 @@ def render_sequence_timeline(sequence_code: str, lead_type: str, category: str) 
                 "twilio_content_sid": mapping.get("twilio_content_sid"),
                 "twilio_content_type": mapping.get("twilio_content_type"),
             }
-        elif step.get("template_name"):
-            template = templates_by_name.get(step["template_name"])
 
         with st.container(border=True):
             top_cols = st.columns([0.6, 1.2, 1.2, 1.1], vertical_alignment="top")
@@ -2358,18 +2614,20 @@ def render_sequence_timeline(sequence_code: str, lead_type: str, category: str) 
                 status_cols[0].markdown(f"**Statut**  \n{template_status_label(template)}")
                 status_cols[1].markdown(f"**Catégorie**  \n{labelize(template.get('category'))}")
                 mapping_note = (mapping or {}).get("note") if mapping else ""
-                status_cols[2].caption(mapping_note or "Mapping exact, spécifique ou fallback démo selon disponibilité.")
+                status_cols[2].caption(mapping_note or "Mapping exact, spécifique ou fallback Tous selon disponibilité.")
                 st.markdown("**Message complet**")
                 st.code(template.get("body") or "Corps de message indisponible.", language="text")
-            else:
+            elif step.get("requires_template"):
                 st.warning("Aucun template n'est encore associé à cette étape.")
+            else:
+                st.info("Cette étape ne requiert pas de template.")
 
 
 def build_pilotage_tuning_rows(mappings: list[dict]) -> list[dict]:
     rows = []
     steps = [
         step for step in list_sequence_steps()
-        if step.get("template_name")
+        if step.get("requires_template")
     ]
     steps = sorted(
         steps,
@@ -2379,7 +2637,7 @@ def build_pilotage_tuning_rows(mappings: list[dict]) -> list[dict]:
         ),
     )
     for step in steps:
-        for category in PILOTAGE_SUPPORTED_CATEGORIES:
+        for category in pilotage_active_categories():
             exact = find_mapping_for_category(mappings, step, category, exact_only=True)
             fallback = find_mapping_for_category(mappings, step, category, exact_only=False)
             mapping = exact or fallback
@@ -2418,6 +2676,7 @@ def find_mapping_for_category(
         and int(item["sequence_step_index"]) == int(step["step_index"])
         and item["course_category"] in allowed_categories
         and item["lead_type"] in {"all", "lead", "presubscription"}
+        and mapping_has_approved_real_template(item)
     ]
     if not candidates:
         return None
@@ -2446,6 +2705,7 @@ def resolve_mapping_for_step(
         and int(item["sequence_step_index"]) == int(step["step_index"])
         and item["lead_type"] in {"all", normalized_type}
         and item["course_category"] in {"all", normalized_category}
+        and mapping_has_approved_real_template(item)
     ]
     if not candidates:
         return None
@@ -2461,14 +2721,20 @@ def resolve_mapping_for_step(
 
 
 def pilotage_categories() -> list[str]:
+    active = pilotage_active_categories()
     configured = [item["course_category"] for item in list_course_default_sessions()]
     mapped = [
         item["course_category"]
         for item in list_sequence_template_mappings()
         if item.get("course_category") and item["course_category"] != "all"
     ]
-    categories = sorted(set(PILOTAGE_SUPPORTED_CATEGORIES + configured + mapped))
-    return categories or PILOTAGE_SUPPORTED_CATEGORIES
+    categories = sorted(set(active + configured + mapped))
+    return categories or active or PILOTAGE_SUPPORTED_CATEGORIES
+
+
+def pilotage_active_categories() -> list[str]:
+    categories = [item["course_category"] for item in list_course_categories()]
+    return categories or PILOTAGE_SUPPORTED_CATEGORIES.copy()
 
 
 def pilotage_sequence_sort_key(code: str) -> tuple[int, str]:
@@ -2511,7 +2777,7 @@ def build_simulated_timeline(sequence_code: str, course_start_date) -> list[dict
                 "Quand": step["delay"],
                 "Date simulée": due_label,
                 "Action": step["meaning"],
-                "Template démo": step.get("template_name") or "Aucun",
+                "Template requis": "Oui" if step.get("requires_template") else "Non",
             }
         )
         if step["delay"].startswith("+"):
@@ -2632,9 +2898,9 @@ def render_admin(user: dict) -> None:
             st.info("Aucun template réel n'est encore recommandé pour les séquences.")
 
         st.markdown("**Ajouter ou modifier une recommandation**")
-        real_templates = [item for item in list_templates() if is_real_twilio_template(item)]
+        real_templates = [item for item in list_templates() if is_approved_real_twilio_template(item)]
         if not real_templates:
-            st.warning("Synchronisez d'abord les vrais templates Twilio dans la page Modèles.")
+            st.warning("Synchronisez d'abord les vrais templates Twilio approuvés dans la page Modèles.")
         else:
             with st.form("sequence_template_mapping_form"):
                 selected_step = st.selectbox(
