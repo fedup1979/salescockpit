@@ -194,8 +194,9 @@ Latest known local validation after the planned-call/course-start workflow chang
 
 - `pytest --basetemp=.pytest-tmp\run`: 110 tests passing.
 - `compileall`: passed for `sales_cockpit`.
-- Last recorded staging deployed commit before this local alignment: `169e93a Preserve planned calls in workflow`.
-- Restore point before deploy: `/opt/sales-cockpit/backups/staging/sales_cockpit_staging_20260620T152700Z.db.gz`.
+- Staging deploy source: `main` branch via `deploy/scripts/deploy_env.sh`.
+- Exact staging commit: verify on the droplet with `git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD`.
+- Restore points live in `/opt/sales-cockpit/backups/staging/`.
 - Staging API/UI health passed after deploy.
 - Staging `pre_cutover_check` passed after deploy:
   - SchoolDrive ready;

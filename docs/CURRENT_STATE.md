@@ -35,18 +35,24 @@ Important new runtime rule: a prospect message during an already planned setting
 - Production UI: `http://139.59.158.77:8501`
 - Production API: `http://139.59.158.77:8601`
 
-Latest recorded staging deployment before the current documentation/workflow alignment:
+Staging deployment source:
 
 ```text
-169e93a Preserve planned calls in workflow
+main branch via deploy/scripts/deploy_env.sh
 ```
 
-Staging was redeployed and verified on this commit on 2026-06-20 at 17:27 Europe/Zurich. Production was not redeployed during this step and remains cold/mock until an explicit production cutover step.
+Verify the exact server commit with:
 
-Restore point before the staging deploy:
+```bash
+git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD
+```
+
+Production remains cold/mock until an explicit production cutover step.
+
+Restore points are stored in:
 
 ```text
-/opt/sales-cockpit/backups/staging/sales_cockpit_staging_20260620T152700Z.db.gz
+/opt/sales-cockpit/backups/staging/
 ```
 
 ## Current Integration Status
@@ -68,7 +74,7 @@ Working:
 - backup/restore scripts and cron.
 - pre-cutover readiness check.
 
-Latest recorded staging check after deploying `169e93a`:
+Latest recorded staging check:
 
 ```text
 scripts/pre_cutover_check.py: OK
