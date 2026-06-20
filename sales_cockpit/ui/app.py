@@ -113,8 +113,8 @@ PILOTAGE_SUPPORTED_CATEGORIES = ["FSM", "APP", "AS"]
 SEQUENCE_STEP_ACTION_TYPES = ["follow_up", "setting_call", "closing_call", "other"]
 SEQUENCE_STEP_ACTION_LABELS = {
     "follow_up": "Relance WhatsApp",
-    "setting_call": "Appel setting",
-    "closing_call": "Appel closing",
+    "setting_call": "Documenter appel setting",
+    "closing_call": "Documenter appel closing",
     "other": "Revue humaine",
 }
 SEQUENCE_STEP_OFFSET_UNITS = ["hours", "days"]
@@ -148,11 +148,11 @@ PILOTAGE_SEQUENCE_OWNER_LABELS = {
 PILOTAGE_CONFLICT_RULES = [
     {
         "Situation": "Le prospect répond",
-        "Règle": "La réponse entrante interrompt les relances futures et crée une action Répondre au message pour Mihary.",
+        "Règle": "La réponse entrante interrompt les relances futures et crée une action Répondre au message pour Mihary. Si un appel setting ou closing est déjà planifié, cet appel reste actif et visible.",
     },
     {
         "Situation": "Relance lead/préinscription et relance cours proches",
-        "Règle": "Avant d'envoyer une relance lead/préinscription, le cockpit doit vérifier si une relance liée au cours est prévue dans les 24h. Si oui, la relance cours gagne et toute la séquence lead/préinscription restante est annulée.",
+        "Règle": "Avant d'envoyer une relance lead/préinscription, le cockpit doit vérifier si une relance liée au cours est prévue dans les 24h. Si oui, la relance cours gagne et le flux lead/préinscription restant est annulé, sauf si un appel setting ou closing est déjà planifié.",
     },
     {
         "Situation": "Fenêtre WhatsApp fermée",
@@ -207,7 +207,7 @@ DISPLAY_LABELS = {
     "do_not_contact": "Ne plus contacter",
     "duplicate": "Doublon",
     "handled_elsewhere": "Traité ailleurs",
-    "sequence_completed_no_reply": "Séquence terminée sans réponse",
+    "sequence_completed_no_reply": "Suivi terminé sans réponse",
     "error": "Erreur",
     "deal_pending": "Deal en attente",
     "deal_confirmed": "Deal confirmé",
@@ -888,6 +888,20 @@ def standard_action_button_label(action_type: str) -> str:
     return labels.get(action_type, labelize(action_type))
 
 
+def active_planned_call_for_lead(lead_id: int | None) -> dict | None:
+    if not lead_id:
+        return None
+    calls = [
+        action for action in list_actions_for_lead(lead_id, "all")
+        if action.get("type") in CALL_ACTION_TYPES
+        and action.get("status") in {"open", "in_progress", "planned", "blocked"}
+    ]
+    if not calls:
+        return None
+    calls.sort(key=lambda action: parse_dt(action.get("due_at")) or datetime.max.replace(tzinfo=timezone.utc))
+    return calls[0]
+
+
 def get_reply_send_plan(
     action: dict | None,
     key_prefix: str,
@@ -930,10 +944,14 @@ def render_reply_send_plan_controls(
 
     st.markdown("**Après votre réponse, quelle suite faut-il créer ?**")
     st.caption("Si le prospect accepte un appel, choisissez `RDV setting fixé`, renseignez le rendez-vous, puis envoyez le message dans Conversation.")
+    active_call = active_planned_call_for_lead(action.get("lead_id"))
+    labels = dict(REPLY_SEND_OUTCOME_LABELS)
+    if active_call:
+        labels["reply_no_appointment"] = "Pas de nouveau RDV : conserver l'appel planifié"
     outcome = st.selectbox(
         "Suite à créer après l'envoi",
         REPLY_SEND_OUTCOMES,
-        format_func=lambda value: REPLY_SEND_OUTCOME_LABELS.get(value, labelize(value)),
+        format_func=lambda value: labels.get(value, labelize(value)),
         key=f"{key_prefix}_reply_outcome",
     )
     note = st.text_area("Note interne, optionnelle", height=80, key=f"{key_prefix}_reply_note")
@@ -963,7 +981,10 @@ def render_reply_send_plan_controls(
         call_label = "setting" if outcome == "setting_booked" else "closing"
         st.caption(f"Après l'envoi, un appel {call_label} sera créé le {appointment_date.strftime('%d.%m.%Y')} à {appointment_time.strftime('%H:%M')}.")
     elif outcome in {"not_relevant", "do_not_contact"}:
-        st.warning("Cette réponse résoudra la conversation et annulera les relances futures.")
+        st.warning("Cette réponse clôturera la conversation et annulera les relances futures.")
+    elif active_call:
+        call_type = "setting" if active_call.get("type") == "setting_call" else "closing"
+        st.caption(f"Après l'envoi, l'appel {call_type} déjà planifié restera actif.")
     else:
         st.caption("Après l'envoi, une relance Tanjona sera planifiée à +72h si le prospect ne répond pas.")
 
@@ -1265,15 +1286,9 @@ def render_next_action_summary(conv: dict) -> None:
 def render_planned_call_notice(conv: dict) -> None:
     if conv.get("status") != "open":
         return
-    calls = [
-        action for action in list_actions_for_lead(conv["lead_id"], "all")
-        if action.get("type") in CALL_ACTION_TYPES
-        and action.get("status") in {"open", "in_progress", "planned", "blocked"}
-    ]
-    if not calls:
+    call = active_planned_call_for_lead(conv.get("lead_id"))
+    if not call:
         return
-    calls.sort(key=lambda action: parse_dt(action.get("due_at")) or datetime.max.replace(tzinfo=timezone.utc))
-    call = calls[0]
     call_type = "setting" if call.get("type") == "setting_call" else "closing"
     assignee = display_assignee_name(call)
     due = format_due(call.get("due_at"))
@@ -1290,17 +1305,17 @@ def render_planned_call_notice(conv: dict) -> None:
 
 def action_consequence(action_type: str, outcome: str) -> str:
     consequences = {
-        ("setting_call", "to_closing"): "Le système crée un appel closing pour le closer et passe le parcours en Closing.",
+        ("setting_call", "to_closing"): "Le système planifie un appel closing à documenter pour le closer et passe le parcours en Closing.",
         ("setting_call", "not_reached"): "Le système crée un rappel d'appel, puis une relance Tanjona si les rappels sont épuisés.",
         ("setting_call", "not_ready"): "Le système crée une relance Tanjona à +72h.",
-        ("setting_call", "not_relevant"): "Résout la conversation et annule les relances futures.",
-        ("setting_call", "do_not_contact"): "Passe le contact en Ne plus contacter, résout la conversation et bloque les relances.",
-        ("closing_call", "signed"): "Marque la vente comme signée, résout la conversation et annule les relances.",
-        ("closing_call", "will_sign"): "Le système crée une relance Tanjona à +72h, puis suit la séquence Va signer.",
+        ("setting_call", "not_relevant"): "Clôture la conversation et annule les relances futures.",
+        ("setting_call", "do_not_contact"): "Passe le contact en Ne plus contacter, clôture la conversation et bloque les relances.",
+        ("closing_call", "signed"): "Marque la vente comme signée, clôture la conversation et annule les relances.",
+        ("closing_call", "will_sign"): "Le système crée une relance Tanjona à +72h, puis suit le flux Va signer.",
         ("closing_call", "not_reached"): "Le système crée un rappel d'appel, puis une relance Tanjona si les rappels sont épuisés.",
         ("closing_call", "undecided"): "Le système crée une relance Tanjona à +72h.",
-        ("closing_call", "not_relevant"): "Résout la conversation et annule les relances futures.",
-        ("contact_review", "maintain_do_not_contact"): "Maintient le blocage Ne plus contacter et résout la conversation.",
+        ("closing_call", "not_relevant"): "Clôture la conversation et annule les relances futures.",
+        ("contact_review", "maintain_do_not_contact"): "Maintient le blocage Ne plus contacter et clôture la conversation.",
         ("contact_review", "lift_do_not_contact"): "Le système lève le blocage et crée une action Répondre pour Setter 1.",
     }
     return consequences.get((action_type, outcome), "Le système appliquera la suite prévue par la règle métier.")
@@ -1473,13 +1488,19 @@ def render_standard_action_planner(user: dict, conv: dict, users: list[dict], ac
         return
 
     st.markdown("**Programmer / attribuer une action**")
-    st.caption("Choisissez la prochaine action standard. Elle remplace l'action ouverte actuelle et garde une note dans le fil.")
+    st.caption("Choisissez la prochaine action standard. Elle remplace l'action ouverte actuelle et garde une note dans le fil. Si un appel est déjà planifié, une réponse urgente peut être ajoutée sans annuler l'appel.")
     action_type = st.selectbox(
         "Action",
         STANDARD_NEXT_ACTION_TYPES,
         format_func=standard_action_button_label,
         key=f"standard_action_type_{conv['id']}",
     )
+    active_call = active_planned_call_for_lead(conv.get("lead_id"))
+    followup_blocked_by_call = action_type == "follow_up" and active_call is not None
+    if action_type == "reply" and active_call:
+        st.info("Un appel est déjà planifié. La réponse sera ajoutée sans annuler cet appel.")
+    if followup_blocked_by_call:
+        st.warning("Un appel est déjà planifié. Ne planifiez pas une relance parallèle : modifiez l'appel ou ajoutez une réponse urgente si nécessaire.")
     assignee_options = standard_action_assignee_options(users, action_type)
     if not assignee_options:
         st.warning("Aucun responsable compatible avec cette action.")
@@ -1515,7 +1536,7 @@ def render_standard_action_planner(user: dict, conv: dict, users: list[dict], ac
     submitted = st.button(
         standard_action_button_label(action_type),
         key=f"standard_action_submit_{conv['id']}",
-        disabled=not note.strip(),
+        disabled=not note.strip() or followup_blocked_by_call,
     )
     if submitted:
         ok, message = assign_standard_next_action(
@@ -1562,7 +1583,7 @@ def render_next_action_box(user: dict, conv: dict) -> None:
             st.info("Action personnalisée. Utilisez les actions avancées pour la documenter ou créer la suite.")
     elif conv["status"] == "open":
         st.warning("Anomalie : cette conversation est ouverte sans prochaine action.")
-        st.caption("Créez immédiatement une action principale dans Actions avancées.")
+        st.caption("Programmez immédiatement une action principale avec le bloc ci-dessous.")
     else:
         st.info("Aucune action ouverte pour cette conversation.")
 
@@ -1759,17 +1780,25 @@ def render_user_guide() -> None:
     st.title("Mode d'emploi")
     st.markdown(
         """
-        Bienvenue dans Sales Cockpit. Cet outil sert à savoir très vite qui contacter, quand le faire, et quelle suite donner à chaque prospect. Il ne remplace pas SchoolDrive comme source de vérité, mais il regroupe le travail quotidien autour des conversations WhatsApp, des relances, des appels et des qualifications.
+        Bienvenue dans Sales Cockpit. Cet outil sert à savoir très vite qui contacter, quand le faire, et quelle suite donner à chaque prospect. Il ne remplace pas SchoolDrive comme source de vérité, mais il regroupe le travail quotidien autour des conversations WhatsApp, des relances, des appels et des statuts commerciaux.
 
         ### Par où commencer
 
-        La page **Tâches** est la page principale. Quand vous vous connectez, vous devez d'abord regarder cette page. Elle montre les actions qui vous sont attribuées : répondre à un message, envoyer une relance, faire un appel setting, faire un appel closing ou revoir un contact particulier. Par défaut, la page affiche votre propre file. Vous pouvez consulter la file d'une autre personne si nécessaire.
+        La page **Tâches** est la page principale. Quand vous vous connectez, commencez par cette page. Elle montre les actions qui vous sont attribuées : répondre à un message, envoyer une relance, documenter un appel setting, documenter un appel closing ou revoir un contact particulier. Par défaut, la page affiche votre propre file. Vous pouvez consulter la file d'une autre personne si nécessaire.
 
         La page **Inbox** sert à retrouver les conversations WhatsApp. Elle est utile pour lire l'historique complet, chercher un prospect, vérifier une conversation terminée ou comprendre ce qui s'est passé avant une action. Dans **Tâches**, on travaille par action. Dans **Inbox**, on consulte par conversation.
 
+        ### Les trois notions importantes
+
+        **Le Parcours** indique où en est le prospect commercialement : nouveau lead, échange avec setter, appel setting prévu, appel closing prévu, va signer, gagné ou perdu. Le parcours est affiché dans la fiche, mais il ne se force pas manuellement dans l'usage normal. Il change quand une action produit un résultat.
+
+        **Un Flux** est une règle de suivi. Par exemple : lead sans réponse initiale, échange setter sans suite, appel non joint, va signer ou début de cours. Un flux peut créer plusieurs relances futures. Les admins règlent les flux et les templates dans **Pilotage**.
+
+        **Une Action** est le travail concret à faire maintenant ou plus tard. C'est l'unité opérationnelle du cockpit. Une action dit qui doit faire quoi, pour quel prospect, et à quel moment.
+
         ### Les rôles commerciaux
 
-        **Setter 1** répond aux messages entrants, mène les échanges écrits actifs et réalise les appels de setting. Dans le cockpit, ce rôle correspond principalement aux actions de réponse immédiate et aux appels de setting.
+        **Setter I** répond aux messages entrants, mène les échanges écrits actifs et réalise les appels de setting. Dans le cockpit, ce rôle correspond principalement aux actions de réponse immédiate et aux appels setting à documenter.
 
         **Tanjona, Setter II** gère les relances structurées. Elle relit la conversation, choisit le bon modèle WhatsApp quand la fenêtre est fermée, et crée une demande de modèle si aucun modèle existant ne convient.
 
@@ -1789,9 +1818,11 @@ def render_user_guide() -> None:
 
         ### Conversations actives et terminées
 
-        Une conversation active doit toujours avoir une prochaine action. S'il y a une conversation active sans prochaine action, c'est une anomalie à signaler.
+        Une conversation active doit normalement avoir une seule prochaine action principale. S'il y a une conversation active sans prochaine action, c'est une anomalie à signaler.
 
-        Une conversation terminée signifie qu'il n'y a plus rien à faire pour le moment. Elle peut être réactivée, mais il faut alors choisir immédiatement une prochaine action : répondre, relancer, appeler en setting ou appeler en closing.
+        Il existe une exception importante : si un appel setting ou closing est déjà planifié et que le prospect écrit avant l'appel, le cockpit crée une action urgente **Répondre au message** sans annuler l'appel planifié. Après la réponse, si le rendez-vous reste inchangé, l'appel planifié redevient la prochaine action visible.
+
+        Une conversation terminée signifie qu'il n'y a plus rien à faire pour le moment. Elle peut être réactivée, mais il faut alors choisir immédiatement une prochaine action : répondre, relancer, documenter un appel setting ou documenter un appel closing.
 
         La conversation active ou terminée est différente de la fenêtre WhatsApp ouverte ou fermée. Une conversation peut être active alors que la fenêtre WhatsApp est fermée. Dans ce cas, la suite doit passer par un modèle approuvé.
 
@@ -1803,19 +1834,27 @@ def render_user_guide() -> None:
 
         ### Actions, statuts et preuves
 
-        Une action est l'unité de travail du cockpit. Elle dit qui doit faire quoi, pour quel prospect, et à quel moment. Les actions principales sont : répondre au message, envoyer une relance, faire un appel setting, faire un appel closing et revoir un contact.
+        Les actions principales sont : répondre au message, envoyer une relance, documenter un appel setting, documenter un appel closing et revoir un contact.
 
         Une action peut être planifiée, ouverte, en cours, terminée, annulée ou bloquée. Quand elle est terminée, elle doit laisser une preuve : message WhatsApp envoyé, résultat d'appel, mini-note, qualification ou demande de modèle.
 
-        Pour les appels, la mini-note est obligatoire. Elle permet au prochain utilisateur de comprendre rapidement ce qui s'est passé et pourquoi la suite a été créée.
+        Quand un appel est fixé, le cockpit crée une action future à l'heure du rendez-vous. Cette action ne signifie pas seulement "appeler" : elle signifie surtout **documenter le résultat de l'appel**. La mini-note est obligatoire. Elle permet au prochain utilisateur de comprendre rapidement ce qui s'est passé et pourquoi la suite a été créée.
 
-        Dans l'onglet **Actions**, utilisez **Programmer / attribuer une action** pour créer une prochaine action standard : répondre, relancer, programmer un appel setting ou programmer un appel closing. Le cockpit demande toujours l'action concernée, le responsable, la date et une note. Le parcours affiché en haut de la fiche est mis à jour par ces actions et ne se modifie pas manuellement.
+        Dans l'onglet **Actions**, utilisez **Programmer / attribuer une action** pour créer une prochaine action standard : répondre, relancer, planifier un appel setting ou planifier un appel closing. Le cockpit demande toujours l'action concernée, le responsable, la date et une note. Le parcours affiché en haut de la fiche est mis à jour par ces actions et ne se modifie pas manuellement.
+
+        Dans l'onglet **Statuts**, vous pouvez modifier la qualification commerciale et le statut de contact. La qualification répond à la question : ce prospect a-t-il une chance de s'inscrire ? Le statut de contact répond à la question : avons-nous encore le droit de lui écrire ?
 
         ### Chaînage des actions
 
-        Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous, l'action de réponse est terminée et une relance est planifiée pour Tanjona. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un appel setting est créé. Si vous fixez directement un rendez-vous de closing, l'action de réponse est terminée et un appel closing est créé pour le closer. Si un appel setting doit passer au closing, une action de closing est créée pour le closer.
+        Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous et qu'aucun appel n'est déjà planifié, l'action de réponse est terminée et une relance est planifiée pour Tanjona. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un appel setting est planifié. Si vous fixez directement un rendez-vous de closing, l'action de réponse est terminée et un appel closing est planifié pour le closer. Si un appel setting doit passer au closing, une action de closing est créée pour le closer.
 
-        Le chaînage peut être interrompu. Si le prospect répond, la conversation remonte avec une action de réponse immédiate. Si le prospect est marqué **Non pertinent**, **Ne plus contacter** ou **A signé**, les relances s'arrêtent. Si un prospect marqué **Ne plus contacter** écrit à nouveau, le cockpit crée une revue humaine au lieu de relancer automatiquement.
+        Le chaînage peut être interrompu. Si le prospect répond, les relances futures sont arrêtées et la conversation remonte avec une action de réponse immédiate. Si un appel est déjà planifié, il reste en place. Si le prospect est marqué **Non pertinent**, **Ne plus contacter** ou **A signé**, les relances s'arrêtent. Si un prospect marqué **Ne plus contacter** écrit à nouveau, le cockpit crée une revue humaine au lieu de relancer automatiquement.
+
+        Le flux **Début de cours** est transversal. Il peut remplacer une relance lead ou préinscription si une relance liée au cours doit partir dans les 24 heures. Il ne remplace pas un appel setting ou closing déjà planifié.
+
+        ### Pilotage pour les admins
+
+        La page **Pilotage** sert à régler les flux commerciaux avec Laura. Elle permet de définir les cours traités, les sessions de référence, les étapes de chaque flux et le template recommandé pour chaque étape. Ces réglages affectent seulement les nouvelles actions créées après enregistrement. Les actions déjà ouvertes ne sont pas recalculées automatiquement en V1.
 
         ### Signaler un problème
 
@@ -2125,7 +2164,7 @@ def page_access_matrix() -> list[dict]:
 def render_pilotage(user: dict) -> None:
     st.title("Pilotage")
     st.caption(
-        "Vue lisible pour régler les flux commerciaux avec Laura : sessions par défaut, templates par scénario, règles de conflit et simulation."
+        "Vue lisible pour régler les flux commerciaux avec Laura : cours traités, sessions de référence, étapes, templates, conflits et simulation."
     )
     if user["role"] != "admin":
         st.warning("Cette page est réservée aux admins.")
@@ -2170,7 +2209,7 @@ def render_pilotage_overview() -> None:
 
     category_text = ", ".join(item["course_category"] for item in course_categories) or "aucun"
     st.info(
-        "V1 : les réglages d'étapes et de templates ne changent que les nouvelles séquences créées après enregistrement. "
+        "V1 : les réglages d'étapes et de templates ne changent que les nouveaux flux créés après enregistrement. "
         "Les actions déjà ouvertes ne sont pas recalculées automatiquement. V2 : ajouter un bouton de recalcul contrôlé."
     )
 
@@ -2184,9 +2223,11 @@ def render_pilotage_overview() -> None:
 
         Cours actuellement pilotés : **{category_text}**. Les autres catégories reçues depuis SchoolDrive restent visibles, mais passent en revue humaine tant qu'elles ne sont pas ajoutées ici.
 
+        À ne pas confondre : le **Parcours** est l'état commercial visible sur la fiche du prospect, le **Flux** est le scénario de relance réglé ici, et l'**Action** est la tâche concrète qui apparaît dans la file de travail.
+
         - **Sessions de référence** : règle utilisée quand SchoolDrive envoie un Lead avec une catégorie, mais sans session précise.
         - **Flux par scénario** : liste des événements prévus, avec le template recommandé et le message complet.
-        - **Règles de conflit** : ce qui gagne quand deux flux se chevauchent ou quand le prospect répond.
+        - **Règles de conflit** : ce qui gagne quand deux flux se chevauchent, quand le prospect répond ou quand un appel est déjà planifié.
         - **Simulateur** : prévisualisation rapide de la timeline une fois les sessions de référence définies.
 
         La donnée SchoolDrive réelle gagne toujours. Une session par défaut ne sert qu'à piloter les relances liées au cours quand le Lead n'a pas encore de session explicite.
@@ -2388,7 +2429,7 @@ def render_pilotage_sequence_steps(user: dict) -> None:
         "Une relance WhatsApp doit avoir un template recommandé dans Flux par scénario."
     )
     st.info(
-        "Ces changements affectent seulement les nouvelles séquences. Les actions déjà ouvertes ne sont pas recalculées automatiquement en V1."
+        "Ces changements affectent seulement les nouveaux flux. Les actions déjà ouvertes ne sont pas recalculées automatiquement en V1."
     )
     sequences = sorted(list_sequences(), key=lambda item: pilotage_sequence_sort_key(item["code"]))
     if not sequences:
@@ -2610,6 +2651,7 @@ def render_pilotage_conflict_rules() -> None:
             "Relances hors fenêtre",
             "Délai minimum WhatsApp",
             "Conflit lead vs cours",
+            "Message entrant pendant appel planifié",
             "Non pertinent",
             "Ne plus contacter",
         }
@@ -2929,7 +2971,7 @@ def render_admin(user: dict) -> None:
     if user["role"] != "admin":
         st.warning("Accès lecture seul. Les réglages sont réservés aux admins.")
 
-    tabs = st.tabs(["État", "Utilisateurs", "Règles métier", "Workflow", "Séquences", "Templates", "Bugs & logs", "Intégrations"])
+    tabs = st.tabs(["État", "Utilisateurs", "Règles métier", "Workflow", "Flux", "Templates", "Bugs & logs", "Intégrations"])
     with tabs[0]:
         render_admin_status_tab()
 
@@ -2984,9 +3026,9 @@ def render_admin(user: dict) -> None:
         st.dataframe(WORKFLOW_TRANSITIONS, hide_index=True, use_container_width=True, height=520)
 
     with tabs[4]:
-        st.subheader("Séquences de relance")
+        st.subheader("Flux de relance")
         st.dataframe(list_sequences(), hide_index=True, use_container_width=True)
-        st.subheader("Étapes de séquence")
+        st.subheader("Étapes du flux")
         sequence_steps = list_sequence_steps()
         st.dataframe(sequence_steps, hide_index=True, use_container_width=True, height=300)
 
@@ -2995,7 +3037,7 @@ def render_admin(user: dict) -> None:
         if mappings:
             mapping_rows = [
                 {
-                    "Séquence": item["sequence_code"],
+                    "Flux": item["sequence_code"],
                     "Étape": item["sequence_step_index"],
                     "Type": "Tous" if item["lead_type"] == "all" else labelize(item["lead_type"]),
                     "Catégorie": "Toutes" if item["course_category"] == "all" else item["course_category"],
@@ -3007,7 +3049,7 @@ def render_admin(user: dict) -> None:
             ]
             st.dataframe(mapping_rows, hide_index=True, use_container_width=True, height=260)
         else:
-            st.info("Aucun template réel n'est encore recommandé pour les séquences.")
+            st.info("Aucun template réel n'est encore recommandé pour les flux.")
 
         st.markdown("**Ajouter ou modifier une recommandation**")
         real_templates = [item for item in list_templates() if is_approved_real_twilio_template(item)]

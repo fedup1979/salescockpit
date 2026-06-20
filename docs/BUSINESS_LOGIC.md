@@ -101,9 +101,9 @@ Si un prospect `do_not_contact` écrit à nouveau, le système doit créer une a
 
 ## Calendriers
 
-### Séquences WhatsApp Standard
+### Flux WhatsApp Standard
 
-Les séquences de relance standard suivent ce calendrier :
+Les flux de relance standard suivent ce calendrier :
 
 1. +72h
 2. +72h
@@ -148,7 +148,7 @@ Si aucun template adapté n'existe :
 
 - l'action `follow_up` est mise en `blocked` ;
 - une `template_request` est créée ;
-- la demande est liée à l'action, à la conversation, au lead, à la séquence et à l'étape si ces informations existent ;
+- la demande est liée à l'action, à la conversation, au lead, au flux et à l'étape si ces informations existent ;
 - l'action redevient exécutable lorsque le template est approuvé.
 
 Statuts de demande de template :
@@ -209,13 +209,13 @@ Lorsqu'une relance arrive à échéance, que la fenêtre WhatsApp est fermée et
 
 Lorsqu'un template demandé pour débloquer une relance est approuvé, alors la demande passe en `approved` et l'action `follow_up` bloquée redevient ouverte.
 
-### Règle 12 : relance envoyée et séquence non terminée
+### Règle 12 : relance envoyée et flux non terminé
 
-Lorsque Tanjona envoie une relance et que la séquence prévoit encore une étape, alors le cockpit termine la relance actuelle et programme la prochaine selon le calendrier de la séquence.
+Lorsque Tanjona envoie une relance et que le flux prévoit encore une étape, alors le cockpit termine la relance actuelle et programme la prochaine selon le calendrier du flux.
 
 ### Règle 13 : dernière relance envoyée
 
-Lorsque Tanjona envoie la dernière relance prévue par une séquence et que le prospect ne répond toujours pas, alors le cockpit ne crée plus de prochaine action et marque la conversation comme résolue avec le motif `sequence_completed_no_reply`.
+Lorsque Tanjona envoie la dernière relance prévue par un flux et que le prospect ne répond toujours pas, alors le cockpit ne crée plus de prochaine action et marque la conversation comme résolue avec le motif `sequence_completed_no_reply`.
 
 ### Règle 14 : appel de setting vers closing
 
@@ -239,7 +239,7 @@ Lorsque le closer termine un appel de closing et que le prospect signe, alors le
 
 ### Règle 19 : closing Va signer
 
-Lorsque le closer termine un appel de closing et qualifie le prospect comme `will_sign`, alors le cockpit crée une relance post-closing pour Tanjona 72h après l'appel, puis suit la séquence `closer_will_sign`.
+Lorsque le closer termine un appel de closing et qualifie le prospect comme `will_sign`, alors le cockpit crée une relance post-closing pour Tanjona 72h après l'appel, puis suit le flux `closer_will_sign`.
 
 ### Règle 20 : closing non joint
 

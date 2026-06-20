@@ -1714,9 +1714,14 @@ def get_next_action_for_lead(lead_id: int) -> dict[str, Any] | None:
             LEFT JOIN users u ON u.id = t.assigned_to_user_id
             WHERE t.lead_id = ? AND t.status IN ('open', 'in_progress', 'planned', 'blocked')
             ORDER BY
+                CASE t.type
+                    WHEN 'reply' THEN 0
+                    WHEN 'contact_review' THEN 1
+                    ELSE 2
+                END,
+                CASE t.urgency WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
                 CASE WHEN t.due_at IS NULL THEN 1 ELSE 0 END,
                 datetime(t.due_at) ASC,
-                CASE t.urgency WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
                 t.id ASC
             LIMIT 1
             """,
@@ -1936,11 +1941,28 @@ def assign_standard_next_action(
             "closing_call": "standard_closing_call_scheduled",
         }
 
+        active_call = _first_active_action_for_lead(
+            conn,
+            conv["lead_id"],
+            action_types=("setting_call", "closing_call"),
+        )
+        if action_type == "follow_up" and active_call:
+            return (
+                False,
+                "Un appel est déjà planifié. Modifiez l'appel ou créez une réponse urgente, mais ne planifiez pas une relance parallèle.",
+            )
+        excluded_types = (
+            ("setting_call", "closing_call")
+            if action_type == "reply" and active_call
+            else ()
+        )
+
         _complete_open_actions_for_lead(
             conn,
             conv["lead_id"],
             user_id,
             outcome=f"Action remplacée par {action_type}",
+            excluded_types=excluded_types,
         )
 
         if action_type in {"reply", "setting_call"}:

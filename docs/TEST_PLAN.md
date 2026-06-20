@@ -102,7 +102,7 @@ Compte : `yasmine@essr.ch`.
 4. Ajouter une mini-note.
 5. Tester `Signé` ou `Va signer`.
 
-Résultat attendu : `Signé` termine la conversation sans prochaine action. `Va signer` crée une relance Tanjona selon la séquence post-closing.
+Résultat attendu : `Signé` termine la conversation sans prochaine action. `Va signer` crée une relance Tanjona selon le flux post-closing.
 
 ## P6 Ne Plus Contacter Qui Réécrit
 

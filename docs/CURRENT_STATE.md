@@ -35,7 +35,7 @@ Important new runtime rule: a prospect message during an already planned setting
 - Production UI: `http://139.59.158.77:8501`
 - Production API: `http://139.59.158.77:8601`
 
-Latest staging deployment:
+Latest recorded staging deployment before the current documentation/workflow alignment:
 
 ```text
 169e93a Preserve planned calls in workflow
@@ -62,13 +62,13 @@ Working:
 - conversation open/terminated state.
 - WhatsApp 24h window enforcement.
 - Twilio inbound and status callbacks.
-- Twilio outbound through DEV sender, guarded by recipient allowlist.
+- Twilio outbound code path with mock/sandbox/live support. Staging and production must stay in `mock` until explicit cutover.
 - SchoolDrive snapshot ingest.
 - Front read-only buffer import foundation.
 - backup/restore scripts and cron.
 - pre-cutover readiness check.
 
-Latest known staging check after deploying `169e93a`:
+Latest recorded staging check after deploying `169e93a`:
 
 ```text
 scripts/pre_cutover_check.py: OK
@@ -110,7 +110,7 @@ Implemented and deployed in commit `f8e8a0b`.
 - Mapping dimensions: `sequence_code`, `sequence_step_index`, `lead_type`, `course_category`.
 - `all` is supported for lead type and course category.
 - Pilotage > Flux par scénario lets admins assign approved Twilio templates while looking at the full message body.
-- Admin > Séquences still displays the technical mapping table.
+- Admin > Flux still displays the technical mapping table.
 - Only real Twilio templates approved by WhatsApp can be mapped. Draft, pending, rejected, local demo, and `HX_MOCK_*` templates are rejected.
 - During a `follow_up` action, the Conversation tab displays the recommended template when a mapping matches the prospect.
 
@@ -156,11 +156,11 @@ Implemented in commit `6c48293`, then expanded in commit `f8e8a0b`.
 
 Default course sessions live in `course_default_sessions`. They are used as a planning layer when a SchoolDrive Lead has only a course category, for example `APP`, but no specific session or `start_date`. SchoolDrive data remains authoritative: if SchoolDrive provides a real session/start date, it wins over the default session.
 
-Structured course categories live in `course_categories`. V1 seeds `FSM`, `APP`, and `AS`. If SchoolDrive sends a lead or presubscription with a sent WhatsApp for an unsupported category, Sales Cockpit still stores and displays the conversation, but it does not create the automated Tanjona relance sequence. Instead it creates a human review action for Setter I/Mihary with trigger `unconfigured_course_category`.
+Structured course categories live in `course_categories`. V1 seeds `FSM`, `APP`, and `AS`. If SchoolDrive sends a lead or presubscription with a sent WhatsApp for an unsupported category, Sales Cockpit still stores and displays the conversation, but it does not create the automated Tanjona relance flux. Instead it creates a human review action for Setter I/Mihary with trigger `unconfigured_course_category`.
 
 V1 behavior: changing sequence steps or template mappings affects only newly created future sequences. Existing open tasks are not recalculated. V2 debt: add a controlled recalculation button.
 
-Sequence timing is expressed from the flow trigger, not from the previous step. Example: a lead no-reply sequence can be `T+3j`, `T+6j`, `T+9j`, where `T` is the first automatic WhatsApp sent by SchoolDrive. Course-start reminders use the same model with `T-14j`, `T-7j`, etc., where `T` is the course start date.
+Flux timing is expressed from the flow trigger, not from the previous step. Example: a lead no-reply flux can be `T+3j`, `T+6j`, `T+9j`, where `T` is the first automatic WhatsApp sent by SchoolDrive. Course-start reminders use the same model with `T-14j`, `T-7j`, etc., where `T` is the course start date.
 
 If a step action type is `follow_up` / Relance WhatsApp, a template recommendation is operationally required. The UI shows the template selector directly on each scenario step and refuses mappings to non-approved, demo, pending, rejected, or draft templates.
 

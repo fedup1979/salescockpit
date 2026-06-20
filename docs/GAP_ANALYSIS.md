@@ -1,215 +1,176 @@
-﻿# Sales Cockpit Gap Analysis
+# Sales Cockpit Gap Analysis
 
-Ce document compare la logique métier cible avec l'état actuel du système local.
+This document is a current gap analysis, not a historical build plan. For live environment status, read `docs/CURRENT_STATE.md` first.
 
-## Synthèse
+## Current Baseline
 
-Le cockpit local couvre maintenant les fondations critiques :
+Sales Cockpit now has the main V1 workflow foundations:
 
-- conversations WhatsApp ;
-- fenêtre WhatsApp ouverte/fermée ;
-- actions principales ;
-- qualification commerciale ;
-- statut de contact séparé ;
-- résolution avec motif obligatoire ;
-- réouverture avec prochaine action obligatoire ;
-- demandes de template liées aux relances bloquées ;
-- séquences et étapes de séquence structurées ;
-- tests métier sur les règles critiques.
+- local users and roles;
+- conversation state, shown as active or terminated;
+- WhatsApp 24h window enforcement;
+- SchoolDrive webhook ingestion;
+- Twilio inbound/status endpoints and template synchronization;
+- Front read-only buffer foundation;
+- Pilotage for flux steps and template mapping;
+- action workflow with reply, follow-up, setting call, closing call and contact review;
+- planned call preservation when a prospect writes before the call;
+- course-start follow-up logic that does not interrupt planned calls;
+- readiness checks for workflow consistency;
+- staging deployment on DigitalOcean;
+- cold production deployment with Twilio mock mode.
 
-Le système reste volontairement local et mock. Il ne touche pas encore Twilio production, SchoolDrive production, Notion ou Front.io.
+## Canonical Model
 
-## Ce Qui Existe
+The model to preserve is:
 
-### Données
+- `Parcours`: commercial state of the prospect, derived from workflow outcomes.
+- `Flux`: configurable follow-up scenario that creates future actions.
+- `Action`: concrete work item in the queue.
 
-Présent :
+A conversation with `open` status normally has one active main next action.
 
-- `users`
-- `leads`
-- `conversations`
-- `messages`
-- `whatsapp_templates`
-- `template_placeholders`
-- `tasks`
-- `lead_events`
-- `ai_labels`
-- `sequences`
-- `sequence_steps`
-- `template_requests`
+Canonical exception: if a prospect writes while a setting/closing call is already planned, Sales Cockpit can temporarily have two active main actions for that conversation:
 
-Ajouté ou consolidé :
+- urgent `reply` for Setter I;
+- already planned `setting_call` or `closing_call`.
 
-- `leads.contact_status`
-- `leads.acquisition_type`
-- `conversations.resolution_reason`
-- `conversations.resolution_note`
-- `conversations.resolved_at`
-- `conversations.reopened_at`
-- champs de chaînage sur `tasks`
+After the reply is sent, if the appointment is unchanged, the planned call becomes the visible next action again. This is not a workflow error.
 
-### Logique Métier
+## Gaps Before Operational Production
 
-Présent :
+### Live SchoolDrive Path
 
-- inbound WhatsApp crée une action `reply` pour Setter 1 ;
-- inbound sur conversation résolue rouvre la conversation ;
-- inbound d'un prospect `do_not_contact` crée une action `contact_review` ;
-- relance bloquée par template manquant crée une `template_request` ;
-- envoi sortant clôt l'action `reply` ou `follow_up` active ;
-- `reply` envoyé sans RDV crée une relance Tanjona +72h ;
-- appel non joint crée rappels +2h, +24h, puis relance WhatsApp ;
-- closing `will_sign` crée une séquence Tanjona ;
-- résolution manuelle exige un motif ;
-- réouverture manuelle exige une prochaine action.
+Still to validate with a fresh real record:
 
-### Admin
+1. website form creates a Lead or Presubscription in SchoolDrive;
+2. SchoolDrive posts the snapshot to Sales Cockpit;
+3. SchoolDrive sends the automatic WhatsApp autoresponder;
+4. AR status changes to `sent`;
+5. SchoolDrive posts a newer snapshot;
+6. Sales Cockpit stores the sent message body in the thread;
+7. Sales Cockpit creates the Tanjona follow-up at `sent_at + 72h`;
+8. `pre_cutover_check` stays green.
 
-Présent :
+### Staging Data Hygiene
 
-- rôles commerciaux ;
-- qualifications ;
-- statuts de contact ;
-- motifs de résolution ;
-- règles opérationnelles ;
-- règles d'attribution ;
-- horaires et bascules déclaratifs ;
-- types de leads SchoolDrive ;
-- workflow ;
-- séquences ;
-- étapes de séquence ;
-- templates de démonstration ;
-- demandes de templates.
+Staging received a large historical SchoolDrive replay before Tiago added the `created_at >= 2026-03-01` filter. Before final scenario testing, decide whether to:
 
-### Tests
+- keep current staging data if it remains readable;
+- clean SchoolDrive-backed staging rows and replay a focused recent set;
+- rebuild staging from backup and replay only the validation set.
 
-Présent :
+Always create a restore point before cleanup.
 
-- règles WhatsApp 24h ;
-- login ;
-- envoi libre bloqué hors fenêtre ;
-- résolution/réouverture ;
-- résolution exigeant motif ;
-- réouverture exigeant action ;
-- inbound créant `reply` ;
-- inbound `do_not_contact` créant `contact_review` ;
-- relance planifiée ;
-- message reply créant relance ;
-- demande de template bloquant une action ;
-- handoff closer ;
-- appel setting non joint créant rappel ;
-- statuts stop bloquant relances ;
-- objets métier déclaratifs.
+### Twilio Production Safety
 
-## Gaps Restants Avant Staging
+The real ESSR Twilio account must remain read-only until explicit cutover.
 
-### À Faire Avant Staging Local Partagé
+Current safe posture:
 
-1. Faire une revue UI manuelle complète dans Streamlit.
-2. Vérifier que les popovers Streamlit de résolution/réouverture sont ergonomiques.
-3. Vérifier que l'onglet Admin reste lisible malgré les nouvelles tables.
-4. Vérifier que les données mock couvrent les nouveaux cas : `contact_review`, relance bloquée, template request.
-5. Ajouter un smoke test Streamlit après stabilisation UI.
-6. Nettoyer les imports inutilisés si nécessaire.
-7. Redémarrer Streamlit après migration de schéma.
+- staging checked in Twilio `mock` mode after the latest workflow deployment;
+- production remains Twilio `mock`;
+- template synchronization can read real ESSR templates;
+- no production WhatsApp webhook or sender configuration should be changed before explicit GO.
 
-### À Faire Avant Connexion Réelle
+### Template Mapping With Laura
 
-1. Confirmer l'URL exacte SchoolDrive d'un lead.
-2. Confirmer les champs SchoolDrive disponibles : type `lead/presubscription`, catégorie de cours, session, date de début, statut d'inscription/signature.
-3. Confirmer le webhook SchoolDrive de création de lead.
-4. Confirmer la méthode fiable d'identification lead par téléphone Twilio.
-5. Synchroniser les vrais templates Twilio et leurs statuts.
-6. Remplacer les templates `demo_*` par un mapping réel.
-7. Définir les horaires par collaborateur.
-8. Définir les backups par collaborateur.
-9. Définir le message hors horaire.
-10. Définir la politique de backup SQLite et pièces jointes.
+Initial template mappings exist for `FSM`, `APP`, and `AS`, but they are an AI-generated starting point.
 
-### Gardé Pour V2
+Laura still needs to validate:
 
-- envoi automatique de templates ;
-- automatisation Tanjona ;
-- PBX Twilio ;
-- écriture Notion ;
-- écriture SchoolDrive ;
-- règles horaires complètes avec jours fériés ;
-- interface admin éditable pour modifier les séquences ;
-- moteur de conflits avancé entre plusieurs relances ;
-- scoring IA ;
-- entraînement setter IA.
+- how many steps each flux should contain;
+- timing of each step;
+- which approved Twilio template belongs to each flux, course and step;
+- whether additional course categories should be activated.
 
-## Risques Critiques À Surveiller
+V1 rule: edits affect only newly created future actions. Existing open actions are not recalculated.
 
-### Risque 1 : trop d'actions ouvertes
+### Course-Start Runtime
 
-Une conversation ouverte doit avoir une prochaine action, mais pas plusieurs actions concurrentes contradictoires.
+Implemented guardrail:
 
-Mitigation actuelle :
+- course-start follow-ups use SchoolDrive `course.start_date` or the active default session for the category;
+- course-start follow-up can replace a conflicting lead/presubscription follow-up;
+- course-start follow-up does not replace planned setting/closing calls.
 
-- le store complète ou annule les actions ouvertes dans les principaux flux.
+Remaining gap:
 
-À renforcer :
+- no global periodic sweep yet. A future task may be needed to detect upcoming course-start relances when no fresh SchoolDrive event arrives.
 
-- test global d'invariant : conversation ouverte = exactement une action active principale, sauf action bloquée supportée.
+### Front Historical Import
 
-### Risque 2 : résolution abusive
+Front remains read-only.
 
-Un utilisateur peut résoudre une opportunité encore valable.
+Current gap:
 
-Mitigation actuelle :
+- not all historical conversations are matched;
+- ambiguous phone matches require review;
+- full active-conversation conversion into Sales Cockpit actions is not an operational cutover dependency yet.
 
-- motif obligatoire ;
-- note obligatoire sur les motifs sensibles.
+### Identity Resolution
 
-À renforcer :
+V1 guardrail exists:
 
-- rapport Admin des conversations résolues par utilisateur et motif.
+- one phone match attaches automatically;
+- zero or multiple matches create an `À identifier` temporary record.
 
-### Risque 3 : statut Ne plus contacter mal géré
+V2 gap:
 
-Répondre à quelqu'un qui a demandé à ne plus être contacté peut être dangereux.
+- recrawl/search SchoolDrive;
+- merge temporary records into real SchoolDrive-backed records;
+- move conversations, messages, notes, events and actions safely.
 
-Mitigation actuelle :
+## Risks To Watch
 
-- `contact_status` séparé ;
-- inbound sur `do_not_contact` crée une revue humaine ;
-- aucune relance automatique.
+### Too Many Active Actions
 
-À renforcer :
+Risk: users lose clarity if a conversation has multiple unrelated next actions.
 
-- message d'avertissement très visible dans la conversation.
+Current mitigation:
 
-### Risque 4 : templates mal mappés
+- readiness check flags open conversations with conflicting main actions;
+- the intentional `reply` plus planned call exception is allowed.
 
-Une relance peut envoyer un template inadapté.
+### Manual Closure Too Early
 
-Mitigation actuelle :
+Risk: a valid opportunity is closed by mistake.
 
-- `sequence_steps` lie chaque étape à un template par défaut ;
-- `template_requests` trace les manques.
+Current mitigation:
 
-À renforcer :
+- controlled closure reasons;
+- note required for sensitive reasons;
+- reactivation requires a note and a new next action.
 
-- synchronisation Twilio réelle ;
-- validation par Laura des templates par séquence/cours.
+### Do-Not-Contact Error
 
-### Risque 5 : dates de cours mal choisies
+Risk: sending to a prospect who asked not to be contacted.
 
-Pour un simple Lead, la date de cours pertinente peut être ambiguë.
+Current mitigation:
 
-Mitigation actuelle :
+- contact status is separate from commercial qualification;
+- sends are blocked while `do_not_contact` is active;
+- inbound from `do_not_contact` creates a human contact review.
 
-- règle documentée, non automatisée.
+### Wrong Template Mapping
 
-À renforcer :
+Risk: Tanjona sends an approved but commercially wrong template.
 
-- lecture SchoolDrive ;
-- règle explicite de sélection de session pour les Leads génériques.
+Current mitigation:
 
-## Recommandation
+- Pilotage shows full message body, Twilio SID and status;
+- only approved real Twilio templates can be assigned operationally;
+- Laura validation remains required.
 
-Continuer en deux temps :
+## Recommendation
 
-1. terminer la revue locale avec Laura et François sur cette logique ;
-2. seulement ensuite brancher SchoolDrive/Twilio/Notion et préparer le staging.
+Do not add new major features before the live SchoolDrive validation.
+
+Recommended order:
+
+1. keep staging on the latest workflow code;
+2. clean/rebuild staging data only if needed for readability;
+3. validate the fresh Lead and Presubscription path end to end;
+4. run `pre_cutover_check`;
+5. validate the workflow with Laura on a small real scenario set;
+6. then decide production cutover.

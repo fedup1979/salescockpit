@@ -506,6 +506,86 @@ def test_inbound_during_planned_call_preserves_call_and_creates_reply() -> None:
     assert active_followups == []
 
 
+def test_overdue_planned_call_does_not_hide_urgent_reply() -> None:
+    seed_initial_data()
+    phone = unique_phone()
+    result = record_inbound_message(phone, "Je suis disponible pour un appel.")
+    action = get_next_action_for_lead(result["lead_id"])
+    due_at = iso_utc(utc_now() - timedelta(hours=1))
+
+    ok, _ = send_freeform_message(
+        result["conversation_id"],
+        action["assigned_to_user_id"],
+        "Parfait, Mihary vous appelle.",
+        action_outcome="setting_booked",
+        next_due_at=due_at,
+        assigned_to_user_id=action["assigned_to_user_id"],
+        note="RDV setting confirmé.",
+    )
+    assert ok is True
+
+    record_inbound_message(phone, "Je dois préciser quelque chose avant l'appel.")
+
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "reply"
+
+
+def test_standard_reply_assignment_preserves_planned_call_and_blocks_parallel_followup() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    phone = unique_phone()
+    result = record_inbound_message(phone, "Je suis disponible pour un appel.")
+    action = get_next_action_for_lead(result["lead_id"])
+    due_at = iso_utc(utc_now() + timedelta(days=1))
+
+    ok, _ = send_freeform_message(
+        result["conversation_id"],
+        action["assigned_to_user_id"],
+        "Parfait, Mihary vous appelle demain.",
+        action_outcome="setting_booked",
+        next_due_at=due_at,
+        assigned_to_user_id=action["assigned_to_user_id"],
+        note="RDV setting confirmé.",
+    )
+    assert ok is True
+
+    users = list_users()
+    setter_1 = next(item for item in users if item["email"] == "service.etudiants@essr.ch")
+    tanjona = next(item for item in users if item["email"] == "setter2@essr.ch")
+
+    ok, message = assign_standard_next_action(
+        result["conversation_id"],
+        admin["id"],
+        "reply",
+        setter_1["id"],
+        iso_utc(utc_now()),
+        "Le prospect a posé une question avant l'appel.",
+    )
+    assert ok is True, message
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "reply"
+
+    actions = list_actions_for_lead(result["lead_id"], "all")
+    active_calls = [
+        item for item in actions
+        if item["type"] == "setting_call"
+        and item["status"] in {"open", "planned", "in_progress", "blocked"}
+    ]
+    assert len(active_calls) == 1
+    assert active_calls[0]["due_at"] == due_at
+
+    ok, message = assign_standard_next_action(
+        result["conversation_id"],
+        admin["id"],
+        "follow_up",
+        tanjona["id"],
+        iso_utc(utc_now() + timedelta(days=3)),
+        "Relance test alors qu'un appel est déjà prévu.",
+    )
+    assert ok is False
+    assert "appel" in message.lower()
+
+
 def test_reply_send_with_do_not_contact_resolves_without_followup() -> None:
     seed_initial_data()
     result = record_inbound_message(unique_phone(), "Ne me contactez plus.")

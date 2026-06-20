@@ -41,11 +41,11 @@ Do not auto-attach an inbound WhatsApp to a candidate when more than one lead sh
 
 ### V1 Implemented Guardrail
 
-Admins can tune active course categories, sequence steps, and template mappings in Sales Cockpit. These changes deliberately affect only future sequences created after the save.
+Admins can tune active course categories, flux steps, and template mappings in Sales Cockpit. These changes deliberately affect only future flux actions created after the save.
 
 Existing open tasks keep their original due date, step index, assignee, and recommended template. This avoids silently changing work already visible in a user's queue.
 
-Sequence steps are now stored as absolute offsets from the flow trigger (`offset_direction`, `offset_amount`, `offset_unit`). Recalculation must therefore use the original sequence anchor stored on tasks as `metadata_json.sequence_anchor_at`; it must not chain from the previous task's completion time.
+Flux steps are now stored as absolute offsets from the flow trigger (`offset_direction`, `offset_amount`, `offset_unit`). Recalculation must therefore use the original sequence anchor stored on tasks as `metadata_json.sequence_anchor_at`; it must not chain from the previous task's completion time.
 
 ### V2 Debt
 
@@ -53,7 +53,7 @@ Add a controlled recalculation workflow:
 
 - preview which open or future tasks would change;
 - show old versus new due date, step, template and assignee;
-- let an admin apply the recalculation only to selected sequences, categories, or leads;
+- let an admin apply the recalculation only to selected fluxes, categories, or leads;
 - write an audit log entry for every recalculated task;
 - never recalculate completed, cancelled, archived, signed, non pertinent, or do-not-contact conversations.
 
@@ -61,7 +61,7 @@ Add a controlled recalculation workflow:
 
 ### V1 Implemented Guardrail
 
-If SchoolDrive sends a lead or presubscription for a category not active in `course_categories`, Sales Cockpit stores the conversation and SchoolDrive WhatsApp messages, but creates a Setter I review task instead of starting the structured Tanjona follow-up sequence.
+If SchoolDrive sends a lead or presubscription for a category not active in `course_categories`, Sales Cockpit stores the conversation and SchoolDrive WhatsApp messages, but creates a Setter I review task instead of starting the structured Tanjona follow-up flux.
 
 ### V2 Debt
 

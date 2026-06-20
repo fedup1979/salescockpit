@@ -92,16 +92,16 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - While a prospect is `Ne plus contacter`, all WhatsApp sends are blocked, including free-form messages and templates. The user must complete the contact review and lift the status before replying.
 - Missing templates create `template_requests` linked to the blocked follow-up action.
 - Follow-up sequences and sequence steps are stored structurally in SQLite and displayed in Admin.
-- Pilotage lets admins edit sequence step delay/meaning/template-required/active state without code. Do not delete steps; deactivate them.
+- Pilotage lets admins edit flux step delay/meaning/template-required/active state without code. Do not delete steps; deactivate them.
 - Sequence step timing is now absolute from the flow trigger. Use `offset_direction`, `offset_amount`, and `offset_unit`; do not treat `delay` as a relative delay from the previous step.
-- For lead-relative flows, `T` is the event that opened the sequence, for example first SchoolDrive WhatsApp sent, reply sent with no appointment, call ended undecided, or closing marked will sign.
+- For lead-relative fluxes, `T` is the event that opened the flux, for example first SchoolDrive WhatsApp sent, reply sent with no appointment, call ended undecided, or closing marked will sign.
 - For course-start flows, `T` is the course start date, so steps are usually before the trigger.
 - Relance WhatsApp steps are `action_type='follow_up'` and must have a recommended approved real Twilio template for each operational category.
 - Pilotage lets admins assign approved real Twilio templates by flow, step, lead type and course category.
 - Template mappings must only use real Twilio templates approved by WhatsApp. Draft, pending, rejected, local demo, and `HX_MOCK_*` templates are deliberately ignored/rejected for operational recommendations.
 - Initial template premapping exists in `scripts/premap_sequence_templates.py`. It maps the approved ESSR Twilio templates to every required `follow_up` step for `FSM`, `APP`, and `AS` using `lead_type = all`. It was applied to staging and prod on 2026-06-20 with 75 mappings total, 25 per category. Treat it as an AI-generated first pass to validate with Laura, not as final commercial truth.
 - `scripts/premap_sequence_templates.py --dry-run` is safe and should be used before reapplying. The script is idempotent and uses the existing `upsert_sequence_template_mapping` guardrails, so it only accepts active `follow_up` steps and approved real Twilio templates.
-- Structured course categories live in `course_categories`. V1 seeds `FSM`, `APP`, and `AS`. Unsupported SchoolDrive categories are stored, displayed, and routed to a Setter I review task instead of receiving an automated Tanjona relance sequence.
+- Structured course categories live in `course_categories`. V1 seeds `FSM`, `APP`, and `AS`. Unsupported SchoolDrive categories are stored, displayed, and routed to a Setter I review task instead of receiving an automated Tanjona relance flux.
 - V1 step/template changes affect only newly created future sequences. Existing open tasks are not recalculated.
 - Outbound WhatsApp messages close the active `reply` or `follow_up` action and create the next follow-up when applicable.
 - If a `reply` is sent while a setting/closing call is already planned and no new appointment outcome is chosen, the reply closes and the planned call remains the next action.
@@ -190,11 +190,11 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 
 ## Current Validation
 
-Latest known local validation after the planned-call/course-start workflow changes:
+Latest known local validation after the planned-call/course-start workflow changes and documentation alignment:
 
-- `pytest`: 108 tests passing.
-- `compileall`: passed for `sales_cockpit` and `scripts`.
-- Staging deployed commit: `169e93a Preserve planned calls in workflow`.
+- `pytest --basetemp=.pytest-tmp\run`: 110 tests passing.
+- `compileall`: passed for `sales_cockpit`.
+- Last recorded staging deployed commit before this local alignment: `169e93a Preserve planned calls in workflow`.
 - Restore point before deploy: `/opt/sales-cockpit/backups/staging/sales_cockpit_staging_20260620T152700Z.db.gz`.
 - Staging API/UI health passed after deploy.
 - Staging `pre_cutover_check` passed after deploy:
@@ -261,7 +261,7 @@ Stop-Process -Id <PID> -Force
 - SchoolDrive snapshot webhook exists; synthetic smoke validation is available, but real Tiago payload validation is still pending.
 - SchoolDrive URL format is provided by Tiago's webhook contract and should be checked during the first staging replay.
 - Notion connector is placeholder only.
-- Twilio is mock by default locally. Staging is configured in `live` mode with the DEV sender `+41445054269` and a strict recipient allowlist. Sandbox inbound/outbound was previously tested successfully.
+- Twilio is mock by default locally. Staging was previously tested with Sandbox and then with the DEV sender `+41445054269`, but the DEV WhatsApp account was later blocked by Meta. Do not assume staging can send live WhatsApp. Current safe posture is `mock` for staging and production until explicit cutover.
 - Twilio Content API synchronization exists. Real template approval and closed-window template sending still need an end-to-end staging validation with an approved Twilio template.
 - Front import is partially connected in safe pilot mode. Read-only client, dry-run, buffer persistence, exact phone matching, buffer rematch, dry-run-first matched conversion, and Admin visibility exist. Full historical import, ambiguous matching review, and conversation-level history filtering are still pending.
 - Attachments UI exists but persistence/send is not implemented.

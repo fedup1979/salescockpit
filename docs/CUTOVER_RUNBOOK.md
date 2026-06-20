@@ -61,7 +61,7 @@ python scripts/schooldrive_replay_payloads.py payloads/schooldrive \
    - a real AR changing to `sent` produces a new webhook and creates the Tanjona +72h follow-up;
    - archived SchoolDrive records are terminated;
    - Tanjona +72h follow-ups exist only when expected.
-   - Admin > Séquences can map a real Twilio template to each follow-up step and the Conversation tab shows the recommended template for a matching relance.
+   - Admin > Flux can map a real Twilio template to each follow-up step and the Conversation tab shows the recommended template for a matching relance.
 
 6. Run the automated pre-cutover check on the droplet:
 

@@ -11,7 +11,9 @@ Sales Cockpit staging was first connected to Twilio Sandbox. This validated:
 
 It does not validate the final ESSR production sender.
 
-François has also validated a real DEV WhatsApp sender, `+41445054269`, under the legacy PMC / Permismoinscher context. Staging now uses this sender in `live` mode with a strict recipient allowlist. This can validate live Twilio sender mechanics in staging, but it is not the final ESSR production sender.
+François also validated a real DEV WhatsApp sender, `+41445054269`, under the legacy PMC / Permismoinscher context. That validation was useful historically, but the DEV WhatsApp account was later blocked by Meta. Do not rely on this sender for production validation.
+
+Current safe posture: staging and production stay in Twilio `mock` mode until an explicit cutover decision. Sales Cockpit may synchronize real ESSR templates from Twilio Content API in read-only mode, but it must not change webhooks or send real WhatsApp messages before the cutover.
 
 François confirmed that the ESSR WhatsApp number is already in use. Therefore, creating or buying an unrelated Twilio phone number does not solve the production template validation problem.
 
@@ -25,10 +27,10 @@ If the ESSR number is already attached to another provider, another WABA, anothe
 
 Do not spend time trying to submit ESSR production templates from the current DEV setup unless the real ESSR WhatsApp sender/WABA path is clear. Meta may reject or block approval paths that are not attached to the right business sender context.
 
-The current useful DEV tests are:
+The useful tests already completed are:
 
 - sandbox inbound/outbound mechanics;
-- live DEV sender inbound/outbound mechanics with a strict recipient allowlist;
+- historical live DEV sender inbound/outbound mechanics with a strict recipient allowlist;
 - Content API synchronization;
 - local UI template search and placeholder rendering;
 - blocked/free-form rule behavior when the 24h window is closed.
@@ -52,11 +54,11 @@ The real production test requires:
 
 ## Recommended Path
 
-1. Keep staging on the real DEV sender with a strict recipient allowlist.
-2. Use staging to validate workflow, SchoolDrive integration, and live DEV sender mechanics.
-3. In parallel, clarify ESSR sender ownership.
+1. Keep staging and production in `mock` mode until explicit cutover.
+2. Use staging to validate workflow, SchoolDrive integration, template synchronization, and UI behavior without real sends.
+3. Clarify ESSR sender ownership and production WhatsApp routing before changing any webhook or sender configuration.
 4. Once ownership is clear, create a small production cutover checklist.
-5. Only then submit ESSR production templates for Meta approval.
+5. Only then enable real sending/receiving on the ESSR production sender.
 
 ## References
 

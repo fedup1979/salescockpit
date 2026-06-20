@@ -65,7 +65,9 @@ Resolving a conversation completes open next actions for that lead.
 
 The `tasks` table remains the technical persistence layer, but the UI must call these records `actions` or `prochaines actions`.
 
-Action is the central operational unit of the system. A conversation with `open` status must always have one open next action.
+Action is the central operational unit of the system. A conversation with `open` status normally has one open main next action.
+
+Canonical exception: if a prospect writes while a setting/closing call is already planned, Sales Cockpit creates an urgent `reply` action without cancelling the planned call. After the reply is sent, if the appointment remains unchanged, the planned call becomes the visible next action again.
 
 The detailed action model is defined in `docs/ACTION_WORKFLOW.md`.
 The exhaustive business logic is defined in `docs/BUSINESS_LOGIC.md`.
@@ -75,8 +77,8 @@ Main V1 action types:
 
 - `reply`: answer an inbound WhatsApp message.
 - `follow_up`: follow up with the prospect, usually by WhatsApp template.
-- `setting_call`: setting / qualification call.
-- `closing_call`: closing call.
+- `setting_call`: planned setting call to document at appointment time.
+- `closing_call`: planned closing call to document at appointment time.
 
 Qualification, contact status, manual notes, and template creation are support actions or proofs by default. They only become queue-visible work if they block the main action flow.
 
@@ -93,8 +95,8 @@ Operational rules:
 
 - New inbound WhatsApp message creates or updates a `reply` action assigned to the setter.
 - Inbound WhatsApp identity matching is strict: one phone match attaches automatically; zero or multiple matches create an `À identifier` temporary record.
-- Setter can plan a follow-up, pass to closer, resolve, or create a manual action.
-- Passing to closer completes current open actions, moves the lead to `closing`, and creates a `closing_call` action for the closer.
+- Setter can plan a follow-up, plan a setting call, plan a closing call, or close the conversation with a controlled reason.
+- Passing to closing through the normal workflow completes the relevant current action, moves the lead to `closing`, and creates a `closing_call` action for the closer.
 - `Non pertinent` and `A signé` are commercial qualifications that stop follow-ups and resolve open conversations.
 - `Ne plus contacter` is a separate contact status and strict do-not-contact policy.
 - If a `Ne plus contacter` prospect writes again, create a `contact_review` action for Setter 1.
@@ -102,7 +104,7 @@ Operational rules:
 - Manual reopening requires creating the next action.
 - Missing templates create `template_requests` linked to blocked follow-ups.
 - Lead-relative reminder sequence is `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
-- Course-date reminders always win over lead-relative reminders; the losing lead-relative action is cancelled.
+- Course-date reminders win over lead-relative reminders when they conflict within 24h; the losing lead-relative action is cancelled. They do not replace an already planned setting/closing call.
 - Minimum outbound WhatsApp follow-up delay is 24h.
 
 ### WhatsApp Window State
@@ -134,7 +136,7 @@ Left panel:
 Right panel:
 
 - Same prospect detail pattern as Inbox.
-- Tabs: `Conversation`, `Actions`, `Qualification`, `Notes privées`.
+- Tabs: `Conversation`, `Actions`, `Statuts`, `Notes privées`.
 
 ### Inbox
 
@@ -156,7 +158,7 @@ Right panel:
 - WhatsApp window badge.
 - Compact chips for qualification and parcours.
 - Next-action summary panel with only action type, due date/time, and responsible-person badge.
-- Tabs: `Conversation`, `Actions`, `Qualification`, `Notes privées`.
+- Tabs: `Conversation`, `Actions`, `Statuts`, `Notes privées`.
 
 ### Conversation Tab
 
@@ -170,7 +172,7 @@ Right panel:
 - If WhatsApp window is closed: free-form composer is blocked and template send remains available.
 - Template section has list first, search second, placeholders, resolved preview, then send button.
 
-### Qualification Tab
+### Statuts Tab
 
 Fields:
 
@@ -187,9 +189,9 @@ Dropdown labels are displayed in French. Internal values remain in English.
 - `reply`: guides the user to send the WhatsApp message from `Conversation`; the send form captures the business outcome and creates the next action.
 - `follow_up`: guides the user to send the relance from `Conversation`; closed WhatsApp windows require an approved template.
 - `blocked follow_up`: shows the linked missing-template request or lets the user create one.
-- `setting_call` and `closing_call`: completed from Actions with result and mandatory call note.
+- `setting_call` and `closing_call`: future actions to document the call result with mandatory note.
 - `contact_review`: shows only the explicit do-not-contact review decisions.
-- `Actions avancées`: exceptional manual completion, custom follow-up scheduling, out-of-flow closer handoff, manual resolution, and manual action creation.
+- `Actions avancées`: kept minimal. V1 only supports documenting `Message fait hors cockpit`. Do not reintroduce generic manual action creation, out-of-flow handoff, manual data correction, or conversation reopen there.
 - Action history includes outcome and message proof when available.
 
 ### Private Note Tab
@@ -276,11 +278,12 @@ Invoke-WebRequest http://127.0.0.1:8000/health -UseBasicParsing
 
 ## Next Implementation Areas
 
-1. Continue UX refinement with François.
-2. Add real read-only SchoolDrive connector.
-3. Add real read-only Notion enrichment.
-4. Configure Twilio sandbox credentials and run a real sandbox validation.
-5. Add file attachment persistence.
-6. Prepare GitHub remote.
-7. Prepare DigitalOcean staging.
-8. Define SQLite and attachment backup strategy.
+This build spec is now a reference snapshot, not the live operational runbook. Current state and next steps are in `docs/CURRENT_STATE.md` and `docs/NEXT_SESSION.md`.
+
+Current priority areas:
+
+1. Validate the fresh live SchoolDrive path in staging: website form, SchoolDrive snapshot, automatic WhatsApp, AR-sent snapshot, Tanjona follow-up.
+2. Keep Twilio production read-only/mock until explicit cutover.
+3. Clean or rebuild staging data if the historical SchoolDrive replay makes validation unreadable.
+4. Run focused scenario validation with Laura/François.
+5. Only then decide on production cutover.

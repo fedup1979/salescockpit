@@ -163,7 +163,7 @@ Les champs actuels de `tasks` couvrent une partie du besoin. Le modèle cible de
 - Un message sortant envoyé en réponse clôt le `reply` actif.
 - Une relance envoyée clôt le `follow_up` actif.
 - Un appel terminé clôt le `setting_call` ou `closing_call` actif.
-- Un statut stop (`not_relevant`, `do_not_contact`, `signed`) clôt les actions ouvertes et résout la conversation.
+- Un statut stop (`not_relevant`, `do_not_contact`, `signed`) clôt les actions ouvertes et termine la conversation.
 - `do_not_contact` est strict : aucune relance ne doit être créée ensuite.
 - Les relances liées aux dates de cours gagnent sur les relances relatives au lead ou à la préinscription.
 - Les relances liées aux dates de cours ne remplacent pas un appel setting ou closing déjà planifié.
@@ -188,17 +188,17 @@ Cette table décrit le chaînage cible. Elle doit rester lisible par l'équipe m
 | Relance due | `follow_up_due` | Aucun template adapté | `follow_up` | `follow_up` bloquée | Tanjona | Maintenant | Ouverte | `template_request` | Action principale passe `blocked` |
 | Template demandé | `template_request_created` | Template à créer ou soumettre | `template_request` support | `follow_up` reste bloquée | Tanjona | Dès approbation | Ouverte | Template demandé | Surveiller statut template |
 | Template approuvé | `template_approved` | Relance bloquée par ce template | `template_request` support | `follow_up` | Tanjona | Maintenant | Ouverte | Template approuvé | Débloquer action |
-| Relance envoyée | `outbound_template_sent` ou `outbound_message_sent` | Action active = `follow_up` | `follow_up` | `follow_up` suivant si séquence non terminée | Tanjona | +72h, +7j ou +30j | Ouverte | Message sortant | Incrémenter séquence |
-| Relance envoyée | `outbound_template_sent` | Dernière relance de séquence | `follow_up` | Aucune | Personne | Aucun | Résolue | Message sortant | Motif `sequence_completed_no_reply` |
+| Relance envoyée | `outbound_template_sent` ou `outbound_message_sent` | Action active = `follow_up` | `follow_up` | `follow_up` suivant si flux non terminé | Tanjona | +72h, +7j ou +30j | Ouverte | Message sortant | Avancer dans le flux |
+| Relance envoyée | `outbound_template_sent` | Dernière relance du flux | `follow_up` | Aucune | Personne | Aucun | Résolue | Message sortant | Motif `sequence_completed_no_reply` |
 | RDV setting arrive | `setting_call_due` | Appel à documenter | `setting_call` | Selon résultat appel | Setter 1 | Maintenant | Ouverte | Résultat + mini note | Option `in_progress` si pris en main |
 | Appel setting terminé | `setting_call_completed` | À closer | `setting_call` | `closing_call` | Closer | Date RDV ou maintenant | Ouverte | Mini note + qualification setter | Lead passe en `closing` |
-| Appel setting terminé | `setting_call_completed` | Pas de réponse | `setting_call` | `follow_up` | Tanjona | +72h | Ouverte | Mini note | Séquence setter no next step |
-| Appel setting terminé | `setting_call_completed` | Pas prêt / à relancer | `setting_call` | `follow_up` | Tanjona | +72h | Ouverte | Mini note + qualification setter | Séquence setter no next step |
+| Appel setting terminé | `setting_call_completed` | Pas de réponse | `setting_call` | `follow_up` | Tanjona | +72h | Ouverte | Mini note | Flux setter no next step |
+| Appel setting terminé | `setting_call_completed` | Pas prêt / à relancer | `setting_call` | `follow_up` | Tanjona | +72h | Ouverte | Mini note + qualification setter | Flux setter no next step |
 | Appel setting terminé | `setting_call_completed` | Non pertinent | `setting_call` | Aucune | Personne | Aucun | Résolue | Mini note + qualification `not_relevant` | Stopper relances |
 | Appel setting terminé | `setting_call_completed` | Ne plus contacter | `setting_call` | Aucune | Personne | Aucun | Résolue | Mini note + qualification `do_not_contact` | Stop strict |
 | RDV closing arrive | `closing_call_due` | Appel à documenter | `closing_call` | Selon résultat appel | Closer | Maintenant | Ouverte | Résultat + mini note | Option `in_progress` si pris en main |
 | Appel closing terminé | `closing_call_completed` | Signé | `closing_call` | Aucune | Personne | Aucun | Résolue | Mini note + qualification closer `signed` | Vente gagnée, stopper relances |
-| Appel closing terminé | `closing_call_completed` | Va signer | `closing_call` | `follow_up` | Tanjona | +72h | Ouverte | Mini note + qualification closer `will_sign` | Séquence closer will sign |
+| Appel closing terminé | `closing_call_completed` | Va signer | `closing_call` | `follow_up` | Tanjona | +72h | Ouverte | Mini note + qualification closer `will_sign` | Flux closer will sign |
 | Appel closing terminé | `closing_call_completed` | Non pertinent | `closing_call` | Aucune | Personne | Aucun | Résolue | Mini note + qualification closer `not_relevant` | Stopper relances |
 | Appel closing terminé | `closing_call_completed` | Pas de réponse | `closing_call` | `follow_up` | Tanjona | +72h | Ouverte | Mini note | Relance post-closing |
 | Date de cours approche | `course_start_approaching` | Lead non signé, date pertinente connue, aucun appel planifié | `follow_up` lead-relative concurrente | `follow_up` cours | Tanjona ou IA | J-14/J-7/J-3/J-1 | Ouverte | Template cours | La relance cours gagne le conflit sauf si un appel est déjà planifié |
@@ -208,7 +208,7 @@ Cette table décrit le chaînage cible. Elle doit rester lisible par l'équipe m
 | Hors horaires | `business_hours_closed` | Prospect écrit hors disponibilité | Aucune ou action active | `reply` planifiée | Backup ou responsable prochain créneau | Prochain créneau ouvré | Ouverte | Option template hors horaire | Message automatique possible |
 | Absence responsable | `assignee_unavailable` | Responsable absent | Action active | Même action transférée | Backup | Même échéance ou prochain créneau | Inchangée | Règle de backup | Historiser transfert |
 
-## Séquences Principales
+## Flux Principaux
 
 ### Lead Sans Réponse Initiale
 
@@ -248,7 +248,7 @@ Déclencheur : date de début de cours connue depuis SchoolDrive.
 
 Cadence à confirmer : J-14, J-7, J-3, J-1.
 
-Règle : une relance de cours gagne toujours contre une relance relative au lead. La relance perdante est annulée, pas décalée.
+Règle : une relance de cours gagne contre une relance relative au lead dans une fenêtre de 24h. La relance perdante est annulée, pas décalée. Cette règle ne remplace jamais un appel setting ou closing déjà planifié.
 
 ## Points Encore À Confirmer
 

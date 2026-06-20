@@ -2,11 +2,11 @@
 
 ## Current Status
 
-V1 staging build is runnable and currently deployed on commit `169e93a Preserve planned calls in workflow`. Production is deployed cold and remains in Twilio `mock` mode.
+V1 staging build is runnable. The last recorded staging deployment before the current documentation/workflow alignment was commit `169e93a Preserve planned calls in workflow`. Production is deployed cold and remains in Twilio `mock` mode.
 
 The current production gate is a fresh live SchoolDrive validation after the worker/projector is confirmed running: website form -> SchoolDrive lead/presubscription -> automatic WhatsApp AR -> AR sent snapshot -> Sales Cockpit thread + Tanjona follow-up.
 
-Latest staging deployment check after `169e93a`:
+Latest recorded staging deployment check after `169e93a`:
 
 - API health: OK.
 - UI health: OK.
