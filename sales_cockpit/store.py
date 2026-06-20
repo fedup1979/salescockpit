@@ -2800,6 +2800,8 @@ def create_and_submit_twilio_template(
     placeholders: dict[str, str] | None = None,
     submit_for_approval: bool = True,
 ) -> tuple[bool, str, int | None]:
+    if get_settings().twilio_content_read_only:
+        return False, "Compte Twilio en lecture seule : création et soumission désactivées.", None
     name = name.strip()
     body = body.strip()
     if not name or not body:
@@ -3044,6 +3046,215 @@ def list_sequence_steps(sequence_code: str | None = None) -> list[dict[str, Any]
             params,
         ).fetchall()
     return rows_to_dicts(rows)
+
+
+def list_sequence_template_mappings() -> list[dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                stm.*,
+                ss.delay,
+                ss.meaning,
+                wt.name AS template_name,
+                wt.status AS template_status,
+                wt.language AS template_language,
+                wt.category AS template_category,
+                wt.twilio_content_sid
+            FROM sequence_template_mappings stm
+            LEFT JOIN sequence_steps ss
+              ON ss.sequence_code = stm.sequence_code
+             AND ss.step_index = stm.sequence_step_index
+            LEFT JOIN whatsapp_templates wt ON wt.id = stm.template_id
+            WHERE stm.active = 1
+            ORDER BY stm.sequence_code, stm.sequence_step_index, stm.lead_type, stm.course_category
+            """
+        ).fetchall()
+    return rows_to_dicts(rows)
+
+
+def upsert_sequence_template_mapping(
+    user_id: int,
+    sequence_code: str,
+    sequence_step_index: int,
+    lead_type: str,
+    course_category: str,
+    template_id: int,
+    note: str = "",
+) -> tuple[bool, str]:
+    sequence_code = sequence_code.strip()
+    lead_type = _normalize_mapping_dimension(lead_type)
+    course_category = _normalize_mapping_dimension(course_category, uppercase=True)
+    now = iso_utc()
+    with connect() as conn:
+        ok, message = _require_admin_user(conn, user_id)
+        if not ok:
+            return False, message
+        step = conn.execute(
+            """
+            SELECT id FROM sequence_steps
+            WHERE sequence_code = ? AND step_index = ? AND active = 1
+            """,
+            (sequence_code, sequence_step_index),
+        ).fetchone()
+        if not step:
+            return False, "Étape de séquence introuvable."
+        template = conn.execute(
+            "SELECT id FROM whatsapp_templates WHERE id = ?",
+            (template_id,),
+        ).fetchone()
+        if not template:
+            return False, "Modèle WhatsApp introuvable."
+        conn.execute(
+            """
+            INSERT INTO sequence_template_mappings (
+                sequence_code, sequence_step_index, lead_type, course_category,
+                template_id, note, active, created_by_user_id, updated_by_user_id,
+                created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+            ON CONFLICT(sequence_code, sequence_step_index, lead_type, course_category)
+            DO UPDATE SET
+                template_id = excluded.template_id,
+                note = excluded.note,
+                active = 1,
+                updated_by_user_id = excluded.updated_by_user_id,
+                updated_at = excluded.updated_at
+            """,
+            (
+                sequence_code,
+                sequence_step_index,
+                lead_type,
+                course_category,
+                template_id,
+                note.strip(),
+                user_id,
+                user_id,
+                now,
+                now,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO user_activity_log (
+                user_id, event_type, entity_type, entity_id, metadata_json, created_at
+            ) VALUES (?, 'sequence_template_mapping_upserted', 'sequence_template_mapping', ?, ?, ?)
+            """,
+            (
+                user_id,
+                template_id,
+                json.dumps(
+                    {
+                        "sequence_code": sequence_code,
+                        "sequence_step_index": sequence_step_index,
+                        "lead_type": lead_type,
+                        "course_category": course_category,
+                    },
+                    ensure_ascii=False,
+                ),
+                now,
+            ),
+        )
+    return True, "Mapping modèle enregistré."
+
+
+def deactivate_sequence_template_mapping(user_id: int, mapping_id: int) -> tuple[bool, str]:
+    now = iso_utc()
+    with connect() as conn:
+        ok, message = _require_admin_user(conn, user_id)
+        if not ok:
+            return False, message
+        existing = conn.execute(
+            "SELECT id FROM sequence_template_mappings WHERE id = ? AND active = 1",
+            (mapping_id,),
+        ).fetchone()
+        if not existing:
+            return False, "Mapping introuvable."
+        conn.execute(
+            """
+            UPDATE sequence_template_mappings
+            SET active = 0, updated_by_user_id = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (user_id, now, mapping_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO user_activity_log (
+                user_id, event_type, entity_type, entity_id, created_at
+            ) VALUES (?, 'sequence_template_mapping_deactivated', 'sequence_template_mapping', ?, ?)
+            """,
+            (user_id, mapping_id, now),
+        )
+    return True, "Mapping désactivé."
+
+
+def get_recommended_template_for_action(action_id: int) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT
+                t.sequence_code,
+                t.sequence_step_index,
+                l.lead_type,
+                l.course_category_short_title
+            FROM tasks t
+            JOIN leads l ON l.id = t.lead_id
+            WHERE t.id = ? AND t.type = 'follow_up'
+              AND t.sequence_code IS NOT NULL
+              AND t.sequence_step_index IS NOT NULL
+            """,
+            (action_id,),
+        ).fetchone()
+        if not row:
+            return None
+        action = row_to_dict(row)
+        lead_type = _normalize_mapping_dimension(action.get("lead_type") or "all")
+        course_category = _normalize_mapping_dimension(
+            action.get("course_category_short_title") or "all",
+            uppercase=True,
+        )
+        mapping = conn.execute(
+            """
+            SELECT
+                stm.*,
+                wt.name AS template_name,
+                wt.status AS template_status,
+                wt.language AS template_language,
+                wt.category AS template_category,
+                wt.body AS template_body,
+                wt.twilio_content_sid,
+                wt.twilio_content_type
+            FROM sequence_template_mappings stm
+            JOIN whatsapp_templates wt ON wt.id = stm.template_id
+            WHERE stm.active = 1
+              AND stm.sequence_code = ?
+              AND stm.sequence_step_index = ?
+              AND stm.lead_type IN ('all', ?)
+              AND stm.course_category IN ('all', ?)
+            ORDER BY
+                CASE WHEN stm.lead_type = ? THEN 1 ELSE 0 END DESC,
+                CASE WHEN stm.course_category = ? THEN 1 ELSE 0 END DESC,
+                stm.updated_at DESC
+            LIMIT 1
+            """,
+            (
+                action["sequence_code"],
+                action["sequence_step_index"],
+                lead_type,
+                course_category,
+                lead_type,
+                course_category,
+            ),
+        ).fetchone()
+    return row_to_dict(mapping)
+
+
+def _normalize_mapping_dimension(value: str, uppercase: bool = False) -> str:
+    normalized = (value or "all").strip()
+    if not normalized or normalized.lower() in {"all", "tous", "toutes", "*"}:
+        return "all"
+    return normalized.upper() if uppercase else normalized.lower()
 
 
 def list_template_requests(status: str = "all") -> list[dict[str, Any]]:

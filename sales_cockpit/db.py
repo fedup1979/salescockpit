@@ -210,6 +210,22 @@ CREATE TABLE IF NOT EXISTS sequence_steps (
     UNIQUE(sequence_code, step_index)
 );
 
+CREATE TABLE IF NOT EXISTS sequence_template_mappings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sequence_code TEXT NOT NULL,
+    sequence_step_index INTEGER NOT NULL,
+    lead_type TEXT NOT NULL DEFAULT 'all',
+    course_category TEXT NOT NULL DEFAULT 'all',
+    template_id INTEGER NOT NULL REFERENCES whatsapp_templates(id) ON DELETE CASCADE,
+    note TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(sequence_code, sequence_step_index, lead_type, course_category)
+);
+
 CREATE TABLE IF NOT EXISTS template_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,

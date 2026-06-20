@@ -41,16 +41,19 @@ from sales_cockpit.store import (
     create_bug_report,
     create_template_request,
     create_template,
+    deactivate_sequence_template_mapping,
     get_conversation,
     get_integration_readiness,
     get_next_action_for_lead,
     build_front_cutover_plan,
+    get_recommended_template_for_action,
     get_template,
     list_actions_for_lead,
     list_conversations,
     list_front_import_records,
     list_messages,
     list_sequence_steps,
+    list_sequence_template_mappings,
     list_sequences,
     list_tasks,
     list_template_requests,
@@ -62,6 +65,7 @@ from sales_cockpit.store import (
     send_template_message,
     set_conversation_status,
     sync_twilio_templates,
+    upsert_sequence_template_mapping,
     update_template_request_status,
     update_lead_qualification,
     update_temporary_identity,
@@ -880,6 +884,21 @@ def render_composer(user: dict, conv: dict) -> None:
 
     st.divider()
     st.subheader("Envoyer un modèle")
+    recommended_template = None
+    if action and action.get("type") == "follow_up":
+        recommended_template = get_recommended_template_for_action(action["id"])
+        if recommended_template:
+            recommended_status = recommended_template.get("template_status") or "draft"
+            message = (
+                f"Modèle recommandé pour cette relance : "
+                f"**{recommended_template['template_name']}** "
+                f"({template_status_label({'status': recommended_status})})."
+            )
+            if recommended_status == "approved":
+                st.info(message)
+            else:
+                st.warning(f"{message} Il ne sera envoyable qu'après approbation WhatsApp.")
+
     search_key = f"template_search_{conv['id']}"
     template_search = st.session_state.get(search_key, "")
     templates = list_templates(template_search, approved_only=True)
@@ -893,9 +912,16 @@ def render_composer(user: dict, conv: dict) -> None:
         render_template_request_form(user, conv, action)
         return
 
+    selected_index = 0
+    if recommended_template:
+        for index, item in enumerate(templates):
+            if item["id"] == recommended_template.get("template_id"):
+                selected_index = index
+                break
     selected = st.selectbox(
         "Liste des modèles",
         templates,
+        index=selected_index,
         format_func=lambda t: f"{t['name']} · {t['language']} · {labelize(t['category'])}",
         key=f"template_select_{conv['id']}",
     )
@@ -1648,7 +1674,9 @@ def render_user_guide() -> None:
 def render_templates(user: dict) -> None:
     st.title("Modèles WhatsApp")
     is_admin = user.get("role") == "admin"
-    twilio_mode = (get_settings().twilio_mode or "mock").lower()
+    settings = get_settings()
+    twilio_mode = (settings.twilio_mode or "mock").lower()
+    twilio_read_only = bool(settings.twilio_content_read_only)
     request_flash = st.session_state.pop("template_page_flash", None)
     if request_flash:
         st.success(request_flash)
@@ -1662,7 +1690,10 @@ def render_templates(user: dict) -> None:
                 if ok:
                     st.rerun()
         with sync_note_col:
-            st.caption("Récupère les templates Twilio DEV, leurs ContentSid et leurs statuts d'approbation WhatsApp.")
+            caption = "Récupère les templates Twilio, leurs ContentSid et leurs statuts d'approbation WhatsApp."
+            if twilio_read_only:
+                caption += " Mode lecture seule : aucune création ni soumission Twilio possible."
+            st.caption(caption)
     else:
         st.info("Vous pouvez consulter les modèles. Seuls les admins peuvent créer ou synchroniser des modèles WhatsApp.")
 
@@ -1673,7 +1704,7 @@ def render_templates(user: dict) -> None:
     ]
     if requests:
         st.dataframe(requests, hide_index=True, use_container_width=True, height=220)
-        if is_admin:
+        if is_admin and not twilio_read_only:
             with st.expander("Créer un modèle Twilio depuis une demande", expanded=False):
                 with st.form("create_template_from_request"):
                     request = st.selectbox(
@@ -1726,6 +1757,8 @@ def render_templates(user: dict) -> None:
                             "Il sera utilisable dès approbation WhatsApp."
                         )
                         st.rerun()
+        elif is_admin and twilio_read_only:
+            st.caption("Compte Twilio en lecture seule : les demandes sont listées, mais la création Twilio est désactivée ici.")
         else:
             st.caption("Les demandes seront traitées par Laura, François ou Tiago.")
     else:
@@ -1739,7 +1772,7 @@ def render_templates(user: dict) -> None:
             ["twilio", "demo", "all"],
             index=0 if twilio_mode != "mock" else 2,
             format_func={
-                "twilio": "Twilio DEV",
+                "twilio": "Twilio",
                 "demo": "Démo locale",
                 "all": "Tout afficher",
             }.get,
@@ -1781,6 +1814,9 @@ def render_templates(user: dict) -> None:
     if not is_admin:
         st.info("Création réservée aux admins.")
         return
+    if twilio_read_only:
+        st.info("Compte Twilio en lecture seule : création et soumission de modèles désactivées dans cet environnement.")
+        return
 
     with st.form("create_twilio_template"):
         name = st.text_input("Nom Twilio", placeholder="relance_financement_fsm")
@@ -1817,6 +1853,14 @@ def render_templates(user: dict) -> None:
         show_result(ok, message)
         if ok:
             st.rerun()
+
+
+def format_sequence_step(step: dict) -> str:
+    template = step.get("template_name") or "appel / sans template"
+    return (
+        f"{step['sequence_code']} #{step['step_index']} · {step['delay']} · "
+        f"{template} · {step['meaning']}"
+    )
 
 
 def template_matches_source_filter(template: dict, source_filter: str) -> bool:
@@ -1951,10 +1995,95 @@ def render_admin(user: dict) -> None:
         st.subheader("Séquences de relance")
         st.dataframe(list_sequences(), hide_index=True, use_container_width=True)
         st.subheader("Étapes de séquence")
-        st.dataframe(list_sequence_steps(), hide_index=True, use_container_width=True, height=420)
-        st.info(
-            "V1 affiche les règles. L'automatisation des séquences sera branchée après synchronisation SchoolDrive/Twilio."
-        )
+        sequence_steps = list_sequence_steps()
+        st.dataframe(sequence_steps, hide_index=True, use_container_width=True, height=300)
+
+        st.subheader("Templates recommandés par étape")
+        mappings = list_sequence_template_mappings()
+        if mappings:
+            mapping_rows = [
+                {
+                    "Séquence": item["sequence_code"],
+                    "Étape": item["sequence_step_index"],
+                    "Type": "Tous" if item["lead_type"] == "all" else labelize(item["lead_type"]),
+                    "Catégorie": "Toutes" if item["course_category"] == "all" else item["course_category"],
+                    "Template": item.get("template_name") or "Template supprimé",
+                    "Statut": template_status_label({"status": item.get("template_status")}),
+                    "Note": item.get("note") or "",
+                }
+                for item in mappings
+            ]
+            st.dataframe(mapping_rows, hide_index=True, use_container_width=True, height=260)
+        else:
+            st.info("Aucun template réel n'est encore recommandé pour les séquences.")
+
+        st.markdown("**Ajouter ou modifier une recommandation**")
+        real_templates = [item for item in list_templates() if is_real_twilio_template(item)]
+        if not real_templates:
+            st.warning("Synchronisez d'abord les vrais templates Twilio dans la page Modèles.")
+        else:
+            with st.form("sequence_template_mapping_form"):
+                selected_step = st.selectbox(
+                    "Étape",
+                    sequence_steps,
+                    format_func=format_sequence_step,
+                )
+                lead_type = st.selectbox(
+                    "Type SchoolDrive",
+                    ["all", "lead", "presubscription"],
+                    format_func=lambda value: {
+                        "all": "Tous",
+                        "lead": "Lead",
+                        "presubscription": "Préinscription",
+                    }.get(value, labelize(value)),
+                )
+                course_category = st.text_input(
+                    "Catégorie de cours",
+                    value="all",
+                    help="Ex. APP, FSM, AS. Garder `all` si le même template vaut pour toutes les catégories.",
+                )
+                template = st.selectbox(
+                    "Template Twilio recommandé",
+                    real_templates,
+                    format_func=lambda item: (
+                        f"{item['name']} · {template_status_label(item)} · "
+                        f"{item['language']} · {labelize(item['category'])}"
+                    ),
+                )
+                note = st.text_input("Note interne", placeholder="Ex. APP relance 3 avant appel.")
+                submitted = st.form_submit_button("Enregistrer le mapping")
+            if submitted:
+                ok, message = upsert_sequence_template_mapping(
+                    user["id"],
+                    selected_step["sequence_code"],
+                    int(selected_step["step_index"]),
+                    lead_type,
+                    course_category,
+                    int(template["id"]),
+                    note,
+                )
+                show_result(ok, message)
+                if ok:
+                    st.rerun()
+
+        if mappings:
+            with st.expander("Désactiver un mapping", expanded=False):
+                with st.form("deactivate_sequence_template_mapping_form"):
+                    mapping = st.selectbox(
+                        "Mapping",
+                        mappings,
+                        format_func=lambda item: (
+                            f"{item['sequence_code']} #{item['sequence_step_index']} · "
+                            f"{item['lead_type']} · {item['course_category']} · "
+                            f"{item.get('template_name') or 'template supprimé'}"
+                        ),
+                    )
+                    submitted = st.form_submit_button("Désactiver")
+                if submitted:
+                    ok, message = deactivate_sequence_template_mapping(user["id"], int(mapping["id"]))
+                    show_result(ok, message)
+                    if ok:
+                        st.rerun()
 
     with tabs[5]:
         st.subheader("Templates de démo")

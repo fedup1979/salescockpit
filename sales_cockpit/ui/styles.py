@@ -22,6 +22,43 @@ APP_CSS = """
   border-right: 1px solid var(--sc-border);
 }
 
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] span {
+  color: var(--sc-text) !important;
+}
+
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"] * {
+  color: var(--sc-muted) !important;
+}
+
+[data-testid="stSidebar"] [role="radiogroup"] label {
+  border-radius: 8px;
+  padding: .18rem .28rem;
+}
+
+[data-testid="stSidebar"] [role="radiogroup"] label:hover {
+  background: oklch(0.93 0.012 250);
+}
+
+[data-testid="stSidebar"] [role="radiogroup"] [aria-checked="true"] {
+  color: var(--sc-danger) !important;
+}
+
+[data-testid="stSidebar"] .stButton > button {
+  color: oklch(0.985 0.006 250) !important;
+  background: oklch(0.26 0.018 250) !important;
+  border: 1px solid oklch(0.32 0.018 250) !important;
+}
+
+[data-testid="stSidebar"] .stButton > button:hover {
+  background: oklch(0.31 0.025 250) !important;
+}
+
 header[data-testid="stHeader"] {
   height: 0;
   background: transparent;
@@ -36,7 +73,9 @@ header[data-testid="stHeader"] {
 .block-container {
   padding-top: .85rem;
   padding-bottom: 2rem;
-  max-width: 1440px;
+  padding-left: 1.75rem;
+  padding-right: 1.75rem;
+  max-width: min(1720px, calc(100vw - 2rem));
 }
 
 h1, h2, h3 {
@@ -176,18 +215,18 @@ h1, h2, h3 {
 }
 
 .sc-message-inbound {
-  background: oklch(0.972 0.024 218);
-  border-color: oklch(0.84 0.045 218);
+  background: oklch(0.952 0.038 218);
+  border-color: oklch(0.78 0.065 218);
 }
 
 .sc-message-outbound {
-  background: oklch(0.958 0.034 145);
-  border-color: oklch(0.82 0.06 145);
+  background: oklch(0.94 0.052 145);
+  border-color: oklch(0.76 0.085 145);
 }
 
 .sc-message-note {
-  background: oklch(0.965 0.045 86);
-  border-color: oklch(0.84 0.07 86);
+  background: oklch(0.95 0.065 86);
+  border-color: oklch(0.76 0.105 86);
   max-width: min(86%, 760px);
 }
 
@@ -254,7 +293,7 @@ h1, h2, h3 {
   border: 1px solid var(--sc-border);
   border-radius: 8px;
   padding: .75rem .85rem;
-  background: oklch(0.982 0.01 145);
+  background: oklch(0.965 0.025 145);
   margin: .5rem 0 .75rem 0;
   white-space: pre-wrap;
 }
@@ -476,6 +515,43 @@ h1, h2, h3 {
   color: var(--sc-muted);
   font-size: .82rem;
   line-height: 1.34;
+}
+
+div[data-testid="stAlert"] {
+  margin: .45rem 0 .7rem 0;
+}
+
+div[data-testid="stCheckbox"] label,
+div[data-testid="stCheckbox"] span {
+  color: var(--sc-text) !important;
+}
+
+@media (max-width: 900px) {
+  .block-container {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    max-width: 100%;
+  }
+
+  .sc-search-field-offset {
+    height: .25rem;
+  }
+
+  .sc-detail-title {
+    font-size: 1.25rem;
+  }
+
+  .sc-message {
+    max-width: 94%;
+  }
+
+  .sc-action-panel {
+    flex-direction: column;
+  }
+
+  .sc-action-badges {
+    justify-content: flex-start;
+  }
 }
 </style>
 """

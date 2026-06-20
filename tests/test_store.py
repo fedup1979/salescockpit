@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from sales_cockpit.config import get_settings
 from sales_cockpit.db import connect, seed_initial_data
 from sales_cockpit.services.twilio_content import TwilioContentTemplate
 from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
@@ -8,17 +9,20 @@ from sales_cockpit.store import (
     assign_standard_next_action,
     authenticate,
     complete_action_with_workflow,
+    create_and_submit_twilio_template,
     create_bug_report,
     create_template,
     create_template_request,
     get_conversation,
     get_integration_readiness,
     get_next_action_for_lead,
+    get_recommended_template_for_action,
     ingest_schooldrive_snapshot,
     handoff_to_closer,
     list_actions_for_lead,
     list_conversations,
     list_messages,
+    list_sequence_template_mappings,
     list_template_requests,
     list_templates,
     list_bug_reports,
@@ -32,6 +36,7 @@ from sales_cockpit.store import (
     sync_twilio_templates,
     update_lead_qualification,
     update_temporary_identity,
+    upsert_sequence_template_mapping,
 )
 from sales_cockpit.services.front_import import upsert_front_history
 from scripts.schooldrive_smoke import build_smoke_steps
@@ -728,6 +733,89 @@ def test_sync_twilio_templates_upserts_content_sid(monkeypatch) -> None:
     assert len(templates) == 1
     assert templates[0]["twilio_content_sid"] == "HX1234567890abcdef1234567890abcdef"
     assert templates[0]["status"] == "approved"
+
+
+def test_twilio_content_read_only_blocks_remote_template_creation(monkeypatch) -> None:
+    monkeypatch.setenv("SALES_COCKPIT_TWILIO_CONTENT_READ_ONLY", "true")
+    get_settings.cache_clear()
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+
+    ok, message, template_id = create_and_submit_twilio_template(
+        admin["id"],
+        "should_not_touch_twilio",
+        "Bonjour {{first_name}}",
+        placeholders={"first_name": "Camille"},
+    )
+
+    assert ok is False
+    assert template_id is None
+    assert "lecture seule" in message
+
+
+def test_sequence_template_mapping_recommends_matching_twilio_template(monkeypatch) -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    remote = TwilioContentTemplate(
+        content_sid="HXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        name="app_relance_1",
+        language="fr",
+        category="utility",
+        body="Bonjour {{first_name}}, relance APP.",
+        status="approved",
+        content_type="twilio/text",
+        variables={"first_name": "Camille"},
+        payload={"sid": "HXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    )
+    monkeypatch.setattr("sales_cockpit.store.list_twilio_templates", lambda: [remote])
+    sync_twilio_templates(admin["id"])
+    template = list_templates("app_relance_1")[0]
+
+    result = record_inbound_message(unique_phone(), "Bonjour, je veux des infos APP.")
+    action = get_next_action_for_lead(result["lead_id"])
+    ok, _ = schedule_followup(
+        result["conversation_id"],
+        admin["id"],
+        action["assigned_to_user_id"],
+        iso_utc(utc_now() + timedelta(hours=72)),
+    )
+    assert ok is True
+    action = get_next_action_for_lead(result["lead_id"])
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE leads
+            SET lead_type = 'lead', course_category_short_title = 'APP'
+            WHERE id = ?
+            """,
+            (result["lead_id"],),
+        )
+        conn.execute(
+            """
+            UPDATE tasks
+            SET sequence_code = 'lead_no_reply', sequence_step_index = 1
+            WHERE id = ?
+            """,
+            (action["id"],),
+        )
+
+    ok, message = upsert_sequence_template_mapping(
+        admin["id"],
+        "lead_no_reply",
+        1,
+        "lead",
+        "APP",
+        template["id"],
+        "Relance APP 1",
+    )
+
+    assert ok is True
+    assert "enregistré" in message
+    assert len(list_sequence_template_mappings()) == 1
+    recommended = get_recommended_template_for_action(action["id"])
+    assert recommended is not None
+    assert recommended["template_id"] == template["id"]
+    assert recommended["template_name"] == "app_relance_1"
 
 
 def test_seeded_conversations_include_schooldrive_lead_types() -> None:

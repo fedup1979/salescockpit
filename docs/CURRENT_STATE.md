@@ -1,14 +1,14 @@
 # Current Project State
 
-Last updated: 2026-06-19 20:54 Europe/Zurich.
+Last updated: 2026-06-20 09:23 Europe/Zurich.
 
 This is the first document to read when resuming Sales Cockpit.
 
 ## Executive Summary
 
-Sales Cockpit is deployed and running in staging on DigitalOcean. The staging app is connected to a real Twilio DEV WhatsApp sender in `live` mode with a strict recipient allowlist. Production is deployed cold and remains in Twilio `mock` mode.
+Sales Cockpit is deployed and running in staging on DigitalOcean. Production is deployed cold and remains in Twilio `mock` mode.
 
-The main remaining blocker before production cutover is not in Sales Cockpit. It is the SchoolDrive projector trigger for WhatsApp autoresponder status changes: when an AR message changes from `queued` to `sent`, SchoolDrive must emit a new snapshot to Sales Cockpit.
+The main remaining blocker before operational production cutover is validation of the automatic SchoolDrive AR-sent path: when an AR message changes from `queued` to `sent`, SchoolDrive must emit a new snapshot to Sales Cockpit and Sales Cockpit must create the Tanjona follow-up.
 
 ## Repositories And Environments
 
@@ -64,21 +64,35 @@ open_conversations_without_action: 0
 
 ### Twilio
 
-Staging is live with the DEV WhatsApp sender:
+Twilio Content API synchronization exists and is read-only by default:
+
+```text
+SALES_COCKPIT_TWILIO_CONTENT_READ_ONLY=true
+```
+
+This is intentional for the real ESSR Twilio account. Template synchronization may read Content API templates and upsert them locally, but Sales Cockpit blocks remote template creation and WhatsApp approval submission unless this flag is explicitly set to `false`.
+
+Staging previously used the DEV WhatsApp sender:
 
 ```text
 +41445054269
 ```
 
-Outbound staging is protected by:
+The DEV WhatsApp account has since been blocked by Meta, so do not rely on it for production validation. Production must stay in `mock` mode until explicit cutover.
 
-```text
-SALES_COCKPIT_TWILIO_ALLOWED_RECIPIENTS=+41762845576
-```
+Real ESSR templates should be synchronized from the real ESSR Twilio account in read-only mode. Do not change Twilio webhooks and do not send real WhatsApp messages from staging or production before the explicit "turn the key" decision.
 
-Production is still in `mock` mode and must remain untouched until explicit cutover.
+### Template Mapping
 
-Real Twilio templates are synchronized, but the DEV account currently has no approved real WhatsApp template. Closed-window template sending cannot be fully validated until at least one real template is approved.
+Implemented locally after the previous documentation update:
+
+- `sequence_template_mappings` links a follow-up sequence step to a real `whatsapp_templates` row.
+- Mapping dimensions: `sequence_code`, `sequence_step_index`, `lead_type`, `course_category`.
+- `all` is supported for lead type and course category.
+- Admin > Séquences lets admins add, update, or deactivate recommended templates.
+- During a `follow_up` action, the Conversation tab displays the recommended template when a mapping matches the prospect.
+
+This lets Laura map real Twilio templates to events such as "APP relance 3" without changing the core workflow.
 
 ### SchoolDrive
 
@@ -99,7 +113,7 @@ KEEP_CURRENT_UTC
 
 The SchoolDrive MCP currently returns naive timestamps that track UTC. Do not subtract two hours.
 
-### Current SchoolDrive Blocker
+### Current SchoolDrive Gate
 
 Claude Code completed a pure observation diagnostic on `lead:124126`.
 
@@ -125,22 +139,32 @@ newer events after that: 0
 open tasks: 0
 ```
 
-Verdict:
+Previous verdict:
 
 ```text
-Automatic AR-sent path is not validated.
+Automatic AR-sent path was not validated on this case.
 ```
 
 Sales Cockpit is behaving correctly for the snapshot it received. It stored the AR as queued and did not create a follow-up. The blocker is SchoolDrive/projector side: the AR is sent in SchoolDrive, but no newer snapshot with `status=sent` and `sent_at` reached Sales Cockpit.
 
-Required SchoolDrive-side fix:
+Tiago later reported that the projector was published and filtered to skip leads/subscriptions created before `2026-03-01`. Staging then received a large replay and is polluted with historical records.
+
+Current staging state before cleanup:
 
 ```text
-When a WhatsApp autoresponder message changes status to sent,
-SchoolDrive must emit/project a new lead/presubscription snapshot to Sales Cockpit.
+schooldrive_events: 5364
+schooldrive_leads: 1791
+min schooldrive_aggregated_updated_at: 2026-02-13T20:43:06+00:00
 ```
 
-After that fix, the validation target is:
+Production is still clean from SchoolDrive:
+
+```text
+schooldrive_events: 0
+schooldrive_leads: 0
+```
+
+Required validation:
 
 ```text
 AR sent in SchoolDrive
@@ -149,6 +173,22 @@ AR sent in SchoolDrive
 -> message body appears in thread
 -> Tanjona follow-up is created at sent_at + 72h
 -> pre_cutover_check remains OK
+```
+
+If this is not green, production may be prepared but must not become operational for the sales team.
+
+## Production Gates
+
+Production has two different meanings:
+
+- **Prepared production**: clean prod DB, deployed code, SchoolDrive endpoint/token ready, Twilio templates synchronized locally in read-only mode, Front still operating.
+- **Operational production**: sales team works in Sales Cockpit, WhatsApp webhooks/sending are switched away from Front.
+
+Current rule:
+
+```text
+If AR-sent validation is not green, stop at prepared production.
+Do not switch WhatsApp webhooks before HTTPS is in place.
 ```
 
 ## Front Status

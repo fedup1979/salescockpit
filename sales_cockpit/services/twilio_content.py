@@ -52,6 +52,8 @@ def create_twilio_text_template(
     language: str = "fr",
     variables: dict[str, str] | None = None,
 ) -> TwilioContentTemplate:
+    if get_settings().twilio_content_read_only:
+        raise TwilioContentError("Compte Twilio en lecture seule : création de modèle désactivée.")
     payload = {
         "friendly_name": name,
         "language": language,
@@ -72,6 +74,8 @@ def submit_twilio_template_for_whatsapp_approval(
     approval_name: str,
     category: str,
 ) -> dict[str, Any]:
+    if get_settings().twilio_content_read_only:
+        raise TwilioContentError("Compte Twilio en lecture seule : soumission WhatsApp désactivée.")
     payload = {
         "name": _approval_name(approval_name),
         "category": _approval_category(category),

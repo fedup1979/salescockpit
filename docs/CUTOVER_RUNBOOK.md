@@ -7,6 +7,7 @@ This runbook describes the controlled migration from Front.io to Sales Cockpit.
 - SchoolDrive remains the source of truth for people, leads, presubscriptions, courses, and SchoolDrive URLs.
 - Front is historical input. It should not create leads by itself.
 - Front messages are imported first into buffer tables, then optionally attached as `front_history`.
+- The real ESSR Twilio account is read-only until explicit cutover. Template synchronization may read templates, but Sales Cockpit must not create, submit, delete, or send through the real account during staging validation.
 - No production Twilio webhook is switched before SchoolDrive backfill, Front pilot import, backup, and manual validation are complete.
 - Every active Sales Cockpit conversation must have one clear next action.
 
@@ -24,11 +25,13 @@ Production should use HTTPS before final cutover.
 - SchoolDrive production webhook URL and token are configured.
 - SchoolDrive can backfill all active leads and presubscriptions.
 - SchoolDrive emits a fresh webhook when a WhatsApp autoresponder status changes to `sent`; this must be validated with a real AR status-change event, not only with synthetic replay.
+- Staging has been cleaned after any historical event replay and rebuilt with records created on or after 2026-03-01.
 - Twilio WhatsApp sender for the production business is verified and approved.
-- Twilio inbound webhook and status callback have been tested on staging.
+- Twilio templates from the real ESSR account are synchronized locally with `SALES_COCKPIT_TWILIO_CONTENT_READ_ONLY=true`.
 - Front API read-only token is valid.
 - Backup and restore scripts have been tested.
 - Laura validates the final operational workflow with real or near-real staging examples.
+- HTTPS is in place before the real WhatsApp webhook switch.
 
 ## T-2 Or Earlier: Prepare
 
@@ -58,6 +61,7 @@ python scripts/schooldrive_replay_payloads.py payloads/schooldrive \
    - a real AR changing to `sent` produces a new webhook and creates the Tanjona +72h follow-up;
    - archived SchoolDrive records are terminated;
    - Tanjona +72h follow-ups exist only when expected.
+   - Admin > Séquences can map a real Twilio template to each follow-up step and the Conversation tab shows the recommended template for a matching relance.
 
 6. Run the automated pre-cutover check on the droplet:
 
@@ -148,6 +152,7 @@ They are historical context, not proof of a new Sales Cockpit action.
 
 Only after the above checks pass:
 
+0. Confirm HTTPS endpoints for production.
 1. Point Twilio WhatsApp inbound webhook to the production API endpoint.
 2. Point Twilio status callback to the production API endpoint.
 3. Send one inbound test message.
@@ -184,6 +189,8 @@ sudo CONFIRM_RESTORE=1 bash /opt/sales-cockpit/prod/app/deploy/scripts/restore_s
 - HTTPS domain for production.
 - Production environment variables and secrets.
 - Real SchoolDrive AR-sent event trigger validation.
+- Real ESSR Twilio template synchronization in read-only mode.
+- Laura mapping of course/event/relance steps to real Twilio templates.
 - Final Twilio production sender verification.
 - Front full-history import batch sizing.
 - UI filter for `front_history`.
