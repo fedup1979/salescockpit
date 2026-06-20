@@ -183,9 +183,11 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - Admin now has a `Bugs & logs` tab showing bug reports and recent activity.
 - Admin now opens with an `État` tab showing readiness for SchoolDrive, Front, Twilio, backups, and workflow consistency.
 - Admin > Utilisateurs sorts users by ID, so Laura appears first in the seeded local data.
-- Admin shows page access by role. Admin sees everything; Setter 1, Tanjona and Closer see all user pages except Admin.
+- Admin shows page access by role. Admin sees everything; Setter I, Setter II and Closer see all user pages except Admin.
 - Human and business hours have provisional V1 values in Admin > Règles métier > Horaires et bascules. They still need Laura validation.
 - The `Mode d'emploi` page is now prose, not expanders. Do not reintroduce accordion-heavy help unless François asks.
+- In `Mode d'emploi` and `Pilotage`, use function labels (`Setter I`, `Setter II`, `Closer`, `Admin`) rather than person names. Person names are still appropriate when showing the actual assignee on a task or in user management.
+- Template requests and bug reports are V1 admin queues, not standard prospect tasks. Do not create fake commercial tasks for them. V2 should add a proper `admin_actions` layer if admin workload needs to be managed like tasks.
 - Obsolete legacy demo blocks and the old `_render_next_action_box_legacy` function were removed.
 
 ## Current Validation

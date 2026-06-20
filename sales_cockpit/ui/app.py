@@ -102,7 +102,7 @@ ACTION_OUTCOMES = {
 }
 REPLY_SEND_OUTCOMES = ["reply_no_appointment", "setting_booked", "closing_booked", "not_relevant", "do_not_contact"]
 REPLY_SEND_OUTCOME_LABELS = {
-    "reply_no_appointment": "Pas de RDV : relance Tanjona à +72h",
+    "reply_no_appointment": "Pas de RDV : relance Setter II à +72h",
     "setting_booked": "RDV setting fixé : créer un appel",
     "closing_booked": "RDV closing fixé : créer un appel",
     "not_relevant": "Hors cible : clore la conversation",
@@ -137,18 +137,18 @@ PILOTAGE_SEQUENCE_ORDER = {
     "course_start": 70,
 }
 PILOTAGE_SEQUENCE_OWNER_LABELS = {
-    "lead_no_reply": "Setter II (Tanjona)",
-    "setter_no_next_step": "Setter II (Tanjona)",
-    "setting_call_not_reached": "Setter I (Mihary), puis Setter II (Tanjona)",
-    "post_call_undecided": "Setter II (Tanjona)",
-    "closing_call_not_reached": "Closer (Yasmine), puis Setter II (Tanjona)",
-    "closer_will_sign": "Setter II (Tanjona)",
-    "course_start": "Setter II (Tanjona)",
+    "lead_no_reply": "Setter II",
+    "setter_no_next_step": "Setter II",
+    "setting_call_not_reached": "Setter I, puis Setter II",
+    "post_call_undecided": "Setter II",
+    "closing_call_not_reached": "Closer, puis Setter II",
+    "closer_will_sign": "Setter II",
+    "course_start": "Setter II",
 }
 PILOTAGE_CONFLICT_RULES = [
     {
         "Situation": "Le prospect répond",
-        "Règle": "La réponse entrante interrompt les relances futures et crée une action Répondre au message pour Mihary. Si un appel setting ou closing est déjà planifié, cet appel reste actif et visible.",
+        "Règle": "La réponse entrante interrompt les relances futures et crée une action Répondre au message pour Setter I. Si un appel setting ou closing est déjà planifié, cet appel reste actif et visible.",
     },
     {
         "Situation": "Relance lead/préinscription et relance cours proches",
@@ -986,7 +986,7 @@ def render_reply_send_plan_controls(
         call_type = "setting" if active_call.get("type") == "setting_call" else "closing"
         st.caption(f"Après l'envoi, l'appel {call_type} déjà planifié restera actif.")
     else:
-        st.caption("Après l'envoi, une relance Tanjona sera planifiée à +72h si le prospect ne répond pas.")
+        st.caption("Après l'envoi, une relance Setter II sera planifiée à +72h si le prospect ne répond pas.")
 
 
 def render_composer(user: dict, conv: dict) -> None:
@@ -1306,14 +1306,14 @@ def render_planned_call_notice(conv: dict) -> None:
 def action_consequence(action_type: str, outcome: str) -> str:
     consequences = {
         ("setting_call", "to_closing"): "Le système planifie un appel closing à documenter pour le closer et passe le parcours en Closing.",
-        ("setting_call", "not_reached"): "Le système crée un rappel d'appel, puis une relance Tanjona si les rappels sont épuisés.",
-        ("setting_call", "not_ready"): "Le système crée une relance Tanjona à +72h.",
+        ("setting_call", "not_reached"): "Le système crée un rappel d'appel, puis une relance Setter II si les rappels sont épuisés.",
+        ("setting_call", "not_ready"): "Le système crée une relance Setter II à +72h.",
         ("setting_call", "not_relevant"): "Clôture la conversation et annule les relances futures.",
         ("setting_call", "do_not_contact"): "Passe le contact en Ne plus contacter, clôture la conversation et bloque les relances.",
         ("closing_call", "signed"): "Marque la vente comme signée, clôture la conversation et annule les relances.",
-        ("closing_call", "will_sign"): "Le système crée une relance Tanjona à +72h, puis suit le flux Va signer.",
-        ("closing_call", "not_reached"): "Le système crée un rappel d'appel, puis une relance Tanjona si les rappels sont épuisés.",
-        ("closing_call", "undecided"): "Le système crée une relance Tanjona à +72h.",
+        ("closing_call", "will_sign"): "Le système crée une relance Setter II à +72h, puis suit le flux Va signer.",
+        ("closing_call", "not_reached"): "Le système crée un rappel d'appel, puis une relance Setter II si les rappels sont épuisés.",
+        ("closing_call", "undecided"): "Le système crée une relance Setter II à +72h.",
         ("closing_call", "not_relevant"): "Clôture la conversation et annule les relances futures.",
         ("contact_review", "maintain_do_not_contact"): "Maintient le blocage Ne plus contacter et clôture la conversation.",
         ("contact_review", "lift_do_not_contact"): "Le système lève le blocage et crée une action Répondre pour Setter 1.",
@@ -1798,9 +1798,9 @@ def render_user_guide() -> None:
 
         ### Les rôles commerciaux
 
-        **Setter I** répond aux messages entrants, mène les échanges écrits actifs et réalise les appels de setting. Dans le cockpit, ce rôle correspond principalement aux actions de réponse immédiate et aux appels setting à documenter.
+        **Setter I** répond aux messages entrants, mène les échanges écrits actifs et réalise les appels de setting. Dans le cockpit, cette fonction correspond principalement aux actions de réponse immédiate et aux appels setting à documenter.
 
-        **Tanjona, Setter II** gère les relances structurées. Elle relit la conversation, choisit le bon modèle WhatsApp quand la fenêtre est fermée, et crée une demande de modèle si aucun modèle existant ne convient.
+        **Setter II** gère les relances structurées. Cette fonction relit la conversation, choisit le bon modèle WhatsApp quand la fenêtre est fermée, et crée une demande de modèle si aucun modèle existant ne convient.
 
         **Closer** gère les appels de closing. Après l'appel, il indique le résultat : signé, va signer, indécis, non joint ou non pertinent. Cette décision détermine la suite du parcours.
 
@@ -1814,7 +1814,7 @@ def render_user_guide() -> None:
 
         Dans le fil de conversation, les messages envoyés par l'équipe peuvent afficher des coches : une coche signifie envoyé, deux coches signifient reçu, deux coches bleues signifient lu, et un point d'exclamation signale un échec.
 
-        Le premier WhatsApp automatique envoyé après une demande d'information ne suffit pas à ouvrir la fenêtre. La fenêtre s'ouvre seulement quand le prospect répond.
+        Un WhatsApp que nous envoyons ne suffit pas à ouvrir la fenêtre. Il faut que le prospect réponde pour que la fenêtre s'ouvre.
 
         ### Conversations actives et terminées
 
@@ -1838,27 +1838,31 @@ def render_user_guide() -> None:
 
         Une action peut être planifiée, ouverte, en cours, terminée, annulée ou bloquée. Quand elle est terminée, elle doit laisser une preuve : message WhatsApp envoyé, résultat d'appel, mini-note, qualification ou demande de modèle.
 
-        Quand un appel est fixé, le cockpit crée une action future à l'heure du rendez-vous. Cette action ne signifie pas seulement "appeler" : elle signifie surtout **documenter le résultat de l'appel**. La mini-note est obligatoire. Elle permet au prochain utilisateur de comprendre rapidement ce qui s'est passé et pourquoi la suite a été créée.
+        Quand un appel est fixé, le cockpit crée une action future à l'heure du rendez-vous. Cette action ne signifie pas seulement "appeler" : elle signifie surtout **documenter le résultat de l'appel**. La mini-note est obligatoire. Elle apparaît ensuite dans le fil de conversation comme note interne, afin que la prochaine personne comprenne rapidement ce qui s'est passé et pourquoi la suite a été créée.
 
         Dans l'onglet **Actions**, utilisez **Programmer / attribuer une action** pour créer une prochaine action standard : répondre, relancer, planifier un appel setting ou planifier un appel closing. Le cockpit demande toujours l'action concernée, le responsable, la date et une note. Le parcours affiché en haut de la fiche est mis à jour par ces actions et ne se modifie pas manuellement.
 
         Dans l'onglet **Statuts**, vous pouvez modifier la qualification commerciale et le statut de contact. La qualification répond à la question : ce prospect a-t-il une chance de s'inscrire ? Le statut de contact répond à la question : avons-nous encore le droit de lui écrire ?
 
+        La qualification **Non pertinent** veut dire que le prospect n'est pas un client potentiel. Lorsque cette qualification est attribuée à un prospect, tous les flux s'arrêtent et il ne sera plus contacté.
+
+        Le statut de contact **Ne plus contacter** doit être sélectionné quand un prospect demande à ne plus être dérangé. Ce statut interrompt automatiquement tous les flux.
+
         ### Chaînage des actions
 
-        Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous et qu'aucun appel n'est déjà planifié, l'action de réponse est terminée et une relance est planifiée pour Tanjona. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un appel setting est planifié. Si vous fixez directement un rendez-vous de closing, l'action de réponse est terminée et un appel closing est planifié pour le closer. Si un appel setting doit passer au closing, une action de closing est créée pour le closer.
+        Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous et qu'aucun appel n'est déjà planifié, l'action de réponse est terminée et une relance est planifiée pour Setter II. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un appel setting est planifié. Si vous fixez directement un rendez-vous de closing, l'action de réponse est terminée et un appel closing est planifié pour le closer. Si un appel setting doit passer au closing, une action de closing est créée pour le closer.
 
         Le chaînage peut être interrompu. Si le prospect répond, les relances futures sont arrêtées et la conversation remonte avec une action de réponse immédiate. Si un appel est déjà planifié, il reste en place. Si le prospect est marqué **Non pertinent**, **Ne plus contacter** ou **A signé**, les relances s'arrêtent. Si un prospect marqué **Ne plus contacter** écrit à nouveau, le cockpit crée une revue humaine au lieu de relancer automatiquement.
 
-        Le flux **Début de cours** est transversal. Il peut remplacer une relance lead ou préinscription si une relance liée au cours doit partir dans les 24 heures. Il ne remplace pas un appel setting ou closing déjà planifié.
+        Le flux **Début de cours** est transversal : il ne dépend pas du moment où le prospect a demandé des informations, mais de la date de début du cours. Il peut remplacer une relance lead ou préinscription si une relance liée au cours doit partir dans les 24 heures. Il ne remplace pas un appel setting ou closing déjà planifié.
 
         ### Pilotage pour les admins
 
-        La page **Pilotage** sert à régler les flux commerciaux avec Laura. Elle permet de définir les cours traités, les sessions de référence, les étapes de chaque flux et le template recommandé pour chaque étape. Ces réglages affectent seulement les nouvelles actions créées après enregistrement. Les actions déjà ouvertes ne sont pas recalculées automatiquement en V1.
+        La page **Pilotage** sert à régler les flux commerciaux avec l'équipe commerciale. Elle permet de définir les cours traités, les sessions de référence, les étapes de chaque flux et le template recommandé pour chaque étape. Ces réglages affectent seulement les nouvelles actions créées après enregistrement. Les actions déjà ouvertes ne sont pas recalculées automatiquement en V1.
 
         ### Signaler un problème
 
-        Le bouton **Bug** se trouve dans la barre latérale. Utilisez-le quand une action, une conversation, un statut, une relance ou un affichage vous semble incorrect. Décrivez ce que vous voyez et ce que vous attendiez. Le cockpit enregistre le signalement avec le contexte courant pour faciliter la vérification.
+        Le bouton **Bug** se trouve dans la barre latérale. Utilisez-le quand une action, une conversation, un statut, une relance ou un affichage vous semble incorrect. Décrivez ce que vous voyez et ce que vous attendiez. Le cockpit enregistre le signalement avec le contexte courant pour faciliter la vérification. Les signalements et les demandes de modèle sont traités par les admins dans les files dédiées **Modèles** et **Admin > Bugs & logs**.
         """
     )
 
@@ -1952,7 +1956,7 @@ def render_templates(user: dict) -> None:
         elif is_admin and twilio_read_only:
             st.caption("Compte Twilio en lecture seule : les demandes sont listées, mais la création Twilio est désactivée ici.")
         else:
-            st.caption("Les demandes seront traitées par Laura, François ou Tiago.")
+            st.caption("Les demandes seront traitées par un admin.")
     else:
         st.info("Aucune demande de modèle à traiter.")
 
@@ -2164,7 +2168,7 @@ def page_access_matrix() -> list[dict]:
 def render_pilotage(user: dict) -> None:
     st.title("Pilotage")
     st.caption(
-        "Vue lisible pour régler les flux commerciaux avec Laura : cours traités, sessions de référence, étapes, templates, conflits et simulation."
+        "Vue lisible pour régler les flux commerciaux : cours traités, sessions de référence, étapes, templates, conflits et vue des flux."
     )
     if user["role"] != "admin":
         st.warning("Cette page est réservée aux admins.")
@@ -2177,7 +2181,7 @@ def render_pilotage(user: dict) -> None:
         "Étapes des flux",
         "Flux par scénario",
         "Règles de conflit",
-        "Simulateur",
+        "Vue des flux",
     ])
     with tabs[0]:
         render_pilotage_overview()
@@ -2228,13 +2232,39 @@ def render_pilotage_overview() -> None:
         - **Sessions de référence** : règle utilisée quand SchoolDrive envoie un Lead avec une catégorie, mais sans session précise.
         - **Flux par scénario** : liste des événements prévus, avec le template recommandé et le message complet.
         - **Règles de conflit** : ce qui gagne quand deux flux se chevauchent, quand le prospect répond ou quand un appel est déjà planifié.
-        - **Simulateur** : prévisualisation rapide de la timeline une fois les sessions de référence définies.
+        - **Vue des flux** : prévisualisation rapide de la timeline une fois les sessions de référence définies.
 
         La donnée SchoolDrive réelle gagne toujours. Une session par défaut ne sert qu'à piloter les relances liées au cours quand le Lead n'a pas encore de session explicite.
         """
     )
 
-    st.markdown("### Flux normaux")
+    st.markdown("### États, flux et actions")
+    st.dataframe(
+        [
+            {
+                "Notion": "État / Parcours",
+                "Question": "Où en est le prospect ?",
+                "Exemples": "Nouveau lead, appel setting prévu, closing, gagné, perdu",
+                "Qui le modifie": "Le système, selon le résultat des actions",
+            },
+            {
+                "Notion": "Flux",
+                "Question": "Quel scénario de suivi s'applique ?",
+                "Exemples": "Lead sans réponse, échange setter sans suite, va signer, début de cours",
+                "Qui le modifie": "Admin, dans Pilotage",
+            },
+            {
+                "Notion": "Action",
+                "Question": "Qui doit faire quoi et quand ?",
+                "Exemples": "Répondre, envoyer relance, documenter appel setting, documenter appel closing",
+                "Qui le modifie": "Utilisateur dans Tâches ou Inbox",
+            },
+        ],
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    st.markdown("### Flux principaux")
     overview_rows = [
         {
             "Ordre": pilotage_sequence_rank(item["code"]),
@@ -2248,10 +2278,10 @@ def render_pilotage_overview() -> None:
     ]
     st.dataframe(overview_rows, hide_index=True, use_container_width=True, height=300)
 
-    st.markdown("### Points à régler avec Laura")
+    st.markdown("### Points à régler avec l'équipe commerciale")
     st.caption(
         "Chaque ligne représente une décision à prendre : flux × événement × cours. "
-        "Un template générique `Tous` peut dépanner, mais Laura doit valider le template exact pour chaque cours traité."
+        "Un template générique `Tous` peut dépanner, mais l'admin doit valider le template exact pour chaque cours traité."
     )
     tuning_rows = build_pilotage_tuning_rows(mappings)
     if tuning_rows:
@@ -2264,7 +2294,7 @@ def render_pilotage_course_categories(user: dict) -> None:
     st.markdown("### Cours traités")
     st.caption(
         "Une catégorie active signifie que Sales Cockpit peut appliquer les flux structurés. "
-        "Une catégorie reçue depuis SchoolDrive mais non active reste visible et crée une revue humaine pour Mihary."
+        "Une catégorie reçue depuis SchoolDrive mais non active reste visible et crée une revue humaine pour Setter I."
     )
     categories = list_course_categories(active_only=False)
     active_categories = [item for item in categories if item.get("active")]
@@ -2660,8 +2690,8 @@ def render_pilotage_conflict_rules() -> None:
 
 
 def render_pilotage_simulator() -> None:
-    st.markdown("### Simulateur de flux")
-    st.caption("Prévisualisation simple. Le simulateur ne crée aucune tâche et n'envoie aucun message.")
+    st.markdown("### Vue des flux")
+    st.caption("Prévisualisation simple. Cette vue ne crée aucune tâche et n'envoie aucun message.")
     default_sessions = {item["course_category"]: item for item in list_course_default_sessions()}
     active_categories = pilotage_active_categories()
     missing = [
@@ -2671,7 +2701,7 @@ def render_pilotage_simulator() -> None:
     if missing:
         st.warning(
             "Définis d'abord les sessions de référence pour tous les cours traités : "
-            f"{', '.join(missing)}. Le simulateur sera fiable seulement quand tous les cours actifs sont configurés."
+            f"{', '.join(missing)}. La vue sera fiable seulement quand tous les cours actifs sont configurés."
         )
         return
 
@@ -2686,7 +2716,7 @@ def render_pilotage_simulator() -> None:
 
     if selected_session:
         st.info(
-            f"Pour {category}, le simulateur utilise la session de référence : "
+            f"Pour {category}, la vue utilise la session de référence : "
             f"{selected_session['default_course_name']} ({selected_session['default_start_date']}). "
             "Lead et Préinscription suivent ensuite les mêmes flux de relance."
         )
@@ -2761,7 +2791,7 @@ def render_sequence_timeline(user: dict, sequence_code: str, lead_type: str, cat
                         note = st.text_input(
                             "Note interne",
                             value=(exact_mapping or {}).get("note") or "",
-                            placeholder="Ex. Validé avec Laura.",
+                            placeholder="Ex. Validé par l'équipe commerciale.",
                             key=f"pilotage_inline_note_{sequence_code}_{step['step_index']}_{category}",
                         )
                         submitted = st.form_submit_button("Enregistrer le template")
@@ -3126,6 +3156,7 @@ def render_admin(user: dict) -> None:
         st.subheader("Statuts de demande de modèle")
         st.dataframe(TEMPLATE_REQUEST_STATUSES, hide_index=True, use_container_width=True)
         st.subheader("Demandes de modèles")
+        st.caption("File admin dédiée : ces demandes remplacent une action Admin séparée en V1.")
         requests = list_template_requests()
         if requests:
             st.dataframe(requests, hide_index=True, use_container_width=True, height=320)
@@ -3152,6 +3183,7 @@ def render_admin(user: dict) -> None:
 
     with tabs[6]:
         st.subheader("Signalements Bug")
+        st.caption("File admin dédiée : chaque signalement conserve le contexte pour analyse avec les logs.")
         bug_reports = list_bug_reports()
         if bug_reports:
             st.dataframe(bug_reports, hide_index=True, use_container_width=True, height=320)

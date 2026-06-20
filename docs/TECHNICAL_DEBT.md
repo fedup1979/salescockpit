@@ -61,7 +61,7 @@ Add a controlled recalculation workflow:
 
 ### V1 Implemented Guardrail
 
-If SchoolDrive sends a lead or presubscription for a category not active in `course_categories`, Sales Cockpit stores the conversation and SchoolDrive WhatsApp messages, but creates a Setter I review task instead of starting the structured Tanjona follow-up flux.
+If SchoolDrive sends a lead or presubscription for a category not active in `course_categories`, Sales Cockpit stores the conversation and SchoolDrive WhatsApp messages, but creates a Setter I review task instead of starting the structured Setter II follow-up flux.
 
 ### V2 Debt
 
@@ -90,7 +90,29 @@ Runtime behavior:
 Add a global scheduling/recalculation workflow:
 
 - periodic sweep that detects upcoming course-start reminders even when no fresh SchoolDrive event arrives;
-- preview and recalculate affected future tasks after Laura changes default sessions, course-start flux steps, or template mappings;
+- preview and recalculate affected future tasks after an admin changes default sessions, course-start flux steps, or template mappings;
 - explain conflicts before applying changes;
 - preserve planned setting/closing calls as non-interruptible actions;
 - write audit logs for every cancelled/replaced task.
+
+## Admin Work Queues
+
+### V1 Implemented Guardrail
+
+Template requests and bug reports are handled as dedicated admin queues:
+
+- template requests appear in `Modèles` and `Admin > Templates`;
+- bug reports appear in `Admin > Bugs & logs`;
+- both keep the source context needed for review.
+
+They do not create a standard `tasks` row in V1. This is deliberate: commercial tasks are lead/conversation-based, while a bug report can be global and a template request can be a support item rather than the prospect's next commercial action. Creating fake prospect tasks for admins would make reporting look consistent but would blur the workflow model.
+
+### V2 Debt
+
+If admin workload needs to be managed like operational work, add a proper admin-action layer instead of overloading commercial tasks:
+
+- either add an `admin_actions` table for global support work;
+- or generalize `tasks.lead_id` to be nullable and add a clear `scope` field (`commercial`, `admin`, `system`);
+- expose admin actions in a dedicated queue;
+- link template requests, bug reports, Twilio approval checks, and integration incidents to those admin actions;
+- preserve the current distinction between prospect next actions and internal support work.

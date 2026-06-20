@@ -18,9 +18,9 @@ La page **Inbox** sert à retrouver les conversations WhatsApp. Elle est utile p
 
 ## Les rôles commerciaux
 
-**Setter I** répond aux messages entrants, mène les échanges écrits actifs et réalise les appels de setting. Dans le cockpit, ce rôle correspond principalement aux actions de réponse immédiate et aux appels setting à documenter.
+**Setter I** répond aux messages entrants, mène les échanges écrits actifs et réalise les appels de setting. Dans le cockpit, cette fonction correspond principalement aux actions de réponse immédiate et aux appels setting à documenter.
 
-**Tanjona, Setter II** gère les relances structurées. Elle relit la conversation, choisit le bon modèle WhatsApp quand la fenêtre est fermée, et crée une demande de modèle si aucun modèle existant ne convient.
+**Setter II** gère les relances structurées. Cette fonction relit la conversation, choisit le bon modèle WhatsApp quand la fenêtre est fermée, et crée une demande de modèle si aucun modèle existant ne convient.
 
 **Closer** gère les appels de closing. Après l'appel, il indique le résultat : signé, va signer, indécis, non joint ou non pertinent. Cette décision détermine la suite du parcours.
 
@@ -34,7 +34,7 @@ Seuls les admins peuvent créer, synchroniser et soumettre des modèles à Twili
 
 Dans le fil de conversation, les messages envoyés par l'équipe peuvent afficher des coches : une coche signifie envoyé, deux coches signifient reçu, deux coches bleues signifient lu, et un point d'exclamation signale un échec.
 
-Le premier WhatsApp automatique envoyé après une demande d'information ne suffit pas à ouvrir la fenêtre. La fenêtre s'ouvre seulement quand le prospect répond.
+Un WhatsApp que nous envoyons ne suffit pas à ouvrir la fenêtre. Il faut que le prospect réponde pour que la fenêtre s'ouvre.
 
 ## Conversations actives et terminées
 
@@ -58,24 +58,28 @@ Les actions principales sont : répondre au message, envoyer une relance, docume
 
 Une action peut être planifiée, ouverte, en cours, terminée, annulée ou bloquée. Quand elle est terminée, elle doit laisser une preuve : message WhatsApp envoyé, résultat d'appel, mini-note, qualification ou demande de modèle.
 
-Quand un appel est fixé, le cockpit crée une action future à l'heure du rendez-vous. Cette action ne signifie pas seulement "appeler" : elle signifie surtout **documenter le résultat de l'appel**. La mini-note est obligatoire. Elle permet au prochain utilisateur de comprendre rapidement ce qui s'est passé et pourquoi la suite a été créée.
+Quand un appel est fixé, le cockpit crée une action future à l'heure du rendez-vous. Cette action ne signifie pas seulement "appeler" : elle signifie surtout **documenter le résultat de l'appel**. La mini-note est obligatoire. Elle apparaît ensuite dans le fil de conversation comme note interne, afin que la prochaine personne comprenne rapidement ce qui s'est passé et pourquoi la suite a été créée.
 
 Dans l'onglet **Actions**, utilisez **Programmer / attribuer une action** pour créer une prochaine action standard : répondre, relancer, planifier un appel setting ou planifier un appel closing. Le cockpit demande toujours l'action concernée, le responsable, la date et une note. Le parcours affiché en haut de la fiche est mis à jour par ces actions et ne se modifie pas manuellement.
 
 Dans l'onglet **Statuts**, vous pouvez modifier la qualification commerciale et le statut de contact. La qualification répond à la question : ce prospect a-t-il une chance de s'inscrire ? Le statut de contact répond à la question : avons-nous encore le droit de lui écrire ?
 
+La qualification **Non pertinent** veut dire que le prospect n'est pas un client potentiel. Lorsque cette qualification est attribuée à un prospect, tous les flux s'arrêtent et il ne sera plus contacté.
+
+Le statut de contact **Ne plus contacter** doit être sélectionné quand un prospect demande à ne plus être dérangé. Ce statut interrompt automatiquement tous les flux.
+
 ## Chaînage des actions
 
-Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous et qu'aucun appel n'est déjà planifié, l'action de réponse est terminée et une relance est planifiée pour Tanjona. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un appel setting est planifié. Si vous fixez directement un rendez-vous de closing, l'action de réponse est terminée et un appel closing est planifié pour le closer. Si un appel setting doit passer au closing, une action de closing est créée pour le closer.
+Quand une action est terminée, le cockpit crée la suite selon la règle métier. Si vous répondez à un prospect sans fixer de rendez-vous et qu'aucun appel n'est déjà planifié, l'action de réponse est terminée et une relance est planifiée pour Setter II. Si vous fixez un rendez-vous de setting, l'action de réponse est terminée et un appel setting est planifié. Si vous fixez directement un rendez-vous de closing, l'action de réponse est terminée et un appel closing est planifié pour le closer. Si un appel setting doit passer au closing, une action de closing est créée pour le closer.
 
 Le chaînage peut être interrompu. Si le prospect répond, les relances futures sont arrêtées et la conversation remonte avec une action de réponse immédiate. Si un appel est déjà planifié, il reste en place. Si le prospect est marqué **Non pertinent**, **Ne plus contacter** ou **A signé**, les relances s'arrêtent. Si un prospect marqué **Ne plus contacter** écrit à nouveau, le cockpit crée une revue humaine au lieu de relancer automatiquement.
 
-Le flux **Début de cours** est transversal. Il peut remplacer une relance lead ou préinscription si une relance liée au cours doit partir dans les 24 heures. Il ne remplace pas un appel setting ou closing déjà planifié.
+Le flux **Début de cours** est transversal : il ne dépend pas du moment où le prospect a demandé des informations, mais de la date de début du cours. Il peut remplacer une relance lead ou préinscription si une relance liée au cours doit partir dans les 24 heures. Il ne remplace pas un appel setting ou closing déjà planifié.
 
 ## Pilotage pour les admins
 
-La page **Pilotage** sert à régler les flux commerciaux avec Laura. Elle permet de définir les cours traités, les sessions de référence, les étapes de chaque flux et le template recommandé pour chaque étape. Ces réglages affectent seulement les nouvelles actions créées après enregistrement. Les actions déjà ouvertes ne sont pas recalculées automatiquement en V1.
+La page **Pilotage** sert à régler les flux commerciaux avec l'équipe commerciale. Elle permet de définir les cours traités, les sessions de référence, les étapes de chaque flux et le template recommandé pour chaque étape. Ces réglages affectent seulement les nouvelles actions créées après enregistrement. Les actions déjà ouvertes ne sont pas recalculées automatiquement en V1.
 
 ## Signaler un problème
 
-Le bouton **Bug** se trouve dans la barre latérale. Utilisez-le quand une action, une conversation, un statut, une relance ou un affichage vous semble incorrect. Décrivez ce que vous voyez et ce que vous attendiez. Le cockpit enregistre le signalement avec le contexte courant pour faciliter la vérification.
+Le bouton **Bug** se trouve dans la barre latérale. Utilisez-le quand une action, une conversation, un statut, une relance ou un affichage vous semble incorrect. Décrivez ce que vous voyez et ce que vous attendiez. Le cockpit enregistre le signalement avec le contexte courant pour faciliter la vérification. Les signalements et les demandes de modèle sont traités par les admins dans les files dédiées **Modèles** et **Admin > Bugs & logs**.
