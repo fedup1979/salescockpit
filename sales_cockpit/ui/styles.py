@@ -50,13 +50,16 @@ APP_CSS = """
 }
 
 [data-testid="stSidebar"] .stButton > button {
-  color: oklch(0.985 0.006 250) !important;
-  background: oklch(0.26 0.018 250) !important;
-  border: 1px solid oklch(0.32 0.018 250) !important;
+  color: var(--sc-text) !important;
+  background: oklch(0.985 0.006 250) !important;
+  border: 1px solid var(--sc-border) !important;
+  box-shadow: none !important;
 }
 
 [data-testid="stSidebar"] .stButton > button:hover {
-  background: oklch(0.31 0.025 250) !important;
+  color: var(--sc-accent) !important;
+  background: oklch(0.935 0.012 250) !important;
+  border-color: var(--sc-accent) !important;
 }
 
 header[data-testid="stHeader"] {
