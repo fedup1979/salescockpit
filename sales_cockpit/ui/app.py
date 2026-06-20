@@ -2764,31 +2764,58 @@ def pilotage_rows_with_natural_language(rows: list[dict], kind: str) -> list[dic
 
 def pilotage_natural_language(row: dict, kind: str) -> str:
     if kind == "validation_case":
-        return (
-            f"Lorsque le dossier est dans la situation « {row.get('depart', '')} » "
-            f"et que {lower_first(row.get('evenement', ''))} "
-            f"alors {lower_first(row.get('reponse_systeme', ''))} "
-            f"L'utilisateur doit : {lower_first(row.get('utilisateur', ''))} "
-            f"L'action est résolue ainsi : {lower_first(row.get('resolution_action', ''))} "
-            f"La prochaine action est : {lower_first(row.get('prochaine_action', ''))}"
-        )
+        return validation_case_natural_language(row)
     if kind == "operating_rule":
-        return (
-            f"Lorsque la règle « {row.get('rule', '')} » s'applique "
-            f"et que {lower_first(row.get('value', ''))} "
-            f"alors {lower_first(row.get('effect', ''))}"
-        )
+        return operating_rule_natural_language(row)
     if kind == "workflow_transition":
-        return (
-            f"Lorsque l'action courante est « {row.get('current_action', '')} » "
-            f"et que le trigger « {row.get('trigger', '')} » produit « {row.get('outcome', '')} », "
-            f"alors la prochaine action est « {row.get('next_action', '')} », "
-            f"assignée à « {row.get('owner', '')} », avec échéance « {row.get('due', '')} ». "
-            f"La conversation est « {row.get('conversation', '')} ». "
-            f"À prévoir : {lower_first(row.get('required_support', ''))} "
-            f"Effet système : {lower_first(row.get('side_effects', ''))}"
-        )
+        return workflow_transition_natural_language(row)
     return ""
+
+
+def validation_case_natural_language(row: dict) -> str:
+    key = (row.get("depart", ""), row.get("evenement", ""))
+    text = VALIDATION_CASE_NATURAL_LANGUAGE.get(key)
+    if text:
+        return text
+    return (
+        f"Quand le dossier est dans le cas suivant : {row.get('depart', '')}. "
+        f"Événement : {row.get('evenement', '')} "
+        f"Le système doit alors faire ceci : {row.get('reponse_systeme', '')} "
+        f"Côté équipe, voici l'action attendue : {row.get('utilisateur', '')} "
+        f"La situation se termine ainsi : {row.get('resolution_action', '')} "
+        f"Suite prévue : {row.get('prochaine_action', '')}"
+    )
+
+
+def operating_rule_natural_language(row: dict) -> str:
+    text = OPERATING_RULE_NATURAL_LANGUAGE.get(row.get("rule", ""))
+    if text:
+        return text
+    return (
+        f"Règle : {row.get('rule', '')}. "
+        f"À retenir : {row.get('value', '')} "
+        f"Conséquence dans Sales Cockpit : {row.get('effect', '')}"
+    )
+
+
+def workflow_transition_natural_language(row: dict) -> str:
+    key = (
+        row.get("current_action", ""),
+        row.get("trigger", ""),
+        row.get("outcome", ""),
+    )
+    text = WORKFLOW_TRANSITION_NATURAL_LANGUAGE.get(key)
+    if text:
+        return text
+    return (
+        f"Quand la situation technique « {row.get('trigger', '')} » se produit "
+        f"et que le résultat constaté est : {row.get('outcome', '')}, "
+        f"Sales Cockpit doit créer ou conserver l'action suivante : {row.get('next_action', '')}. "
+        f"Responsable : {row.get('owner', '')}. Échéance : {row.get('due', '')}. "
+        f"État de la conversation : {row.get('conversation', '')}. "
+        f"Point à vérifier : {row.get('required_support', '')}. "
+        f"Effet système : {row.get('side_effects', '')}"
+    )
 
 
 def lower_first(value) -> str:
@@ -2796,6 +2823,598 @@ def lower_first(value) -> str:
     if not text:
         return ""
     return text[:1].lower() + text[1:]
+
+
+VALIDATION_CASE_NATURAL_LANGUAGE = {
+    (
+        "Aucune conversation Cockpit",
+        "SchoolDrive crée un Lead ou une Préinscription et le premier WhatsApp automatique est envoyé.",
+    ): (
+        "Lorsqu'une personne remplit un formulaire sur le site et que SchoolDrive crée un Lead ou une Préinscription, "
+        "SchoolDrive envoie automatiquement un premier WhatsApp. Sales Cockpit ouvre alors une conversation, garde les données SchoolDrive, "
+        "et prévoit une relance pour Setter II 72 heures après ce WhatsApp. Si le prospect répond avant cette relance, la relance est annulée "
+        "et la conversation passe à Setter I pour réponse immédiate."
+    ),
+    (
+        "Lead ou Préinscription reçu de SchoolDrive",
+        "Le WhatsApp automatique est encore queued, absent ou non envoyé.",
+    ): (
+        "Lorsqu'un Lead ou une Préinscription arrive mais que le premier WhatsApp automatique n'est pas encore confirmé comme envoyé, "
+        "Sales Cockpit affiche le dossier et l'historique disponible, mais ne crée pas encore de relance. L'équipe n'a rien à faire automatiquement. "
+        "Dès que SchoolDrive confirme qu'un WhatsApp a bien été envoyé, Sales Cockpit pourra programmer la suite."
+    ),
+    (
+        "Flux Lead sans réponse initiale",
+        "Les 72h après le WhatsApp automatique sont écoulées et le prospect n'a pas répondu.",
+    ): (
+        "Lorsqu'un prospect n'a toujours pas répondu 72 heures après le premier WhatsApp automatique, la relance devient une tâche à traiter pour Setter II. "
+        "Setter II doit relire la conversation, vérifier le modèle recommandé, puis envoyer le modèle adapté. Après l'envoi, Sales Cockpit prépare l'étape suivante du même flux, "
+        "ou termine la conversation si c'était la dernière relance prévue."
+    ),
+    (
+        "Toute conversation active avec relance future",
+        "Le prospect écrit un message WhatsApp entrant.",
+    ): (
+        "Lorsqu'un prospect écrit alors qu'une relance était prévue plus tard, sa réponse devient prioritaire. Sales Cockpit annule les relances futures concernées, "
+        "remonte la conversation dans la file de Setter I et crée une action urgente Répondre au message. Après la réponse de Setter I, le système crée soit une relance pour Setter II, "
+        "soit un appel planifié si Setter I a fixé un rendez-vous."
+    ),
+    (
+        "Conversation avec appel setting ou closing déjà planifié",
+        "Le prospect écrit avant l'appel.",
+    ): (
+        "Lorsqu'un prospect écrit alors qu'un appel setting ou closing est déjà prévu, Sales Cockpit demande à Setter I de lire et répondre au message, mais ne supprime pas l'appel. "
+        "L'appel reste planifié, sauf si l'utilisateur décide explicitement de le modifier. Une fois la réponse envoyée, l'appel redevient la prochaine action visible."
+    ),
+    (
+        "Prospect marqué Ne plus contacter",
+        "Le prospect réécrit malgré le blocage.",
+    ): (
+        "Lorsqu'un prospect marqué Ne plus contacter écrit à nouveau, Sales Cockpit ne relance pas automatiquement et bloque l'envoi tant que le statut n'est pas levé. "
+        "Setter I doit lire le message et choisir entre maintenir le blocage ou lever le statut pour répondre. Si le blocage est maintenu, il n'y a pas de suite commerciale. "
+        "S'il est levé, une action Répondre au message est créée."
+    ),
+    (
+        "Message entrant d'un numéro inconnu",
+        "Aucune fiche SchoolDrive/Cockpit ne correspond au numéro.",
+    ): (
+        "Lorsqu'un message WhatsApp arrive depuis un numéro que Sales Cockpit ne connaît pas, le système crée une fiche temporaire Inconnu(e) à identifier. "
+        "L'équipe peut répondre pour ne pas perdre le prospect, puis renseigner provisoirement le prénom, le nom, le cours et une note dans Statuts. "
+        "Cette fiche reste à vérifier dans SchoolDrive."
+    ),
+    (
+        "Message entrant avec plusieurs fiches possibles",
+        "Plusieurs leads ou préinscriptions correspondent au même numéro.",
+    ): (
+        "Lorsqu'un même numéro peut correspondre à plusieurs fiches, Sales Cockpit ne choisit pas automatiquement pour éviter une mauvaise attribution. "
+        "Il crée une fiche temporaire à identifier. L'équipe peut répondre si nécessaire et noter l'identité probable, mais la fusion définitive avec la bonne fiche SchoolDrive reste une étape V2."
+    ),
+    (
+        "Action Répondre ouverte",
+        "Setter I répond sans fixer de rendez-vous et sans appliquer de statut terminal.",
+    ): (
+        "Lorsque Setter I répond au prospect sans fixer d'appel et sans décider que le prospect est non pertinent ou à ne plus contacter, Sales Cockpit considère que la conversation reste ouverte. "
+        "Le message envoyé clôt l'action Répondre, puis le système prévoit une relance pour Setter II 72 heures après ce dernier message sortant."
+    ),
+    (
+        "Action Répondre ouverte",
+        "Setter I fixe un appel setting.",
+    ): (
+        "Lorsque Setter I obtient un rendez-vous de setting, il choisit l'option correspondante, indique le responsable et la date de l'appel. "
+        "Le message de confirmation envoyé au prospect clôt l'action Répondre. Sales Cockpit crée ensuite une action future pour documenter l'appel setting au moment du rendez-vous."
+    ),
+    (
+        "Action Répondre ouverte",
+        "Setter I fixe directement un appel closing.",
+    ): (
+        "Lorsque Setter I fixe directement un appel de closing, il choisit le closer et l'heure du rendez-vous. Le message de confirmation clôt l'action Répondre. "
+        "Sales Cockpit passe alors le dossier en phase closing et crée une action future pour documenter l'appel closing."
+    ),
+    (
+        "Action Répondre ou appel en cours de traitement",
+        "L'utilisateur qualifie le prospect Non pertinent.",
+    ): (
+        "Lorsqu'un utilisateur décide qu'un prospect n'est pas un client potentiel, il le qualifie Non pertinent. Sales Cockpit clôt alors la conversation et annule les actions ouvertes ou futures. "
+        "Il ne doit plus y avoir de relance, sauf si un utilisateur réactive manuellement la conversation plus tard."
+    ),
+    (
+        "Action Répondre ou appel en cours de traitement",
+        "Le prospect demande à ne plus être contacté.",
+    ): (
+        "Lorsqu'un prospect demande à ne plus être contacté, l'utilisateur doit sélectionner le statut Ne plus contacter. Sales Cockpit clôt la conversation, annule les relances et bloque les futurs envois. "
+        "Si le prospect réécrit lui-même plus tard, le système créera une revue humaine au lieu de reprendre automatiquement les relances."
+    ),
+    (
+        "Relance Setter II à traiter",
+        "La fenêtre WhatsApp est ouverte.",
+    ): (
+        "Lorsqu'une relance est à faire et que le prospect a écrit dans les dernières 24 heures, la fenêtre WhatsApp est ouverte. Setter II peut donc envoyer un message libre ou utiliser un modèle. "
+        "Après l'envoi, Sales Cockpit clôt cette relance et prépare la suite du flux si une autre étape existe."
+    ),
+    (
+        "Relance Setter II à traiter",
+        "La fenêtre WhatsApp est fermée et un template approuvé est disponible.",
+    ): (
+        "Lorsqu'une relance doit être envoyée mais que le prospect n'a pas écrit dans les dernières 24 heures, Setter II ne peut pas écrire librement. "
+        "Il doit utiliser un modèle WhatsApp approuvé. Si un modèle recommandé existe pour ce cours et cette étape, Sales Cockpit le pré-sélectionne. "
+        "L'envoi du modèle clôt la relance et déclenche la suite prévue du flux."
+    ),
+    (
+        "Relance Setter II à traiter",
+        "La fenêtre WhatsApp est fermée et aucun template adapté n'existe.",
+    ): (
+        "Lorsqu'une relance doit partir alors que la fenêtre WhatsApp est fermée, mais qu'aucun modèle adapté n'existe, Setter II ne doit pas improviser. "
+        "Sales Cockpit bloque la relance et permet de créer une demande de modèle avec le contexte. La relance restera bloquée jusqu'à ce qu'un modèle approuvé soit disponible."
+    ),
+    (
+        "Demande de modèle ouverte",
+        "Un admin crée, soumet ou synchronise le template approuvé.",
+    ): (
+        "Lorsqu'une demande de modèle est ouverte, un admin doit créer, soumettre ou synchroniser le modèle dans Twilio. "
+        "Tant que le modèle n'est pas approuvé pour WhatsApp, la relance concernée reste bloquée. Dès qu'un modèle approuvé est lié à la demande, Setter II peut reprendre la relance."
+    ),
+    (
+        "Flux de relance en cours",
+        "Une relance intermédiaire est envoyée.",
+    ): (
+        "Lorsqu'une relance intermédiaire est envoyée dans un flux, Sales Cockpit considère que cette étape est terminée. "
+        "Le système garde le prospect dans le même flux et programme la prochaine relance à la date prévue, sauf si le prospect répond ou si une règle prioritaire interrompt le flux."
+    ),
+    (
+        "Dernière étape d'un flux de relance",
+        "La dernière relance est envoyée et le prospect ne répond pas.",
+    ): (
+        "Lorsqu'on arrive à la dernière relance prévue et que le prospect ne répond toujours pas, Sales Cockpit arrête le suivi automatique. "
+        "La conversation est marquée terminée avec le motif Suivi terminé sans réponse. Si le prospect réécrit plus tard, la conversation pourra se réactiver."
+    ),
+    (
+        "Lead ou Préinscription non signé avec date de cours connue",
+        "Une relance liée au début du cours tombe dans les 24h d'une relance lead/préinscription.",
+    ): (
+        "Lorsqu'une relance liée au début du cours doit partir dans les 24 heures d'une relance classique, la relance liée au cours est prioritaire. "
+        "Sales Cockpit annule la relance lead ou préinscription concurrente pour éviter deux messages trop rapprochés. Setter II suit alors le flux Début de cours."
+    ),
+    (
+        "Appel setting ou closing déjà planifié",
+        "Une relance liée au début du cours devient éligible.",
+    ): (
+        "Lorsqu'un appel setting ou closing est déjà planifié, une relance liée au début du cours ne doit pas remplacer cet appel. "
+        "Sales Cockpit conserve l'appel comme action principale. Le responsable doit réaliser ou documenter l'appel au moment prévu."
+    ),
+    (
+        "Catégorie de cours active sans date SchoolDrive explicite",
+        "Un Lead arrive avec seulement une catégorie de cours.",
+    ): (
+        "Lorsqu'un Lead arrive avec une catégorie de cours mais sans session précise, Sales Cockpit utilise la session de référence définie dans Pilotage pour cette catégorie. "
+        "Cette date sert à calculer les relances liées au début du cours. L'admin doit donc garder ces sessions de référence à jour."
+    ),
+    (
+        "Catégorie de cours active",
+        "La session de référence est déjà passée.",
+    ): (
+        "Lorsqu'une session de référence est déjà passée, Sales Cockpit ne doit pas lancer de relances Début de cours sur cette ancienne session. "
+        "L'admin doit sélectionner la prochaine session pertinente. En V1, cette correction s'applique seulement aux nouvelles actions créées après modification."
+    ),
+    (
+        "Catégorie de cours non activée dans Pilotage",
+        "SchoolDrive envoie un lead ou une préinscription pour cette catégorie.",
+    ): (
+        "Lorsqu'un prospect arrive pour une catégorie de cours qui n'est pas encore pilotée dans Sales Cockpit, le système conserve la conversation mais ne lance pas de flux de relance structuré. "
+        "Setter I doit traiter le cas manuellement et décider de la prochaine action. L'admin pourra activer cette catégorie plus tard."
+    ),
+    (
+        "Appel setting planifié",
+        "Le moment de l'appel arrive.",
+    ): (
+        "Lorsqu'un appel setting arrive à son heure prévue, il devient une tâche à traiter pour Setter I. "
+        "Setter I doit appeler le prospect, puis documenter le résultat avec une mini-note obligatoire. Cette note détermine la suite : closing, rappel d'appel, relance Setter II ou clôture."
+    ),
+    (
+        "Appel setting à documenter",
+        "L'appel est réussi et le prospect doit passer au closing.",
+    ): (
+        "Lorsqu'un appel setting a eu lieu et que le prospect doit passer au closing, Setter I documente l'appel, choisit le closer et indique la date du rendez-vous de closing. "
+        "Sales Cockpit crée alors une action future pour documenter l'appel closing et affiche la note dans la conversation."
+    ),
+    (
+        "Appel setting à documenter",
+        "Le prospect n'est pas joint.",
+    ): (
+        "Lorsque Setter I n'arrive pas à joindre le prospect pour l'appel setting, il doit documenter la tentative. "
+        "Sales Cockpit prévoit alors des rappels d'appel, d'abord environ 2 heures ouvrées plus tard, puis environ 24 heures ouvrées plus tard. "
+        "Si les rappels sont épuisés, le dossier repasse sur une relance Setter II."
+    ),
+    (
+        "Appel setting à documenter",
+        "Le prospect est joint mais aucune suite claire n'est obtenue.",
+    ): (
+        "Lorsque l'appel setting a eu lieu mais qu'aucune suite claire n'est obtenue, Setter I documente ce qui s'est dit. "
+        "Sales Cockpit clôt l'action d'appel et prévoit une relance pour Setter II 72 heures plus tard."
+    ),
+    (
+        "Appel setting à documenter",
+        "Le prospect est non pertinent ou demande à ne plus être contacté.",
+    ): (
+        "Lorsque l'appel setting montre que le prospect n'est pas pertinent ou qu'il demande à ne plus être contacté, Setter I doit le noter clairement. "
+        "Sales Cockpit clôt alors la conversation et annule toutes les actions futures."
+    ),
+    (
+        "Appel closing planifié",
+        "Le moment de l'appel arrive.",
+    ): (
+        "Lorsqu'un appel closing arrive à son heure prévue, il devient une tâche à traiter pour le closer. "
+        "Le closer doit appeler le prospect puis documenter le résultat avec une mini-note obligatoire. Cette note décide de la suite : signé, va signer, indécis, non joint ou non pertinent."
+    ),
+    (
+        "Appel closing à documenter",
+        "Le prospect signe.",
+    ): (
+        "Lorsqu'un prospect signe après l'appel closing, le closer sélectionne A signé et ajoute la note nécessaire. "
+        "Sales Cockpit marque la vente comme gagnée, clôt la conversation et annule toutes les relances futures."
+    ),
+    (
+        "Appel closing à documenter",
+        "Le closer estime que le prospect va signer.",
+    ): (
+        "Lorsque le closer estime que le prospect va signer mais que la signature n'est pas encore acquise, il choisit Va signer et documente le contexte. "
+        "Sales Cockpit lance alors le flux Va signer : Setter II devra relancer le prospect selon les étapes prévues."
+    ),
+    (
+        "Appel closing à documenter",
+        "Le prospect n'est pas joint.",
+    ): (
+        "Lorsque le closer n'arrive pas à joindre le prospect pour l'appel closing, il documente la tentative. "
+        "Sales Cockpit prévoit des rappels d'appel, puis une relance Setter II si les rappels ne permettent toujours pas d'obtenir une réponse."
+    ),
+    (
+        "Appel closing à documenter",
+        "Le prospect est joint mais aucune décision claire n'est obtenue.",
+    ): (
+        "Lorsque l'appel closing a eu lieu mais que le prospect ne prend pas de décision claire, le closer documente l'échange et choisit Indécis. "
+        "Sales Cockpit clôt l'action d'appel et prévoit une relance Setter II 72 heures plus tard."
+    ),
+    (
+        "Appel closing à documenter",
+        "Le prospect est non pertinent.",
+    ): (
+        "Lorsque le closer conclut que le prospect n'est pas pertinent, il doit l'indiquer et documenter la raison. "
+        "Sales Cockpit clôt alors la conversation et annule toutes les actions futures."
+    ),
+    (
+        "Conversation active",
+        "Un utilisateur clôt manuellement la conversation.",
+    ): (
+        "Lorsqu'un utilisateur veut clôturer manuellement une conversation active, il doit indiquer un motif et une note. "
+        "Cette action doit être utilisée seulement lorsqu'il n'y a réellement plus rien à faire. Sales Cockpit ferme alors les actions ouvertes et marque la conversation comme terminée."
+    ),
+    (
+        "Conversation terminée",
+        "Un utilisateur réactive la conversation.",
+    ): (
+        "Lorsqu'un utilisateur réactive une conversation terminée, il doit expliquer pourquoi et choisir immédiatement la prochaine action principale. "
+        "La conversation redevient active seulement si une suite claire est définie : répondre, relancer, appel setting ou appel closing."
+    ),
+    (
+        "SchoolDrive record existant dans le cockpit",
+        "SchoolDrive envoie un snapshot archivé.",
+    ): (
+        "Lorsque SchoolDrive indique qu'un Lead ou une Préinscription est archivé, Sales Cockpit aligne le dossier sur SchoolDrive. "
+        "La conversation est terminée et les actions ouvertes sont fermées, sauf si l'équipe décide de vérifier manuellement un archivage qui semble incohérent."
+    ),
+    (
+        "Webhook SchoolDrive",
+        "Snapshot duplicate ou plus ancien que le snapshot déjà accepté.",
+    ): (
+        "Lorsque SchoolDrive renvoie un événement déjà reçu ou une version plus ancienne d'un dossier, Sales Cockpit répond OK mais ignore cette donnée. "
+        "Cela évite de remplacer un état récent par une information ancienne. La conversation et les actions ne changent pas."
+    ),
+    (
+        "Prospect écrit hors horaires",
+        "Message entrant en dehors des horaires entreprise ou utilisateur.",
+    ): (
+        "Lorsqu'un prospect écrit en dehors des horaires, la règle cible est de préparer la réponse pour le prochain créneau ouvré et, si on le valide, d'envoyer un accusé de réception automatique. "
+        "En V1, cette automatisation reste partielle : l'équipe doit encore valider les textes, les week-ends, les jours fériés et les règles de backup."
+    ),
+    (
+        "Action attribuée à une personne absente",
+        "Le responsable est indisponible.",
+    ): (
+        "Lorsqu'une action appartient à une personne absente, la règle cible est de transférer l'action au backup prévu sans changer la nature du travail à faire. "
+        "Si aucun backup n'est défini, l'action attend. Cette bascule automatique reste à finaliser après validation des horaires et absences."
+    ),
+}
+
+
+OPERATING_RULE_NATURAL_LANGUAGE = {
+    "Origine formulaire": (
+        "Le point de départ est toujours un formulaire rempli sur le site. SchoolDrive crée ensuite le Lead ou la Préinscription, puis Sales Cockpit reçoit les données depuis SchoolDrive. "
+        "SchoolDrive reste la source de vérité : Sales Cockpit organise le travail commercial, mais ne remplace pas la fiche SchoolDrive."
+    ),
+    "Lead vs Préinscription": (
+        "Un Lead vient généralement des campagnes payantes, tandis qu'une Préinscription vient plutôt du trafic naturel et peut déjà être liée à une session précise. "
+        "Sales Cockpit affiche donc soit une catégorie de cours, soit un cours/session plus précis, puis applique les mêmes règles de suivi une fois la session de référence connue."
+    ),
+    "Fenêtre WhatsApp": (
+        "La fenêtre WhatsApp s'ouvre seulement quand le prospect écrit. Elle reste ouverte 24 heures après son dernier message entrant. "
+        "Pendant cette période, l'équipe peut répondre librement ; après cette période, il faut utiliser un modèle WhatsApp approuvé."
+    ),
+    "Premier template automatique": (
+        "Le premier WhatsApp est envoyé automatiquement par SchoolDrive/Twilio après la création du Lead ou de la Préinscription. "
+        "Ce message sortant n'ouvre pas la fenêtre WhatsApp. La fenêtre s'ouvre uniquement si le prospect répond."
+    ),
+    "Relances hors fenêtre": (
+        "Quand la fenêtre WhatsApp est fermée, Setter II ne doit pas écrire un message libre. Il doit utiliser un modèle approuvé par WhatsApp. "
+        "Si aucun modèle adapté n'existe, il faut créer une demande de modèle plutôt que contourner la règle."
+    ),
+    "Délai minimum WhatsApp": (
+        "Sales Cockpit doit éviter d'envoyer deux relances WhatsApp trop rapprochées. La règle de base est de laisser au moins 24 heures entre deux relances sortantes. "
+        "Si deux relances se chevauchent, la plus prioritaire est gardée et l'autre est annulée ou reportée selon la règle métier."
+    ),
+    "Conflit lead vs cours": (
+        "Les relances liées au début d'un cours sont prioritaires sur les relances classiques calculées depuis l'arrivée du lead. "
+        "Si une relance cours doit partir dans les 24 heures d'une relance lead/préinscription, la relance classique est annulée. Un appel setting ou closing déjà planifié reste toutefois prioritaire."
+    ),
+    "Message entrant pendant appel planifié": (
+        "Si un prospect écrit alors qu'un appel est déjà prévu, il faut lui répondre sans perdre le rendez-vous. "
+        "Sales Cockpit crée donc une réponse urgente pour Setter I, mais conserve l'appel planifié. L'appel ne change que si l'utilisateur le modifie volontairement."
+    ),
+    "Non pertinent": (
+        "La qualification Non pertinent signifie que le prospect n'est pas un client potentiel utile. "
+        "Quand cette qualification est appliquée, Sales Cockpit arrête les relances, clôt la conversation et ne crée plus de suite commerciale."
+    ),
+    "Ne plus contacter": (
+        "Le statut Ne plus contacter sert quand le prospect demande à ne plus être dérangé. "
+        "Il est séparé de la qualification commerciale et bloque strictement les relances. Si le prospect réécrit lui-même, une revue humaine est créée avant toute réponse."
+    ),
+    "Automatisation V1": (
+        "En V1, Sales Cockpit prépare les tâches et recommande les modèles, mais n'envoie pas automatiquement les relances à la place de l'équipe. "
+        "Setter II reste responsable de relire, vérifier et envoyer. L'automatisation complète est gardée pour une version ultérieure."
+    ),
+}
+
+
+WORKFLOW_TRANSITION_NATURAL_LANGUAGE = {
+    (
+        "Aucune",
+        "web_form_submitted_then_schooldrive_lead_created",
+        "SchoolDrive crée un Lead ou une Préinscription et envoie le WhatsApp automatique initial",
+    ): (
+        "Quand un nouveau prospect arrive depuis le site, SchoolDrive crée le dossier et envoie le premier WhatsApp automatique. "
+        "Sales Cockpit crée la conversation et prévoit une relance Setter II 72 heures plus tard. Si le prospect répond avant cette échéance, cette relance est annulée."
+    ),
+    (
+        "follow_up",
+        "initial_message_no_reply_after_72h",
+        "Le prospect n'a pas répondu au WhatsApp automatique initial",
+    ): (
+        "Si 72 heures passent après le premier WhatsApp automatique sans réponse du prospect, la tâche de relance devient à traiter immédiatement pour Setter II. "
+        "Setter II doit relire la conversation, choisir un modèle approuvé ou demander un nouveau modèle si nécessaire."
+    ),
+    (
+        "Toute action non terminale",
+        "prospect_replied",
+        "Dernier message entrant non répondu et contact autorisé",
+    ): (
+        "Quand un prospect écrit et que l'équipe a encore le droit de lui répondre, Sales Cockpit donne la priorité à cette réponse. "
+        "Les relances futures sont annulées, la conversation remonte chez Setter I, et un signal d'urgence indique que le client attend. Un appel déjà planifié reste conservé."
+    ),
+    (
+        "Toute action non terminale",
+        "do_not_contact_prospect_replied",
+        "Le prospect est Ne plus contacter mais réécrit",
+    ): (
+        "Quand un prospect marqué Ne plus contacter réécrit, Sales Cockpit ne reprend pas automatiquement les relances. "
+        "Il crée une revue de contact pour Setter I. Tant que Setter I n'a pas levé le blocage, aucun message ne doit être envoyé."
+    ),
+    (
+        "reply",
+        "outbound_message_sent",
+        "Réponse envoyée sans RDV et aucun appel déjà planifié",
+    ): (
+        "Quand Setter I répond au prospect sans fixer de rendez-vous, la réponse clôt l'action immédiate. "
+        "Sales Cockpit prévoit ensuite une relance Setter II 72 heures après ce message, car la conversation reste ouverte mais sans prochaine étape humaine fixée."
+    ),
+    (
+        "reply",
+        "outbound_message_sent",
+        "Réponse envoyée pendant qu'un appel est déjà planifié",
+    ): (
+        "Quand Setter I répond à un message alors qu'un appel est déjà prévu, Sales Cockpit clôt seulement l'interruption liée au message entrant. "
+        "Il ne crée pas de relance parallèle. L'appel planifié redevient la prochaine action."
+    ),
+    (
+        "reply",
+        "setting_appointment_booked",
+        "RDV setting fixé",
+    ): (
+        "Quand Setter I fixe un appel setting, Sales Cockpit annule la relance de sécurité et crée une action future pour documenter cet appel. "
+        "Cette action sera due à la date et à l'heure du rendez-vous."
+    ),
+    (
+        "reply",
+        "written_exchange_terminal",
+        "Prospect non pertinent ou Ne plus contacter",
+    ): (
+        "Quand l'échange écrit montre que le prospect n'est pas pertinent ou qu'il ne veut plus être contacté, Sales Cockpit arrête le suivi. "
+        "Aucune nouvelle action n'est créée et les relances sont stoppées."
+    ),
+    (
+        "follow_up",
+        "follow_up_due",
+        "Fenêtre WhatsApp ouverte",
+    ): (
+        "Quand une relance arrive à échéance alors que la fenêtre WhatsApp est ouverte, Setter II peut envoyer un message libre ou un modèle. "
+        "Après l'envoi, Sales Cockpit avance selon le résultat de cette relance et respecte le délai minimum entre messages."
+    ),
+    (
+        "follow_up",
+        "follow_up_due",
+        "Fenêtre WhatsApp fermée, template disponible",
+    ): (
+        "Quand une relance arrive à échéance alors que la fenêtre WhatsApp est fermée, Setter II doit utiliser un modèle approuvé. "
+        "Si un modèle recommandé existe, il est proposé. Après l'envoi, Sales Cockpit avance dans le flux prévu."
+    ),
+    (
+        "follow_up",
+        "follow_up_due_template_missing",
+        "Fenêtre fermée et aucun template adapté",
+    ): (
+        "Quand une relance doit partir avec fenêtre fermée mais sans modèle adapté, Sales Cockpit bloque l'action au lieu de laisser l'équipe improviser. "
+        "Une demande de modèle doit être créée et liée à cette relance."
+    ),
+    (
+        "template_request",
+        "template_submitted",
+        "Nouveau template soumis à validation",
+    ): (
+        "Quand un nouveau modèle est soumis à validation WhatsApp, la relance concernée reste bloquée. "
+        "Setter II ne peut reprendre la relance qu'après approbation du modèle."
+    ),
+    (
+        "template_request",
+        "template_approved",
+        "Relance débloquée",
+    ): (
+        "Quand le modèle demandé est approuvé, Sales Cockpit débloque la relance et la remet à traiter pour Setter II. "
+        "Le modèle approuvé devient alors utilisable pour envoyer le message."
+    ),
+    (
+        "follow_up",
+        "outbound_template_sent",
+        "Relance envoyée, flux non terminé",
+    ): (
+        "Quand Setter II envoie une relance qui n'est pas la dernière du flux, Sales Cockpit clôt cette étape et programme la prochaine relance prévue. "
+        "Le prospect reste dans le même flux jusqu'à réponse, statut terminal, appel fixé ou fin du flux."
+    ),
+    (
+        "follow_up",
+        "outbound_template_sent_last_step",
+        "Dernière relance du flux envoyée sans réponse",
+    ): (
+        "Quand la dernière relance prévue est envoyée et que le prospect ne répond pas, Sales Cockpit termine le suivi. "
+        "La conversation est marquée terminée pour suivi terminé sans réponse, et aucune nouvelle action n'est créée."
+    ),
+    (
+        "setting_call",
+        "setting_call_completed",
+        "À closer",
+    ): (
+        "Quand Setter I documente un appel setting réussi et décide que le prospect doit passer au closing, Sales Cockpit crée un appel closing pour le closer. "
+        "La note de setting et la qualification setter restent visibles pour préparer le closing."
+    ),
+    (
+        "setting_call",
+        "setting_call_not_reached",
+        "Prospect non joint",
+    ): (
+        "Quand Setter I ne joint pas le prospect lors d'un appel setting, il documente la tentative. "
+        "Sales Cockpit prévoit des rappels d'appel, puis bascule vers une relance Setter II si les rappels ne suffisent pas."
+    ),
+    (
+        "setting_call",
+        "setting_call_completed_no_next_step",
+        "Prospect joint mais pas prêt ou pas de suite claire",
+    ): (
+        "Quand l'appel setting a eu lieu mais que le prospect n'est pas prêt ou qu'aucune suite claire n'est fixée, Setter I documente l'échange. "
+        "Sales Cockpit prévoit ensuite une relance Setter II 72 heures plus tard."
+    ),
+    (
+        "setting_call",
+        "setting_call_terminal",
+        "Non pertinent ou Ne plus contacter",
+    ): (
+        "Quand l'appel setting aboutit à Non pertinent ou Ne plus contacter, Sales Cockpit arrête le suivi. "
+        "La conversation est terminée, les relances sont stoppées, et la note d'appel sert de trace."
+    ),
+    (
+        "closing_call",
+        "closing_call_completed",
+        "Signé",
+    ): (
+        "Quand le closer documente une signature, Sales Cockpit marque la vente comme gagnée. "
+        "La conversation est terminée et aucune relance future n'est créée."
+    ),
+    (
+        "closing_call",
+        "closing_call_completed",
+        "Va signer",
+    ): (
+        "Quand le closer estime que le prospect va signer mais que la vente n'est pas encore finalisée, Sales Cockpit lance le flux Va signer. "
+        "Setter II reçoit une relance 72 heures plus tard, puis les étapes prévues du flux."
+    ),
+    (
+        "closing_call",
+        "closing_call_not_reached",
+        "Prospect non joint",
+    ): (
+        "Quand le closer ne joint pas le prospect, il documente la tentative. "
+        "Sales Cockpit prévoit des rappels d'appel closing, puis une relance Setter II si les rappels ne donnent rien."
+    ),
+    (
+        "closing_call",
+        "closing_call_completed_undecided",
+        "Prospect joint mais pas de décision claire",
+    ): (
+        "Quand l'appel closing a eu lieu mais que le prospect ne décide pas, le closer documente l'échange. "
+        "Sales Cockpit lance ensuite une relance Setter II 72 heures plus tard."
+    ),
+    (
+        "closing_call",
+        "closing_call_terminal",
+        "Non pertinent",
+    ): (
+        "Quand le closer qualifie le prospect comme non pertinent, Sales Cockpit termine la conversation et stoppe les relances. "
+        "La note de closing sert de justification."
+    ),
+    (
+        "follow_up lead-relative, sauf appel planifié",
+        "course_start_approaching",
+        "Lead non signé, date de cours connue",
+    ): (
+        "Quand une date de début de cours approche pour un prospect non signé, Sales Cockpit peut créer une relance liée au cours. "
+        "Cette relance annule une relance classique trop proche, mais elle ne remplace jamais un appel setting ou closing déjà planifié."
+    ),
+    (
+        "Toute action",
+        "terminal_status_applied",
+        "not_relevant, do_not_contact ou signed",
+    ): (
+        "Quand un statut terminal est appliqué, Sales Cockpit arrête le suivi commercial. "
+        "Non pertinent, Ne plus contacter et A signé ferment les relances et empêchent la création de nouvelles actions automatiques."
+    ),
+    (
+        "Toute action",
+        "conversation_resolved",
+        "Utilisateur clôture avec motif obligatoire",
+    ): (
+        "Quand un utilisateur clôture une conversation, il doit choisir un motif et ajouter une note si nécessaire. "
+        "Sales Cockpit ferme les actions ouvertes et garde l'historique de la clôture."
+    ),
+    (
+        "Aucune",
+        "conversation_reopened",
+        "Utilisateur rouvre",
+    ): (
+        "Quand une conversation terminée est réactivée, l'utilisateur doit immédiatement définir une prochaine action. "
+        "Sales Cockpit interdit qu'une conversation redevienne active sans savoir qui doit faire quoi et quand."
+    ),
+    (
+        "Toute action",
+        "business_hours_closed",
+        "Prospect écrit hors disponibilité",
+    ): (
+        "Quand un prospect écrit hors horaires, Sales Cockpit doit préparer une réponse pour le prochain créneau disponible ou le backup prévu. "
+        "Un accusé de réception automatique pourra être ajouté si les textes et règles d'horaires sont validés."
+    ),
+    (
+        "Toute action",
+        "assignee_unavailable",
+        "Responsable absent",
+    ): (
+        "Quand le responsable d'une action est absent, Sales Cockpit doit conserver la même action mais l'attribuer au backup prévu, si un backup existe. "
+        "Le transfert doit être historisé pour ne pas perdre la responsabilité."
+    ),
+}
 
 
 def pilotage_function_text(value):
