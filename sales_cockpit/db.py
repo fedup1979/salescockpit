@@ -636,6 +636,24 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
         END
         """
     )
+    conn.execute(
+        """
+        UPDATE sequence_steps
+        SET action_type = 'setting_call',
+            requires_template = 0
+        WHERE sequence_code = 'setting_call_not_reached'
+          AND step_index IN (1, 2)
+        """
+    )
+    conn.execute(
+        """
+        UPDATE sequence_steps
+        SET action_type = 'closing_call',
+            requires_template = 0
+        WHERE sequence_code = 'closing_call_not_reached'
+          AND step_index IN (1, 2)
+        """
+    )
     _backfill_sequence_step_offsets(conn)
 
 
