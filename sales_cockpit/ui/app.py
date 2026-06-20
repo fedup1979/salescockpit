@@ -102,15 +102,33 @@ REPLY_SEND_OUTCOME_LABELS = {
     "do_not_contact": "Ne plus contacter : clore et bloquer",
 }
 CALL_ACTION_TYPES = {"setting_call", "closing_call"}
-PILOTAGE_DEFAULT_CATEGORIES = ["APP", "AS", "FSM"]
+PILOTAGE_SUPPORTED_CATEGORIES = ["FSM", "APP", "AS"]
+PILOTAGE_SEQUENCE_ORDER = {
+    "lead_no_reply": 10,
+    "setter_no_next_step": 20,
+    "setting_call_not_reached": 30,
+    "post_call_undecided": 40,
+    "closing_call_not_reached": 50,
+    "closer_will_sign": 60,
+    "course_start": 70,
+}
+PILOTAGE_SEQUENCE_OWNER_LABELS = {
+    "lead_no_reply": "Setter II (Tanjona)",
+    "setter_no_next_step": "Setter II (Tanjona)",
+    "setting_call_not_reached": "Setter I (Mihary), puis Setter II (Tanjona)",
+    "post_call_undecided": "Setter II (Tanjona)",
+    "closing_call_not_reached": "Closer (Yasmine), puis Setter II (Tanjona)",
+    "closer_will_sign": "Setter II (Tanjona)",
+    "course_start": "Setter II (Tanjona)",
+}
 PILOTAGE_CONFLICT_RULES = [
     {
         "Situation": "Le prospect répond",
         "Règle": "La réponse entrante interrompt les relances futures et crée une action Répondre au message pour Mihary.",
     },
     {
-        "Situation": "Relance lead et relance cours au même moment",
-        "Règle": "La relance liée au début du cours gagne. La relance liée au cycle du lead est annulée.",
+        "Situation": "Relance lead/préinscription et relance cours proches",
+        "Règle": "Avant d'envoyer une relance lead/préinscription, le cockpit doit vérifier si une relance liée au cours est prévue dans les 24h. Si oui, la relance cours gagne et toute la séquence lead/préinscription restante est annulée.",
     },
     {
         "Situation": "Fenêtre WhatsApp fermée",
@@ -127,6 +145,14 @@ PILOTAGE_CONFLICT_RULES = [
     {
         "Situation": "Signature, non pertinent ou conversation close",
         "Règle": "Toutes les actions ouvertes ou futures liées à la conversation sont arrêtées.",
+    },
+    {
+        "Situation": "Conversation active ou clôturée",
+        "Règle": "Une conversation reste active tant qu'il existe une action à traiter maintenant ou une action en suspens prévue plus tard. Elle est clôturée quand il n'y a plus rien à faire : signature, non pertinent, ne plus contacter ou fin de tous les flux de relance.",
+    },
+    {
+        "Situation": "Session de référence déjà passée",
+        "Règle": "Si la session de référence est déjà commencée quand le lead ou la préinscription arrive, le flux lié au début du cours ne doit pas être lancé sur cette session. Il faut choisir ou configurer la prochaine session de référence.",
     },
 ]
 
@@ -2041,7 +2067,7 @@ def render_pilotage(user: dict) -> None:
 
 
 def render_pilotage_overview() -> None:
-    sequences = list_sequences()
+    sequences = sorted(list_sequences(), key=lambda item: pilotage_sequence_sort_key(item["code"]))
     mappings = list_sequence_template_mappings()
     default_sessions = list_course_default_sessions()
     real_templates = [item for item in list_templates() if is_real_twilio_template(item)]
@@ -2055,10 +2081,17 @@ def render_pilotage_overview() -> None:
     st.markdown("### Comment lire cette page")
     st.markdown(
         """
-        - **Sessions par défaut** : règle utilisée quand SchoolDrive envoie un Lead avec une catégorie, mais sans session précise.
+        Le réglage commercial se fait en deux temps.
+
+        1. **Définir les flux** : décider combien de messages existent dans chaque flux et à quel moment ils partent.
+        2. **Appliquer les flux aux cours** : pour chaque flux, chaque événement et chaque cours traité, choisir le template précis à envoyer.
+
+        Pour le moment, le système couvre uniquement **FSM**, **APP** et **AS**. Les autres cours devront être intégrés progressivement.
+
+        - **Sessions de référence** : règle utilisée quand SchoolDrive envoie un Lead avec une catégorie, mais sans session précise.
         - **Flux par scénario** : liste des événements prévus, avec le template recommandé et le message complet.
         - **Règles de conflit** : ce qui gagne quand deux flux se chevauchent ou quand le prospect répond.
-        - **Simulateur** : prévisualisation rapide de la timeline à partir d'un type de lead, d'une catégorie et d'une date de cours.
+        - **Simulateur** : prévisualisation rapide de la timeline une fois les sessions de référence définies.
 
         La donnée SchoolDrive réelle gagne toujours. Une session par défaut ne sert qu'à piloter les relances liées au cours quand le Lead n'a pas encore de session explicite.
         """
@@ -2067,10 +2100,11 @@ def render_pilotage_overview() -> None:
     st.markdown("### Flux normaux")
     overview_rows = [
         {
+            "Ordre": pilotage_sequence_rank(item["code"]),
             "Flux": item["label"],
             "Déclencheur": item["trigger"],
             "Timeline": item["timeline"],
-            "Responsable": item["owner"],
+            "Responsable": pilotage_sequence_owner(item),
             "Arrêt": item["stop_when"],
         }
         for item in sequences
@@ -2078,32 +2112,24 @@ def render_pilotage_overview() -> None:
     st.dataframe(overview_rows, hide_index=True, use_container_width=True, height=300)
 
     st.markdown("### Points à régler avec Laura")
-    missing = []
-    for step in list_sequence_steps():
-        has_mapping = any(
-            mapping["sequence_code"] == step["sequence_code"]
-            and int(mapping["sequence_step_index"]) == int(step["step_index"])
-            for mapping in mappings
-        )
-        if step.get("template_name") and not has_mapping:
-            missing.append(
-                {
-                    "Flux": label_sequence_code(step["sequence_code"]),
-                    "Étape": step["step_index"],
-                    "Quand": step["delay"],
-                    "À décider": "Choisir le template réel Twilio",
-                }
-            )
-    if missing:
-        st.dataframe(missing, hide_index=True, use_container_width=True, height=260)
+    st.caption(
+        "Chaque ligne représente une décision à prendre : flux × événement × cours. "
+        "Un template générique `Tous` peut dépanner, mais Laura doit valider le template exact pour FSM, APP et AS."
+    )
+    tuning_rows = build_pilotage_tuning_rows(mappings)
+    if tuning_rows:
+        st.dataframe(tuning_rows, hide_index=True, use_container_width=True, height=360)
     else:
         st.success("Toutes les étapes avec template disposent déjà d'une recommandation.")
 
 
 def render_pilotage_default_sessions(user: dict) -> None:
-    st.markdown("### Sessions par défaut par catégorie")
+    st.markdown("### Sessions de référence par catégorie")
     st.caption(
-        "Utilisées uniquement quand un Lead SchoolDrive arrive sans session précise. Si SchoolDrive fournit une vraie session ou une vraie date de début, elle gagne."
+        "Une session de référence sert à calculer les relances liées au début du cours quand un Lead arrive avec seulement une catégorie, par exemple APP, mais sans session précise. Si SchoolDrive fournit une vraie session ou une vraie date de début, elle gagne."
+    )
+    st.info(
+        "Pour le moment, configure au minimum FSM, APP et AS. Le lien SchoolDrive est facultatif : il sert uniquement à ouvrir rapidement la fiche de la session de référence."
     )
     sessions = list_course_default_sessions(active_only=False)
     active_sessions = [item for item in sessions if item.get("active")]
@@ -2121,9 +2147,16 @@ def render_pilotage_default_sessions(user: dict) -> None:
         ]
         st.dataframe(rows, hide_index=True, use_container_width=True, height=260)
     else:
-        st.info("Aucune session par défaut configurée. Ajoute au minimum APP, AS et FSM avant le réglage fin des flux cours.")
+        st.info("Aucune session de référence configurée. Ajoute au minimum FSM, APP et AS avant le réglage fin des flux cours.")
 
-    category_options = sorted(set(PILOTAGE_DEFAULT_CATEGORIES + [item["course_category"] for item in active_sessions]))
+    missing_categories = [
+        category for category in PILOTAGE_SUPPORTED_CATEGORIES
+        if category not in {item["course_category"] for item in active_sessions}
+    ]
+    if missing_categories:
+        st.warning(f"Sessions de référence manquantes : {', '.join(missing_categories)}.")
+
+    category_options = sorted(set(PILOTAGE_SUPPORTED_CATEGORIES + [item["course_category"] for item in active_sessions]))
     with st.form("course_default_session_form"):
         edit_choice = st.selectbox(
             "Catégorie",
@@ -2139,21 +2172,24 @@ def render_pilotage_default_sessions(user: dict) -> None:
             None,
         )
         course_name = st.text_input(
-            "Session ou cours par défaut",
+            "Session de référence",
             value=(current or {}).get("default_course_name", ""),
             placeholder="Ex. APP VISIO E26",
+            help="La session utilisée par défaut pour planifier les relances liées au début du cours si SchoolDrive ne fournit pas de session précise.",
         )
         session_name = st.text_input(
-            "Nom session, optionnel",
+            "Libellé complémentaire, optionnel",
             value=(current or {}).get("default_session_name") or "",
+            help="Champ libre si tu veux préciser un campus, une volée ou un libellé interne. Il n'est pas nécessaire si le nom de la session suffit.",
         )
         start_date = st.date_input(
-            "Date de début",
+            "Date de début de référence",
             value=parse_iso_date_or_today((current or {}).get("default_start_date")),
         )
         schooldrive_url = st.text_input(
-            "Lien SchoolDrive, optionnel",
+            "Lien SchoolDrive de la session, optionnel",
             value=(current or {}).get("schooldrive_url") or "",
+            help="Facultatif. Sert uniquement de raccourci humain vers la session SchoolDrive de référence.",
         )
         note = st.text_area(
             "Note",
@@ -2194,30 +2230,23 @@ def render_pilotage_default_sessions(user: dict) -> None:
 
 def render_pilotage_scenario_tables() -> None:
     st.markdown("### Flux par scénario")
-    st.caption("Chaque étape montre le template recommandé, son SID Twilio et le message complet.")
+    st.caption(
+        "Chaque étape montre le template recommandé, son SID Twilio et le message complet. "
+        "Lead et Préinscription sont traités ensemble dès qu'une session de référence est connue."
+    )
     categories = pilotage_categories()
     sequences = list_sequences()
-    col_a, col_b, col_c = st.columns([0.8, 0.8, 1.2])
+    col_a, col_b = st.columns([0.8, 1.2])
     with col_a:
-        lead_type = st.selectbox(
-            "Type",
-            ["lead", "presubscription", "all"],
-            format_func=lambda value: {
-                "lead": "Lead",
-                "presubscription": "Préinscription",
-                "all": "Tous",
-            }[value],
-        )
-    with col_b:
         category = st.selectbox("Catégorie", categories)
-    with col_c:
+    with col_b:
         sequence_code = st.selectbox(
             "Flux",
-            [item["code"] for item in sequences],
+            [item["code"] for item in sorted(sequences, key=lambda item: pilotage_sequence_sort_key(item["code"]))],
             format_func=label_sequence_code,
         )
 
-    render_sequence_timeline(sequence_code, lead_type, category)
+    render_sequence_timeline(sequence_code, "all", category)
 
 
 def render_pilotage_conflict_rules() -> None:
@@ -2246,31 +2275,38 @@ def render_pilotage_simulator() -> None:
     st.markdown("### Simulateur de flux")
     st.caption("Prévisualisation simple. Le simulateur ne crée aucune tâche et n'envoie aucun message.")
     default_sessions = {item["course_category"]: item for item in list_course_default_sessions()}
-    categories = pilotage_categories()
-    col_a, col_b, col_c = st.columns(3)
-    with col_a:
-        lead_type = st.selectbox(
-            "Type de dossier",
-            ["lead", "presubscription"],
-            format_func=lambda value: "Lead" if value == "lead" else "Préinscription",
-            key="pilotage_sim_lead_type",
+    missing = [
+        category for category in PILOTAGE_SUPPORTED_CATEGORIES
+        if category not in default_sessions
+    ]
+    if missing:
+        st.warning(
+            "Définis d'abord les sessions de référence pour tous les cours traités : "
+            f"{', '.join(missing)}. Le simulateur sera fiable seulement quand FSM, APP et AS sont configurés."
         )
-    with col_b:
+        return
+
+    categories = pilotage_categories()
+    col_a, col_b = st.columns(2)
+    with col_a:
         category = st.selectbox("Catégorie", categories, key="pilotage_sim_category")
-    with col_c:
+    with col_b:
         selected_session = default_sessions.get(category)
         default_date = parse_iso_date_or_today((selected_session or {}).get("default_start_date"))
         start_date = st.date_input("Date de début utilisée", value=default_date, key="pilotage_sim_start")
 
-    if lead_type == "lead" and selected_session:
+    if selected_session:
         st.info(
-            f"Pour un Lead {category} sans session SchoolDrive, le simulateur utilise : "
-            f"{selected_session['default_course_name']} ({selected_session['default_start_date']})."
+            f"Pour {category}, le simulateur utilise la session de référence : "
+            f"{selected_session['default_course_name']} ({selected_session['default_start_date']}). "
+            "Lead et Préinscription suivent ensuite les mêmes flux de relance."
         )
-    elif lead_type == "lead":
-        st.warning(f"Aucune session par défaut n'est configurée pour {category}. Les relances liées au cours ne peuvent pas être calculées.")
+    if start_date < utc_now().date():
+        st.warning(
+            "Cette date de début est déjà passée. Le flux lié au début du cours ne devrait pas être lancé sur cette session ; configure plutôt la prochaine session de référence."
+        )
 
-    selected_sequences = ["lead_no_reply", "setter_no_next_step", "closer_will_sign", "course_start"]
+    selected_sequences = ["lead_no_reply", "setter_no_next_step", "post_call_undecided", "closer_will_sign", "course_start"]
     for code in selected_sequences:
         st.markdown(f"#### {label_sequence_code(code)}")
         rows = build_simulated_timeline(code, start_date)
@@ -2329,6 +2365,73 @@ def render_sequence_timeline(sequence_code: str, lead_type: str, category: str) 
                 st.warning("Aucun template n'est encore associé à cette étape.")
 
 
+def build_pilotage_tuning_rows(mappings: list[dict]) -> list[dict]:
+    rows = []
+    steps = [
+        step for step in list_sequence_steps()
+        if step.get("template_name")
+    ]
+    steps = sorted(
+        steps,
+        key=lambda step: (
+            pilotage_sequence_sort_key(step["sequence_code"]),
+            int(step["step_index"]),
+        ),
+    )
+    for step in steps:
+        for category in PILOTAGE_SUPPORTED_CATEGORIES:
+            exact = find_mapping_for_category(mappings, step, category, exact_only=True)
+            fallback = find_mapping_for_category(mappings, step, category, exact_only=False)
+            mapping = exact or fallback
+            if exact:
+                decision = "Défini pour ce cours"
+            elif fallback:
+                decision = "Fallback Tous à confirmer"
+            else:
+                decision = "À décider"
+            rows.append(
+                {
+                    "Flux": label_sequence_code(step["sequence_code"]),
+                    "Étape": step["step_index"],
+                    "Cours": category,
+                    "Quand": step["delay"],
+                    "Événement": step["meaning"],
+                    "Décision": decision,
+                    "Template": (mapping or {}).get("template_name") or "",
+                    "SID": (mapping or {}).get("twilio_content_sid") or "",
+                    "Statut": template_status_label({"status": (mapping or {}).get("template_status")}) if mapping else "",
+                }
+            )
+    return rows
+
+
+def find_mapping_for_category(
+    mappings: list[dict],
+    step: dict,
+    category: str,
+    exact_only: bool,
+) -> dict | None:
+    allowed_categories = {category} if exact_only else {category, "all"}
+    candidates = [
+        item for item in mappings
+        if item["sequence_code"] == step["sequence_code"]
+        and int(item["sequence_step_index"]) == int(step["step_index"])
+        and item["course_category"] in allowed_categories
+        and item["lead_type"] in {"all", "lead", "presubscription"}
+    ]
+    if not candidates:
+        return None
+    return sorted(
+        candidates,
+        key=lambda item: (
+            item["course_category"] == category,
+            item["lead_type"] == "all",
+            item.get("updated_at") or "",
+        ),
+        reverse=True,
+    )[0]
+
+
 def resolve_mapping_for_step(
     mappings: list[dict],
     step: dict,
@@ -2364,8 +2467,21 @@ def pilotage_categories() -> list[str]:
         for item in list_sequence_template_mappings()
         if item.get("course_category") and item["course_category"] != "all"
     ]
-    categories = sorted(set(PILOTAGE_DEFAULT_CATEGORIES + configured + mapped))
-    return categories or PILOTAGE_DEFAULT_CATEGORIES
+    categories = sorted(set(PILOTAGE_SUPPORTED_CATEGORIES + configured + mapped))
+    return categories or PILOTAGE_SUPPORTED_CATEGORIES
+
+
+def pilotage_sequence_sort_key(code: str) -> tuple[int, str]:
+    return (PILOTAGE_SEQUENCE_ORDER.get(code, 999), code)
+
+
+def pilotage_sequence_rank(code: str) -> int:
+    ordered = sorted(PILOTAGE_SEQUENCE_ORDER, key=pilotage_sequence_sort_key)
+    return ordered.index(code) + 1 if code in ordered else 99
+
+
+def pilotage_sequence_owner(sequence: dict) -> str:
+    return PILOTAGE_SEQUENCE_OWNER_LABELS.get(sequence["code"], sequence.get("owner") or "")
 
 
 def label_sequence_code(code: str | None) -> str:
