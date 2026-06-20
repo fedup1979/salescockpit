@@ -1,6 +1,6 @@
 # Current Project State
 
-Last updated: 2026-06-20 15:33 Europe/Zurich.
+Last updated: 2026-06-20 17:19 Europe/Zurich.
 
 This is the first document to read when resuming Sales Cockpit.
 
@@ -8,7 +8,19 @@ This is the first document to read when resuming Sales Cockpit.
 
 Sales Cockpit is deployed and running in staging on DigitalOcean. Production is deployed cold and remains in Twilio `mock` mode.
 
-The main remaining blocker before operational production cutover is validation of the automatic SchoolDrive AR-sent path: when an AR message changes from `queued` to `sent`, SchoolDrive must emit a new snapshot to Sales Cockpit and Sales Cockpit must create the Tanjona follow-up.
+The main remaining blocker before operational production cutover is a fresh live end-to-end SchoolDrive validation after the SchoolDrive WhatsApp/projector worker is confirmed running:
+
+```text
+Website form -> SchoolDrive lead/presubscription -> automatic WhatsApp AR -> AR sent snapshot -> Sales Cockpit thread + Tanjona follow-up
+```
+
+Sales Cockpit has now encoded the canonical workflow model:
+
+- `Parcours`: human/commercial state of the prospect.
+- `Flux`: configurable follow-up scenario and templates.
+- `Action`: concrete operational work item in the queue.
+
+Important new runtime rule: a prospect message during an already planned setting/closing call creates an urgent `reply` action for Mihary but does not cancel the planned call. Course-start relances do not interrupt planned calls.
 
 ## Repositories And Environments
 
@@ -23,13 +35,13 @@ The main remaining blocker before operational production cutover is validation o
 - Production UI: `http://139.59.158.77:8501`
 - Production API: `http://139.59.158.77:8601`
 
-Latest verified functional deployment before this documentation update:
+Latest known deployed checkpoint before the current local workflow changes:
 
 ```text
 aae5808 Add inbound identity review guardrail
 ```
 
-Staging and cold production were both verified on this commit before the documentation-only update.
+Staging and cold production were both verified on that older checkpoint. The current local branch contains newer workflow changes; check `git log`, deploy state, and service status before assuming staging or production is running them.
 
 ## Current Integration Status
 
@@ -144,6 +156,22 @@ Sequence timing is expressed from the flow trigger, not from the previous step. 
 
 If a step action type is `follow_up` / Relance WhatsApp, a template recommendation is operationally required. The UI shows the template selector directly on each scenario step and refuses mappings to non-approved, demo, pending, rejected, or draft templates.
 
+### Parcours, Flux, Actions
+
+Canonical model as of 2026-06-20:
+
+- `Parcours` is the commercial state of the prospect: new lead, setter conversation, setting call planned, closing call planned, will sign, won, lost, etc. It is not user-editable in V1. The system changes it through workflow outcomes.
+- `Flux` is a follow-up sequence: for example initial no-reply, setter exchange without next step, post-closing will-sign, or course-start reminders. Admins tune steps and templates in `Pilotage`; they do not create new business scenarios without code.
+- `Action` is the operational unit shown in `Tâches`: reply, follow-up, document setting call, document closing call, contact review.
+
+Important invariants:
+
+- An open conversation normally has one active main next action.
+- Exception: if a prospect writes while a setting/closing call is already planned, Sales Cockpit creates an urgent `reply` action but keeps the planned call active. After the user replies without changing the appointment, the planned call becomes the visible next action again.
+- A planned setting/closing call means the future work is to document the call at the scheduled time. The call is visible in the conversation detail so Setter I or the closer knows an appointment already exists and can modify it in `Actions`.
+- Course-start relances may replace a lead/presubscription relance when they conflict within 24h, but they must not replace an already planned setting/closing call.
+- Course-start dates come first from SchoolDrive `data.course.start_date`; if a Lead only has a category, Sales Cockpit uses the active default session for that category.
+
 ### SchoolDrive
 
 Validated:
@@ -166,39 +194,9 @@ The SchoolDrive MCP currently returns naive timestamps that track UTC. Do not su
 
 ### Current SchoolDrive Gate
 
-Claude Code completed a pure observation diagnostic on `lead:124126`.
+Historical note: Claude Code previously diagnosed `lead:124126` and proved that Sales Cockpit behaved correctly with a `queued` snapshot, but that SchoolDrive had not emitted a newer AR-sent snapshot for that record.
 
-Observed SchoolDrive AR:
-
-```text
-lead:124126
-person: Lydia Djouhri
-AR: armsg:1005384
-autoresponder: MKT-FSM-LN-BT-01
-SchoolDrive status: sent
-SchoolDrive status_updated_at: 2026-05-29 05:55:03 UTC
-```
-
-Observed Cockpit staging:
-
-```text
-latest event for lead:124126: 6e677339-8068-406c-879e-926b6a7a6824
-received_at: 2026-06-19T18:47:37Z
-stored AR status: queued
-stored sent_at: null
-newer events after that: 0
-open tasks: 0
-```
-
-Previous verdict:
-
-```text
-Automatic AR-sent path was not validated on this case.
-```
-
-Sales Cockpit is behaving correctly for the snapshot it received. It stored the AR as queued and did not create a follow-up. The blocker is SchoolDrive/projector side: the AR is sent in SchoolDrive, but no newer snapshot with `status=sent` and `sent_at` reached Sales Cockpit.
-
-Tiago later reported that the projector was published and filtered to skip leads/subscriptions created before `2026-03-01`. Staging then received a large replay and is polluted with historical records.
+Tiago later reported that the SchoolDrive event projector was published, including a filter to skip leads/subscriptions created before `2026-03-01`. Staging then received a large replay and is polluted with historical records.
 
 Current staging state before cleanup:
 
@@ -215,11 +213,14 @@ schooldrive_events: 0
 schooldrive_leads: 0
 ```
 
-Required validation:
+Required validation now:
 
 ```text
-AR sent in SchoolDrive
--> new webhook event reaches Cockpit
+Fresh website form
+-> SchoolDrive creates Lead or Presubscription
+-> SchoolDrive sends automatic WhatsApp AR
+-> AR reaches status=sent
+-> SchoolDrive emits a newer webhook snapshot
 -> Cockpit stores status=sent and sent_at
 -> message body appears in thread
 -> Tanjona follow-up is created at sent_at + 72h
@@ -232,21 +233,22 @@ If this is not green, production may be prepared but must not become operational
 
 Status at 2026-06-20 10:29 Europe/Zurich:
 
-- Francois submitted one real test presubscription from the website.
+- François submitted one real test presubscription from the website.
 - Sales Cockpit staging did not receive any new SchoolDrive webhook event after the synthetic smoke events.
 - Staging API logs showed no recent POST to `/webhooks/schooldrive/lead-or-presubscription`.
 - SchoolDrive was expected to send an automatic WhatsApp, but it did not.
-- Current working hypothesis: the SchoolDrive WhatsApp worker/projector is off or not processing the new record.
-- Francois is waiting for Tiago to restart/fix the SchoolDrive worker.
+- Current working hypothesis: the SchoolDrive WhatsApp worker was off or not processing the new record.
+- François was waiting for Tiago to restart/fix the SchoolDrive worker.
 
 Resume the live test from here:
 
-1. Once Tiago confirms the SchoolDrive worker is running, submit or inspect a fresh real Lead.
-2. Check whether Sales Cockpit staging receives the first SchoolDrive snapshot.
-3. Check whether SchoolDrive sends the automatic WhatsApp.
-4. Check whether the AR-sent event reaches Sales Cockpit as a newer snapshot.
-5. Confirm that the thread shows the WhatsApp body and that a Tanjona follow-up is created at `sent_at + 72h`.
-6. Repeat the same path for a real presubscription if the Lead path works.
+1. Confirm or observe that the SchoolDrive worker/projector is running.
+2. Submit or inspect a fresh real Lead.
+3. Check whether Sales Cockpit staging receives the first SchoolDrive snapshot.
+4. Check whether SchoolDrive sends the automatic WhatsApp.
+5. Check whether the AR-sent event reaches Sales Cockpit as a newer snapshot.
+6. Confirm that the thread shows the WhatsApp body and that a Tanjona follow-up is created at `sent_at + 72h`.
+7. Repeat the same path for a real presubscription if the Lead path works.
 
 Do not change Twilio settings while resuming this test. The real ESSR Twilio account has only been read through the Content API; no Twilio webhook, sender, template, or send configuration should be changed until the explicit cutover decision.
 
@@ -302,15 +304,17 @@ V2 debt for proper identity resolution is documented in `docs/TECHNICAL_DEBT.md`
 
 ## Immediate Next Steps
 
-1. Get the SchoolDrive AR-sent event trigger/projector fixed or deployed.
-2. Validate the real automatic path with `lead:124126` or another fresh AR:
-   - SchoolDrive AR status is `sent`;
-   - Sales Cockpit receives a newer event;
-   - autoresponder is stored as `sent`;
-   - Tanjona follow-up is created.
-3. Run staging `pre_cutover_check`.
-4. If green, prepare production SchoolDrive projector config but do not activate until explicit GO.
-5. Keep Twilio production and SchoolDrive production cutover separate and controlled.
+1. Commit and deploy the latest local workflow changes to staging before further live testing.
+2. Create a restore point, then clean/rebuild staging SchoolDrive data polluted by the historical replay if required for a readable validation set.
+3. Resume the live website-form test once SchoolDrive worker/projector activity is visible:
+   - first snapshot received;
+   - automatic WhatsApp sent;
+   - AR-sent snapshot received;
+   - autoresponder stored as `sent`;
+   - Tanjona follow-up created.
+4. Run staging `pre_cutover_check`.
+5. If green, prepare production SchoolDrive projector config but do not activate operational traffic until explicit GO.
+6. Keep Twilio production and SchoolDrive production cutover separate and controlled.
 
 ## Operating Lesson Learned
 

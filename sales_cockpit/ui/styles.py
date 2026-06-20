@@ -174,6 +174,25 @@ h1, h2, h3 {
   font-weight: 650;
 }
 
+.sc-planned-call-notice {
+  display: flex;
+  justify-content: space-between;
+  gap: .75rem;
+  align-items: center;
+  margin: .3rem 0 .75rem 0;
+  padding: .55rem .7rem;
+  border: 1px solid oklch(0.78 0.07 250);
+  border-radius: 8px;
+  background: oklch(0.965 0.018 250);
+  color: var(--sc-text);
+  font-size: .86rem;
+}
+
+.sc-planned-call-notice span {
+  color: var(--sc-muted);
+  text-align: right;
+}
+
 .sc-badge {
   display: inline-flex;
   align-items: center;
@@ -208,6 +227,15 @@ h1, h2, h3 {
   .sc-window-status {
     align-items: flex-start;
     margin-left: 0;
+  }
+
+  .sc-planned-call-notice {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .sc-planned-call-notice span {
+    text-align: left;
   }
 }
 

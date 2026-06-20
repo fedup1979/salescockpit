@@ -56,6 +56,14 @@ def main() -> None:
         readiness_failures.append(
             f"{workflow['open_conversations_without_action']} active conversation(s) without next action"
         )
+    if workflow.get("resolved_conversations_with_action_count"):
+        readiness_failures.append(
+            f"{workflow['resolved_conversations_with_action_count']} resolved conversation(s) with active action"
+        )
+    if workflow.get("conversations_with_multiple_main_actions"):
+        readiness_failures.append(
+            f"{workflow['conversations_with_multiple_main_actions']} conversation(s) with conflicting active actions"
+        )
     if not readiness["backup"].get("exists"):
         readiness_failures.append("No backup found")
 

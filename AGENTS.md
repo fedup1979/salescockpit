@@ -59,14 +59,16 @@ Core source-of-truth decisions:
 
 ## Current UX Model
 
-There are two different concepts. Do not merge them:
+There are four different concepts. Do not merge them:
 
 - Main navigation order starts with `Tâches`, then `Inbox`, then `Modèles`, then `Admin`.
 - Conversation status: user-controlled operational state, internally `open` or `resolved`, shown to users as `Active` / `Terminée`.
 - WhatsApp window state: technical 24-hour API window, `open` or `closed`. This drives whether free-form messages are allowed.
 - Next action: operational work item stored in the `tasks` table but displayed as `prochaine action` / `Tâches`, not as an abstract task list.
-- Action is the central operational unit of the system. A conversation with `open` status must always have one open next action.
-- The source of truth for action types, statuses, support actions, proofs, outcomes, triggers, workflow transitions, sequences, and template requests is `docs/BUSINESS_LOGIC.md`, `docs/ACTION_WORKFLOW.md`, and structured constants in `sales_cockpit/business_rules.py`.
+- Action is the central operational unit of the system. A conversation with `open` status must have one main non-terminal action, except when an urgent inbound `reply` temporarily interrupts an already planned call.
+- `Parcours`: commercial state (`leads.sales_stage`). It is shown read-only and derived from workflow outcomes. Do not expose normal manual forcing to sales users.
+- `Flux`: business follow-up scenario (`sequences`, `sequence_steps`, `sequence_template_mappings`). It generates future actions and is configured in `Pilotage`. In user-facing docs/UI, prefer `Flux` or `Scénario de suivi`, not `Séquence`, except for technical internals.
+- The source of truth for action types, statuses, support actions, proofs, outcomes, triggers, workflow transitions, flux, and template requests is `docs/BUSINESS_LOGIC.md`, `docs/ACTION_WORKFLOW.md`, and structured constants in `sales_cockpit/business_rules.py`.
 - `Tâches` is the default work page. It uses a split screen: assigned actions/persons on the left, selected prospect detail on the right.
 - `Tâches` defaults to the connected user's own queue. The user can switch to another person's queue or `Tous`; that choice must persist when navigating away and back during the same session.
 
@@ -88,6 +90,8 @@ Visible queue and conversation controls:
 Operational rule:
 
 - New inbound WhatsApp messages reopen the conversation and create/update a `reply` next action assigned to the setter.
+- If an inbound message arrives while a `setting_call` or `closing_call` is already planned, keep the planned call visible and active. The inbound creates an urgent `reply` interruption, but it must not cancel the planned call unless the user explicitly reschedules or replaces it.
+- If a `reply` interruption is answered without fixing a new appointment, close the `reply` action and keep the existing planned call as the next action. Do not create a Tanjona follow-up in parallel.
 - If the latest message is inbound and unanswered, the prospect is waiting. Show a visible but restrained hot signal in Inbox and `Tâches`, and sort that item above ordinary calls or follow-ups.
 - `Tâches` and Inbox auto-refresh every 10 seconds while visible, so Twilio webhook updates should appear without manual navigation.
 - Passing to closer completes current open actions, moves the lead to `closing`, and creates a `closing_call` action for the closer.
@@ -99,8 +103,10 @@ Operational rule:
 - Missing WhatsApp templates are tracked as `template_requests` linked to the blocked follow-up action.
 - In the main Actions tab, `reply` and `follow_up` are not closed by a generic completion button. The normal proof is the outbound WhatsApp message sent from the Conversation composer.
 - The Conversation composer captures the business outcome for `reply` at send time and creates the next action from that outcome.
-- Call actions are completed in Actions with result plus mandatory note. Manual WhatsApp completion belongs only in `Actions avancées`.
-- Course-date reminders always win over lead-relative reminders. If both conflict, cancel the lead-relative reminder.
+- Planned call actions are future actions to document the call result. When the due time arrives, they appear in `Tâches`; the user completes them in Actions with result plus mandatory note.
+- Planned calls must also be visible in the conversation detail so the setter/closer can see and modify them when a prospect writes before the appointment.
+- Manual WhatsApp completion belongs only in `Actions avancées`.
+- Course-date reminders always win over lead-relative reminders. If both conflict, cancel the lead-relative reminder. Do not interrupt or replace a planned `setting_call` or `closing_call`.
 - Minimum delay between outbound WhatsApp follow-ups is 24h.
 - Business rules are centralized in `sales_cockpit/business_rules.py` and displayed in Admin.
 - Main action types for V1 are `reply`, `follow_up`, `setting_call`, and `closing_call`. Qualification, manual notes, and template creation are support actions/proofs unless they block the main flow.

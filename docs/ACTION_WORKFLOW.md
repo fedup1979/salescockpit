@@ -12,13 +12,26 @@ La version structurée de cette logique existe dans `sales_cockpit/business_rule
 ## Décisions Validées
 
 - L'action est l'unité opérationnelle centrale du système.
-- Une conversation ouverte doit toujours avoir une prochaine action ouverte.
+- Une conversation ouverte doit toujours avoir une action principale non terminale.
+- Exception : une réponse entrante peut créer une action urgente `reply` sans annuler un appel setting ou closing déjà planifié.
 - La chaîne principale doit rester simple et lisible pour l'équipe commerciale.
 - Le système doit distinguer action principale, action support, preuve, résultat et déclencheur.
 - L'envoi d'un message WhatsApp doit clôturer l'action active correspondante, puis ouvrir l'action suivante si nécessaire.
 - La vraie valeur du système est le chaînage explicite des actions commerciales.
 
 ## Vocabulaire
+
+### Parcours
+
+Le `Parcours` est l'état commercial du prospect (`leads.sales_stage`). Il répond à la question : où en est le prospect ?
+
+Il est affiché en lecture seule pour les utilisateurs commerciaux. Il ne doit pas être utilisé comme bouton de pilotage normal.
+
+### Flux
+
+Un `Flux` est un scénario de suivi qui génère des actions futures. Exemples : lead sans réponse initiale, échange setter sans suite, appel non joint, va signer, début de cours.
+
+Techniquement, les flux sont stockés dans `sequences`, `sequence_steps` et `sequence_template_mappings`. Le mot `séquence` reste donc acceptable dans le code, mais l'interface métier doit parler de `Flux` ou de `Scénario de suivi`.
 
 ### Action Principale
 
@@ -35,7 +48,7 @@ Actions principales V1 :
 | `setting_call` | Appel de setting | Appeler pour qualifier et obtenir la suite commerciale | Setter 1 |
 | `closing_call` | Appel de closing | Appeler pour vendre, finaliser ou trancher | Closer |
 
-`setting_call` est préféré à `call` dans le modèle métier, parce que `call` est trop vague. L'UI peut afficher `Appel` ou `Appel de setting` selon le niveau de simplicité souhaité.
+`setting_call` et `closing_call` représentent l'action à documenter au moment de l'appel : résultat d'appel, note obligatoire et suite métier. L'appel planifié doit rester visible dans la conversation avant son échéance.
 
 ### Action Support
 
@@ -146,12 +159,14 @@ Les champs actuels de `tasks` couvrent une partie du besoin. Le modèle cible de
 ## Règles Transversales
 
 - Un message entrant du prospect annule ou clôt les relances ouvertes et crée un `reply` immédiat pour Setter 1.
+- Si un appel setting ou closing est déjà planifié, le message entrant ne l'annule pas. Le système crée une interruption `reply`; après réponse simple, l'appel planifié redevient la prochaine action.
 - Un message sortant envoyé en réponse clôt le `reply` actif.
 - Une relance envoyée clôt le `follow_up` actif.
 - Un appel terminé clôt le `setting_call` ou `closing_call` actif.
 - Un statut stop (`not_relevant`, `do_not_contact`, `signed`) clôt les actions ouvertes et résout la conversation.
 - `do_not_contact` est strict : aucune relance ne doit être créée ensuite.
-- Les relances liées aux dates de cours gagnent sur les relances relatives au lead.
+- Les relances liées aux dates de cours gagnent sur les relances relatives au lead ou à la préinscription.
+- Les relances liées aux dates de cours ne remplacent pas un appel setting ou closing déjà planifié.
 - Une action bloquée par template manquant doit créer une `template_request`, pas disparaître.
 - Une conversation ouverte sans action ouverte est une anomalie.
 
@@ -163,8 +178,9 @@ Cette table décrit le chaînage cible. Elle doit rester lisible par l'équipe m
 |---|---|---|---|---|---|---|---|---|---|
 | Lead créé dans SchoolDrive | `lead_created` | Message initial automatique envoyé | Aucune | `follow_up` | Tanjona | +72h | Ouverte ou en attente | Aucun | Stocker l'événement initial |
 | Lead sans réponse | `no_reply_after_72h` | Prospect n'a pas répondu | `follow_up` précédent si existant | `follow_up` | Tanjona | Maintenant | Ouverte | Template approuvé | Respecter délai minimum 24h |
-| Prospect répond | `prospect_replied` | Dernier message entrant non répondu | `follow_up`, `setting_call`, `closing_call` ouverts sauf règle contraire | `reply` | Setter 1 | Maintenant | Ouverte | Aucun | Hot signal, file de Setter 1, annuler relances futures |
-| Réponse envoyée | `outbound_message_sent` | Action active = `reply` | `reply` | `follow_up` de sécurité | Tanjona | +72h | Ouverte | Message sortant | Supprimer hot signal |
+| Prospect répond | `prospect_replied` | Dernier message entrant non répondu | `follow_up` ouvert | `reply` | Setter 1 | Maintenant | Ouverte | Aucun | Hot signal, file de Setter 1, annuler relances futures, garder tout appel déjà planifié |
+| Réponse envoyée | `outbound_message_sent` | Action active = `reply`, aucun appel déjà planifié | `reply` | `follow_up` de sécurité | Tanjona | +72h | Ouverte | Message sortant | Supprimer hot signal |
+| Réponse envoyée pendant appel planifié | `outbound_message_sent` | Action active = `reply`, appel setting/closing déjà planifié | `reply` | appel déjà planifié | Responsable de l'appel | Date/heure RDV | Ouverte | Message sortant | Ne pas créer de relance Tanjona parallèle |
 | Réponse envoyée avec RDV setting | `outbound_message_sent` | RDV setting fixé | `reply` | `setting_call` | Setter 1 | Date/heure RDV | Ouverte | Message sortant, RDV noté | Annuler relance de sécurité |
 | Réponse envoyée avec disqualification claire | `outbound_message_sent` | Prospect non pertinent ou stop | `reply` | Aucune | Personne | Aucun | Résolue | Qualification | Stopper relances |
 | Relance due | `follow_up_due` | Fenêtre WhatsApp ouverte | `follow_up` | À déterminer après envoi | Tanjona | Maintenant | Ouverte | Message libre ou template selon choix | Respecter délai minimum |
@@ -174,18 +190,18 @@ Cette table décrit le chaînage cible. Elle doit rester lisible par l'équipe m
 | Template approuvé | `template_approved` | Relance bloquée par ce template | `template_request` support | `follow_up` | Tanjona | Maintenant | Ouverte | Template approuvé | Débloquer action |
 | Relance envoyée | `outbound_template_sent` ou `outbound_message_sent` | Action active = `follow_up` | `follow_up` | `follow_up` suivant si séquence non terminée | Tanjona | +72h, +7j ou +30j | Ouverte | Message sortant | Incrémenter séquence |
 | Relance envoyée | `outbound_template_sent` | Dernière relance de séquence | `follow_up` | Aucune | Personne | Aucun | Résolue | Message sortant | Motif `sequence_completed_no_reply` |
-| RDV setting arrive | `setting_call_due` | Appel à faire | `setting_call` | Selon résultat appel | Setter 1 | Maintenant | Ouverte | Appel | Option `in_progress` si pris en main |
+| RDV setting arrive | `setting_call_due` | Appel à documenter | `setting_call` | Selon résultat appel | Setter 1 | Maintenant | Ouverte | Résultat + mini note | Option `in_progress` si pris en main |
 | Appel setting terminé | `setting_call_completed` | À closer | `setting_call` | `closing_call` | Closer | Date RDV ou maintenant | Ouverte | Mini note + qualification setter | Lead passe en `closing` |
 | Appel setting terminé | `setting_call_completed` | Pas de réponse | `setting_call` | `follow_up` | Tanjona | +72h | Ouverte | Mini note | Séquence setter no next step |
 | Appel setting terminé | `setting_call_completed` | Pas prêt / à relancer | `setting_call` | `follow_up` | Tanjona | +72h | Ouverte | Mini note + qualification setter | Séquence setter no next step |
 | Appel setting terminé | `setting_call_completed` | Non pertinent | `setting_call` | Aucune | Personne | Aucun | Résolue | Mini note + qualification `not_relevant` | Stopper relances |
 | Appel setting terminé | `setting_call_completed` | Ne plus contacter | `setting_call` | Aucune | Personne | Aucun | Résolue | Mini note + qualification `do_not_contact` | Stop strict |
-| RDV closing arrive | `closing_call_due` | Appel à faire | `closing_call` | Selon résultat appel | Closer | Maintenant | Ouverte | Appel | Option `in_progress` si pris en main |
+| RDV closing arrive | `closing_call_due` | Appel à documenter | `closing_call` | Selon résultat appel | Closer | Maintenant | Ouverte | Résultat + mini note | Option `in_progress` si pris en main |
 | Appel closing terminé | `closing_call_completed` | Signé | `closing_call` | Aucune | Personne | Aucun | Résolue | Mini note + qualification closer `signed` | Vente gagnée, stopper relances |
 | Appel closing terminé | `closing_call_completed` | Va signer | `closing_call` | `follow_up` | Tanjona | +72h | Ouverte | Mini note + qualification closer `will_sign` | Séquence closer will sign |
 | Appel closing terminé | `closing_call_completed` | Non pertinent | `closing_call` | Aucune | Personne | Aucun | Résolue | Mini note + qualification closer `not_relevant` | Stopper relances |
 | Appel closing terminé | `closing_call_completed` | Pas de réponse | `closing_call` | `follow_up` | Tanjona | +72h | Ouverte | Mini note | Relance post-closing |
-| Date de cours approche | `course_start_approaching` | Lead non signé, date pertinente connue | `follow_up` lead-relative concurrente | `follow_up` cours | Tanjona ou IA | J-14/J-7/J-3/J-1 | Ouverte | Template cours | La relance cours gagne le conflit |
+| Date de cours approche | `course_start_approaching` | Lead non signé, date pertinente connue, aucun appel planifié | `follow_up` lead-relative concurrente | `follow_up` cours | Tanjona ou IA | J-14/J-7/J-3/J-1 | Ouverte | Template cours | La relance cours gagne le conflit sauf si un appel est déjà planifié |
 | Qualification stop à tout moment | `qualification_updated` | `not_relevant`, `do_not_contact`, `signed` | Toutes actions ouvertes | Aucune | Personne | Aucun | Résolue | Qualification | Stopper relances |
 | Conversation résolue manuellement | `conversation_resolved` | Utilisateur clôture | Toutes actions ouvertes | Aucune | Personne | Aucun | Résolue | Option note | Historiser la résolution |
 | Conversation rouverte manuellement | `conversation_reopened` | Utilisateur rouvre | Aucune | Action à choisir | Utilisateur courant ou responsable choisi | Maintenant ou planifié | Ouverte | Raison de réouverture | Éviter conversation ouverte sans action |

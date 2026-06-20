@@ -228,8 +228,8 @@ DISPLAY_LABELS = {
     "waiting": "En suspens",
     "reply": "Répondre au message",
     "call": "Appeler",
-    "closing_call": "Appel closing",
-    "setting_call": "Appel setting",
+    "closing_call": "Documenter appel closing",
+    "setting_call": "Documenter appel setting",
     "contact_review": "Revue contact",
     "other": "Autre",
     "assignee_name": "Responsable",
@@ -599,6 +599,7 @@ def render_conversation_detail(user: dict, conversation_id: int) -> None:
     render_conversation_context(conv)
     render_compact_lead_state(conv)
     render_next_action_summary(conv)
+    render_planned_call_notice(conv)
 
     tabs = st.tabs(["Conversation", "Actions", "Statuts", "Notes privées"])
     with tabs[0]:
@@ -1255,6 +1256,32 @@ def render_next_action_summary(conv: dict) -> None:
           <div class="sc-action-badges">
             <span class="sc-badge sc-badge-neutral">{escape_html(assignee)}</span>
           </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_planned_call_notice(conv: dict) -> None:
+    if conv.get("status") != "open":
+        return
+    calls = [
+        action for action in list_actions_for_lead(conv["lead_id"], "all")
+        if action.get("type") in CALL_ACTION_TYPES
+        and action.get("status") in {"open", "in_progress", "planned", "blocked"}
+    ]
+    if not calls:
+        return
+    calls.sort(key=lambda action: parse_dt(action.get("due_at")) or datetime.max.replace(tzinfo=timezone.utc))
+    call = calls[0]
+    call_type = "setting" if call.get("type") == "setting_call" else "closing"
+    assignee = display_assignee_name(call)
+    due = format_due(call.get("due_at"))
+    st.markdown(
+        f"""
+        <div class="sc-planned-call-notice">
+          <strong>Appel {escape_html(call_type)} planifié</strong>
+          <span>{escape_html(due)} · {escape_html(assignee)} · modifiable dans Actions</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -3210,6 +3237,22 @@ def render_admin_status_tab() -> None:
                 "Détail": f"{workflow['open_conversations_without_action']} conversation(s) active(s) sans prochaine action.",
             }
         )
+    if workflow.get("resolved_conversations_with_action_count"):
+        blockers.append(
+            {
+                "Type": "Workflow",
+                "Statut": "Bloquant",
+                "Détail": f"{workflow['resolved_conversations_with_action_count']} conversation(s) terminée(s) avec action active.",
+            }
+        )
+    if workflow.get("conversations_with_multiple_main_actions"):
+        blockers.append(
+            {
+                "Type": "Workflow",
+                "Statut": "Bloquant",
+                "Détail": f"{workflow['conversations_with_multiple_main_actions']} conversation(s) avec actions principales concurrentes.",
+            }
+        )
     if workflow["blocked_action_count"]:
         blockers.append(
             {
@@ -3327,6 +3370,14 @@ def render_admin_status_tab() -> None:
                 {
                     "Indicateur": "Conversations actives sans prochaine action",
                     "Valeur": workflow["open_conversations_without_action"],
+                },
+                {
+                    "Indicateur": "Conversations terminées avec action active",
+                    "Valeur": workflow.get("resolved_conversations_with_action_count", 0),
+                },
+                {
+                    "Indicateur": "Conversations avec actions concurrentes",
+                    "Valeur": workflow.get("conversations_with_multiple_main_actions", 0),
                 },
             ],
             hide_index=True,

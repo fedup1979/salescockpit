@@ -72,3 +72,25 @@ Add a guided admin workflow to activate a new course category:
 - define templates for every required flow step;
 - run a simulator before activation;
 - optionally reprocess the waiting review tasks once the category is configured.
+
+## Course-Start Follow-Up Engine
+
+### V1 Implemented Guardrail
+
+Course-start follow-ups can now be created from the SchoolDrive `course.start_date` or from the active default session date for the course category.
+
+Runtime behavior:
+
+- if a setting/closing call is already planned, the course-start follow-up does not interrupt it;
+- if a course-start follow-up conflicts with a lead/presubscription follow-up within 24h, the course-start follow-up wins and the lead-relative follow-up is cancelled;
+- if a category has no active default session and SchoolDrive provides no `start_date`, no course-start follow-up is created.
+
+### V2 Debt
+
+Add a global scheduling/recalculation workflow:
+
+- periodic sweep that detects upcoming course-start reminders even when no fresh SchoolDrive event arrives;
+- preview and recalculate affected future tasks after Laura changes default sessions, course-start flux steps, or template mappings;
+- explain conflicts before applying changes;
+- preserve planned setting/closing calls as non-interruptible actions;
+- write audit logs for every cancelled/replaced task.

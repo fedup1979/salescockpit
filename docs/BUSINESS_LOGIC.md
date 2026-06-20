@@ -12,13 +12,26 @@ Il formalise les règles validées avec François pour que l'interface, les test
 - Les Leads viennent principalement des paid ads : Google Ads, Meta Ads ou Bing Ads.
 - Les Préinscriptions viennent principalement de la recherche naturelle.
 - Le cockpit ne remplace pas SchoolDrive. Il orchestre conversations, actions, qualification, relances et templates.
-- Une conversation ouverte doit toujours avoir une prochaine action ouverte ou bloquée.
+- Une conversation ouverte doit toujours avoir une prochaine action principale non terminale.
+- Exception : si un prospect écrit alors qu'un appel setting ou closing est déjà planifié, le cockpit peut avoir temporairement deux actions non terminales : une action urgente `reply` et l'appel déjà planifié. La réponse urgente ne doit pas annuler l'appel.
 - Une conversation résolue ne doit pas avoir d'action opérationnelle ouverte.
 - L'action est l'unité opérationnelle centrale du système.
 - Les relances automatiques ne sont pas envoyées en V1. Le cockpit crée les tâches, l'humain envoie.
 - Les données et transcripts sont conservés pour le futur apprentissage d'un setter IA.
 
 ## Concepts Métier
+
+### Parcours, Flux, Actions
+
+Sales Cockpit distingue trois objets métier :
+
+- `Parcours` : état commercial du prospect, stocké dans `leads.sales_stage`. Il répond à la question : où en est le prospect ?
+- `Flux` : scénario de suivi qui génère des actions futures, stocké techniquement dans `sequences` et `sequence_steps`. Il répond à la question : quelle règle crée la suite ?
+- `Action` : travail concret à effectuer par une personne à une date donnée, stocké dans `tasks`. Elle répond à la question : qui doit faire quoi, quand ?
+
+Le `Parcours` est affiché en lecture seule pour l'équipe commerciale. Le forçage manuel du parcours est un mécanisme de correction, pas un flux normal.
+
+Le terme `séquence` reste un terme technique interne pour l'implémentation d'un flux. Dans l'interface métier et dans les échanges avec Laura, utiliser `Flux` ou `Scénario de suivi`.
 
 ### Conversation
 
@@ -100,7 +113,7 @@ Les séquences de relance standard suivent ce calendrier :
 6. +30j
 7. stop
 
-Le délai se calcule depuis l'événement précédent de la même séquence.
+Le délai se calcule depuis le déclencheur du flux. Il ne se recalcule pas depuis l'étape précédente.
 
 Après la dernière relance, si le prospect ne répond pas, la conversation passe en `resolved` avec le motif `sequence_completed_no_reply`.
 
@@ -121,7 +134,9 @@ Les relances liées au début du cours suivent ce calendrier par défaut :
 3. J-3
 4. J-1
 
-Une relance liée au cours gagne toujours contre une relance relative au lead. En cas de conflit, la relance perdante est annulée.
+Une relance liée au cours gagne toujours contre une relance relative au lead/préinscription. En cas de conflit dans une fenêtre de 24h, la relance lead/préinscription perdante est annulée.
+
+Une relance liée au cours ne remplace pas un appel setting ou closing déjà planifié. Si un appel est prévu, l'appel reste prioritaire et visible.
 
 ## Templates
 
@@ -158,6 +173,8 @@ Lorsque les 72h suivant le premier WhatsApp automatique sont écoulées et que l
 
 Lorsque le prospect envoie un message WhatsApp entrant et que le contact est autorisé, alors la conversation passe immédiatement dans la file de Setter 1 avec une action `reply` due maintenant.
 
+Si un appel setting ou closing est déjà planifié, cet appel reste actif. L'action `reply` est une interruption urgente pour traiter le message entrant, pas un remplacement automatique de l'appel.
+
 ### Règle 4 : réponse entrante d'un prospect Ne plus contacter
 
 Lorsque le prospect est marqué `do_not_contact` mais envoie un nouveau message entrant, alors le cockpit crée une action `contact_review` pour Setter 1. Aucune relance automatique ne doit être créée tant que Setter 1 n'a pas décidé de maintenir ou lever le blocage.
@@ -165,6 +182,8 @@ Lorsque le prospect est marqué `do_not_contact` mais envoie un nouveau message 
 ### Règle 5 : réponse sans rendez-vous
 
 Lorsque Setter 1 répond au prospect mais ne fixe pas de rendez-vous de setting, alors l'action `reply` est terminée et une action `follow_up` est créée pour Tanjona 72h après le message sortant.
+
+Exception : si cette action `reply` était une interruption pendant qu'un appel setting ou closing était déjà planifié, aucune relance Tanjona n'est créée. L'appel planifié redevient la prochaine action.
 
 ### Règle 6 : rendez-vous de setting fixé
 
@@ -237,6 +256,8 @@ Lorsque le closer qualifie le prospect comme `not_relevant`, alors le cockpit cl
 ### Règle 23 : date de début de cours
 
 Lorsqu'une date de début de cours approche et que le prospect n'a pas signé, alors le cockpit crée une relance liée au cours. Cette relance est prioritaire sur toute relance relative au lead.
+
+Cette priorité ne remplace pas un appel setting ou closing déjà planifié. L'appel reste l'action principale ; la relance cours attendra un prochain déclencheur ou une décision humaine.
 
 ### Règle 24 : qualification terminale à tout moment
 

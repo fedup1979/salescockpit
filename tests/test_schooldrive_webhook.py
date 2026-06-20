@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 
@@ -12,8 +13,12 @@ from sales_cockpit.store import (
     get_conversation,
     get_next_action_for_lead,
     ingest_schooldrive_snapshot,
+    list_actions_for_lead,
     list_messages,
+    record_inbound_message,
+    send_freeform_message,
 )
+from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
 
 
 def schooldrive_payload(
@@ -91,6 +96,104 @@ def test_schooldrive_snapshot_creates_lead_conversation_messages_and_followup() 
     assert action["sequence_code"] == "lead_no_reply"
     assert action["sequence_step_index"] == 1
     assert action["due_at"].startswith("2026-06-21T09:34:20")
+
+
+def test_course_start_followup_replaces_nearby_lead_followup() -> None:
+    seed_initial_data()
+    now = utc_now()
+    payload = schooldrive_payload(
+        event_id="evt_course_start_priority",
+        occurred_at=iso_utc(now),
+        aggregated_updated_at=iso_utc(now),
+        schooldrive_id="subscription:course-start-priority",
+        lead_type="presubscription",
+        course_category="APP",
+        autoresponders=[
+            {
+                "message_id": "armsg:course-start-priority",
+                "autoresponder_id": 2063,
+                "template": "mkt_app_ln_subs_01",
+                "status": "sent",
+                "sent_at": iso_utc(now),
+            }
+        ],
+    )
+    payload["data"]["course"]["course_name"] = "APP VISIO TEST"
+    payload["data"]["course"]["start_date"] = (now + timedelta(days=1)).date().isoformat()
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "follow_up"
+    assert action["sequence_code"] == "course_start"
+    assert action["trigger_reason"] == "course_start_approaching"
+    actions = list_actions_for_lead(result["lead_id"], "all")
+    cancelled_initial = [
+        item for item in actions
+        if item["sequence_code"] == "lead_no_reply"
+        and item["status"] == "done"
+        and "début de cours" in (item["outcome"] or "")
+    ]
+    assert cancelled_initial
+
+
+def test_course_start_does_not_interrupt_planned_call() -> None:
+    seed_initial_data()
+    now = utc_now()
+    initial = schooldrive_payload(
+        event_id="evt_course_call_initial",
+        occurred_at=iso_utc(now),
+        aggregated_updated_at=iso_utc(now),
+        schooldrive_id="subscription:course-call",
+        lead_type="presubscription",
+        course_category="APP",
+        autoresponders=[
+            {
+                "message_id": "armsg:course-call",
+                "autoresponder_id": 2063,
+                "template": "mkt_app_ln_subs_01",
+                "status": "sent",
+                "sent_at": iso_utc(now),
+            }
+        ],
+    )
+    initial["data"]["course"]["course_name"] = "APP VISIO TEST"
+    initial["data"]["course"]["start_date"] = (now + timedelta(days=30)).date().isoformat()
+    result = ingest_schooldrive_snapshot(initial)
+    record_inbound_message("+41790000000", "Je suis disponible pour un appel setting.")
+    reply = get_next_action_for_lead(result["lead_id"])
+    assert reply["type"] == "reply"
+
+    ok, _ = send_freeform_message(
+        result["conversation_id"],
+        reply["assigned_to_user_id"],
+        "Votre appel setting est confirmé.",
+        action_outcome="setting_booked",
+        next_due_at=iso_utc(now + timedelta(days=1)),
+        assigned_to_user_id=reply["assigned_to_user_id"],
+        note="RDV setting confirmé.",
+    )
+    assert ok is True
+    call = get_next_action_for_lead(result["lead_id"])
+    assert call["type"] == "setting_call"
+
+    update = deepcopy(initial)
+    update["event_id"] = "evt_course_call_update"
+    update["occurred_at"] = iso_utc(now + timedelta(minutes=1))
+    update["data"]["aggregated_updated_at"] = iso_utc(now + timedelta(minutes=1))
+    update["data"]["course"]["start_date"] = (now + timedelta(days=1)).date().isoformat()
+
+    ingest_schooldrive_snapshot(update)
+
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "setting_call"
+    actions = list_actions_for_lead(result["lead_id"], "all")
+    active_course_followups = [
+        item for item in actions
+        if item["sequence_code"] == "course_start"
+        and item["status"] in {"open", "planned", "in_progress", "blocked"}
+    ]
+    assert active_course_followups == []
 
 
 def test_schooldrive_sent_whatsapp_for_unconfigured_category_creates_human_review() -> None:

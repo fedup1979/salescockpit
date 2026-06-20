@@ -219,8 +219,13 @@ OPERATING_RULES = [
     },
     {
         "rule": "Conflit lead vs cours",
-        "value": "La relance liée à une date de cours gagne toujours.",
-        "effect": "La relance liée au cycle du lead est annulée.",
+        "value": "La relance liée à une date de cours gagne contre une relance lead/préinscription concurrente.",
+        "effect": "La relance liée au cycle du lead est annulée, sauf si un appel setting ou closing est déjà planifié.",
+    },
+    {
+        "rule": "Message entrant pendant appel planifié",
+        "value": "Le prospect peut écrire alors qu'un appel setting ou closing est déjà prévu.",
+        "effect": "Créer une réponse urgente pour Setter I sans annuler l'appel planifié. Après réponse simple, l'appel reste la prochaine action.",
     },
     {
         "rule": "Non pertinent",
@@ -582,15 +587,15 @@ MAIN_ACTION_TYPES = [
     },
     {
         "type": "setting_call",
-        "label": "Appel de setting",
-        "meaning": "Appeler pour qualifier et obtenir la suite commerciale.",
+        "label": "Documenter appel setting",
+        "meaning": "Appeler puis documenter le résultat, la mini note et la suite commerciale.",
         "default_owner": "Setter 1",
         "expected_proof": "Résultat d'appel, mini note et qualification setter.",
     },
     {
         "type": "closing_call",
-        "label": "Appel de closing",
-        "meaning": "Appeler pour vendre, finaliser ou trancher.",
+        "label": "Documenter appel closing",
+        "meaning": "Appeler puis documenter le résultat, la mini note et la qualification de closing.",
         "default_owner": "Closer",
         "expected_proof": "Résultat d'appel, mini note et qualification closer.",
     },
@@ -695,7 +700,7 @@ WORKFLOW_TRANSITIONS = [
         "due": "Maintenant",
         "conversation": "Ouverte",
         "required_support": "Aucun",
-        "side_effects": "Hot signal, file Setter 1, annuler relances futures",
+        "side_effects": "Hot signal, file Setter 1, annuler relances futures, garder tout appel déjà planifié",
     },
     {
         "current_action": "Toute action non terminale",
@@ -711,13 +716,24 @@ WORKFLOW_TRANSITIONS = [
     {
         "current_action": "reply",
         "trigger": "outbound_message_sent",
-        "outcome": "Réponse envoyée sans RDV",
+        "outcome": "Réponse envoyée sans RDV et aucun appel déjà planifié",
         "next_action": "follow_up",
         "owner": "Tanjona",
         "due": "+72h après le dernier message sortant",
         "conversation": "Ouverte",
         "required_support": "Message sortant",
         "side_effects": "Supprimer hot signal",
+    },
+    {
+        "current_action": "reply",
+        "trigger": "outbound_message_sent",
+        "outcome": "Réponse envoyée pendant qu'un appel est déjà planifié",
+        "next_action": "appel déjà planifié",
+        "owner": "Responsable de l'appel",
+        "due": "Date/heure RDV",
+        "conversation": "Ouverte",
+        "required_support": "Message sortant",
+        "side_effects": "Clore la réponse sans créer de relance Tanjona parallèle",
     },
     {
         "current_action": "reply",
@@ -918,7 +934,7 @@ WORKFLOW_TRANSITIONS = [
         "side_effects": "Stopper relances",
     },
     {
-        "current_action": "follow_up lead-relative",
+        "current_action": "follow_up lead-relative, sauf appel planifié",
         "trigger": "course_start_approaching",
         "outcome": "Lead non signé, date de cours connue",
         "next_action": "follow_up cours",
@@ -926,7 +942,7 @@ WORKFLOW_TRANSITIONS = [
         "due": "J-14/J-7/J-3/J-1",
         "conversation": "Ouverte",
         "required_support": "Template cours",
-        "side_effects": "Annuler la relance lead-relative concurrente",
+        "side_effects": "Annuler la relance lead-relative concurrente ; ne pas remplacer un appel setting ou closing planifié",
     },
     {
         "current_action": "Toute action",

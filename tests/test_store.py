@@ -455,6 +455,57 @@ def test_reply_send_with_setting_booked_creates_setting_call_with_proof() -> Non
     assert completed_reply["proof_message_id"] is not None
 
 
+def test_inbound_during_planned_call_preserves_call_and_creates_reply() -> None:
+    seed_initial_data()
+    phone = unique_phone()
+    result = record_inbound_message(phone, "Je suis disponible pour un appel.")
+    action = get_next_action_for_lead(result["lead_id"])
+    due_at = iso_utc(utc_now() + timedelta(days=1))
+
+    ok, _ = send_freeform_message(
+        result["conversation_id"],
+        action["assigned_to_user_id"],
+        "Parfait, Mihary vous appelle demain.",
+        action_outcome="setting_booked",
+        next_due_at=due_at,
+        assigned_to_user_id=action["assigned_to_user_id"],
+        note="RDV setting confirmé.",
+    )
+    assert ok is True
+    planned_call = get_next_action_for_lead(result["lead_id"])
+    assert planned_call["type"] == "setting_call"
+
+    record_inbound_message(phone, "Merci, je voulais juste confirmer.")
+
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "reply"
+    actions = list_actions_for_lead(result["lead_id"], "all")
+    active_calls = [
+        item for item in actions
+        if item["type"] == "setting_call"
+        and item["status"] in {"open", "planned", "in_progress", "blocked"}
+    ]
+    assert len(active_calls) == 1
+    assert active_calls[0]["due_at"] == due_at
+
+    ok, _ = send_freeform_message(
+        result["conversation_id"],
+        next_action["assigned_to_user_id"],
+        "Merci, le rendez-vous reste bien confirmé.",
+    )
+
+    assert ok is True
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "setting_call"
+    actions = list_actions_for_lead(result["lead_id"], "all")
+    active_followups = [
+        item for item in actions
+        if item["type"] == "follow_up"
+        and item["status"] in {"open", "planned", "in_progress", "blocked"}
+    ]
+    assert active_followups == []
+
+
 def test_reply_send_with_do_not_contact_resolves_without_followup() -> None:
     seed_initial_data()
     result = record_inbound_message(unique_phone(), "Ne me contactez plus.")

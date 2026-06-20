@@ -26,34 +26,37 @@ PROD is prepared cold on `8501` / `8601` with its own database and `SALES_COCKPI
 
 The app has been iteratively reviewed by François and is currently in a good staging prototype state.
 
-## Current Hard Blocker
+## Current Operational Gate
 
-Sales Cockpit is ready for the SchoolDrive payloads it receives, but the real automatic AR-sent path is not yet validated.
+Sales Cockpit is ready for the SchoolDrive payloads it receives. Tiago later reported that the SchoolDrive projector was published and filtered to skip leads/subscriptions created before `2026-03-01`, but the live website-form path still needs one clean validation after the SchoolDrive WhatsApp/projector worker is confirmed running.
 
-Latest diagnostic:
-
-- `lead:124126` / Lydia Djouhri was received in Cockpit staging with `armsg:1005384` as `queued`.
-- Claude Code checked SchoolDrive through MCP and found `armsg:1005384` is actually `sent` in SchoolDrive, with `status_updated_at = 2026-05-29 05:55:03 UTC`.
-- Cockpit has no newer webhook event for `lead:124126`.
-- Cockpit correctly did not create a Tanjona follow-up from the stale `queued` snapshot.
-
-Conclusion:
+Validate this exact path before claiming operational production readiness:
 
 ```text
-SchoolDrive/projector still needs to emit a new snapshot when a WhatsApp AR changes to sent.
+Website form
+-> SchoolDrive creates Lead or Presubscription
+-> SchoolDrive sends automatic WhatsApp AR
+-> AR reaches sent
+-> SchoolDrive emits a newer webhook snapshot
+-> Sales Cockpit updates the thread
+-> Tanjona follow-up is created at sent_at + 72h
+-> pre_cutover_check stays green
 ```
 
-Do not claim production readiness until a real AR-sent event reaches Cockpit and creates the expected Tanjona +72h follow-up.
+Historical note: `lead:124126` previously proved that Cockpit handled a queued snapshot correctly but did not receive a newer AR-sent snapshot. That old diagnostic is no longer the main blocker if the newly published projector now emits fresh AR-sent snapshots.
 
 ## Important Recent Decisions
 
 - The action is now explicitly validated as the central operational unit of the system.
-- A conversation with `open` status must always have one open next action.
+- Canonical model: `Parcours` = commercial state, `Flux` = configurable follow-up scenario, `Action` = operational work item.
+- A conversation with `open` status must normally have one open next action.
+- Exception: if a prospect writes while a setting/closing call is already planned, the conversation can temporarily have both an urgent `reply` and the planned call. The reply must not cancel the call.
 - The exhaustive validated business logic is now in `docs/BUSINESS_LOGIC.md`.
 - The implementation gap analysis is now in `docs/GAP_ANALYSIS.md`.
 - The validated workflow model is documented in `docs/ACTION_WORKFLOW.md` and structured in `sales_cockpit/business_rules.py`; read it before changing `Tâches`, actions, follow-ups, calls, templates, qualification, or automation.
 - Admin now includes a `Workflow` tab showing main action types, support actions, action statuses, and the transition table.
 - The main V1 action chain is `reply`, `follow_up`, `setting_call`, `closing_call`.
+- `setting_call` and `closing_call` are now the future action to document the call at the appointment time. In UI copy, prefer `Documenter appel setting` and `Documenter appel closing`.
 - Qualification, manual notes, and template creation are support actions/proofs by default, not main workflow actions.
 - `setting_call` is the preferred internal term. The UI should say `Appel`, for example `Appel setting` and `Appel closing`, not `Entretien`.
 - Persisted action statuses should be `planned`, `open`, `in_progress`, `done`, `cancelled`, `blocked`; `due` should be calculated from `due_at`, not stored as a status.
@@ -101,6 +104,7 @@ Do not claim production readiness until a real AR-sent event reaches Cockpit and
 - Structured course categories live in `course_categories`. V1 seeds `FSM`, `APP`, and `AS`. Unsupported SchoolDrive categories are stored, displayed, and routed to a Setter I review task instead of receiving an automated Tanjona relance sequence.
 - V1 step/template changes affect only newly created future sequences. Existing open tasks are not recalculated.
 - Outbound WhatsApp messages close the active `reply` or `follow_up` action and create the next follow-up when applicable.
+- If a `reply` is sent while a setting/closing call is already planned and no new appointment outcome is chosen, the reply closes and the planned call remains the next action.
 - `reply` and `follow_up` should not be manually marked as sent in the main Actions flow. The normal proof is the outbound WhatsApp message from the Conversation composer.
 - The Conversation composer can capture the send-time outcome for a `reply`: no appointment, setting appointment booked, closing appointment booked, non pertinent, or ne plus contacter.
 - The `reply` outcome labels must explain the next action clearly. If the prospect accepts an appointment, the user should choose `RDV setting fixé : créer un appel` or `RDV closing fixé : créer un appel` before sending the WhatsApp reply.
@@ -140,7 +144,7 @@ Do not claim production readiness until a real AR-sent event reaches Cockpit and
 - Twilio template audit CLI exists: `scripts/twilio_template_audit.py`.
 - Production cutover runbook exists: `docs/CUTOVER_RUNBOOK.md`.
 - Lead-relative reminders follow `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
-- Course-date reminders win over lead-relative reminders. The losing lead-relative reminder is cancelled.
+- Course-date reminders win over lead-relative reminders when they conflict, but must not interrupt a planned setting/closing call.
 - Minimum outbound WhatsApp follow-up delay is 24h.
 - Tanjona is currently seeded as `setter2@essr.ch`.
 - The UI normalizes old `Setter 2` display names to `Tanjona` to handle stale local sessions or older seeded databases.
@@ -186,10 +190,15 @@ Do not claim production readiness until a real AR-sent event reaches Cockpit and
 
 ## Current Validation
 
-Latest known validation:
+Latest known local validation after the planned-call/course-start workflow changes:
 
-- `pytest`: 93 tests passing.
-- `compileall`: passed for `sales_cockpit`, `scripts`, and `tests`.
+- `pytest`: 108 tests passing.
+- `compileall`: passed for `sales_cockpit` and `scripts`.
+- New automated coverage confirms:
+  - inbound during a planned setting call creates an urgent reply and preserves the planned call;
+  - replying without changing the appointment returns the planned call as next action;
+  - course-start relance can replace a nearby lead-relative relance;
+  - course-start relance does not interrupt a planned setting call.
 - SchoolDrive staging API probe passed with a synthetic create + archive payload.
 - SchoolDrive synthetic smoke passed on staging with run id `smoke-20260619T122027Z`: created, updated, stale ignored, duplicate ignored, sent WhatsApp, queued WhatsApp, archive, and DB side effects all OK.
 - Real SchoolDrive MCP replay/backfill passed on staging. Current counters: 35 accepted SchoolDrive events, 2 ignored stale/duplicate-style events, and 30 SchoolDrive-backed leads in staging.

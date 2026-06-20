@@ -2,9 +2,15 @@
 
 ## Current Status
 
-V1 staging build is runnable. Staging is connected to a real Twilio DEV WhatsApp sender in `live` mode with a recipient allowlist.
+V1 staging build is runnable. Production is deployed cold and remains in Twilio `mock` mode.
 
-The current hard blocker for production cutover is SchoolDrive-side: the projector must emit a new webhook snapshot when a WhatsApp autoresponder changes to `sent`. Sales Cockpit has validated queued/sent ingestion behavior, but the real AR status-change trigger is not yet validated.
+The current production gate is a fresh live SchoolDrive validation after the worker/projector is confirmed running: website form -> SchoolDrive lead/presubscription -> automatic WhatsApp AR -> AR sent snapshot -> Sales Cockpit thread + Tanjona follow-up.
+
+The canonical workflow model is now:
+
+- `Parcours`: commercial state.
+- `Flux`: configurable follow-up scenario and templates.
+- `Action`: operational work item in the queue.
 
 ## Completed
 
@@ -44,6 +50,7 @@ The current hard blocker for production cutover is SchoolDrive-side: the project
 - Inbound unanswered prospects are highlighted with a restrained hot signal and sorted above ordinary due actions.
 - `Tâches` and Inbox auto-refresh every 10 seconds while visible.
 - Action workflow decisions documented in `docs/ACTION_WORKFLOW.md` and structured in `sales_cockpit/business_rules.py`: action as operational unit, main vs support actions, statuses, proofs, outcomes, triggers, and transition table.
+- Workflow concepts clarified and documented: `Parcours` is the commercial state, `Flux` is the configurable follow-up sequence, and `Action` is the concrete operational work item.
 - Admin `Workflow` tab displays main action types, support actions, action statuses, and the transition table.
 - Exhaustive business logic documented in `docs/BUSINESS_LOGIC.md`.
 - Gap analysis documented in `docs/GAP_ANALYSIS.md`.
@@ -57,6 +64,12 @@ The current hard blocker for production cutover is SchoolDrive-side: the project
 - WhatsApp `reply` actions can now choose the business outcome at send time, so the sent message is the proof and the selected outcome creates the next action.
 - The Actions tab is contextual by action type: WhatsApp actions guide users to the Conversation composer, calls use result + mandatory note, contact reviews show explicit do-not-contact decisions, and exceptions live in Actions avancées.
 - Setting/closing calls can be completed with business outcomes that create the next action.
+- Setting/closing call actions now represent the future work of documenting the call at appointment time.
+- Planned setting/closing calls are visible in the conversation detail.
+- If a prospect writes while a setting/closing call is already planned, Sales Cockpit creates an urgent `reply` action without cancelling the planned call.
+- If that reply is sent without changing the appointment, the planned call becomes the visible next action again and no Tanjona follow-up is created.
+- Course-start relance creation now uses SchoolDrive `course.start_date` or the category default session date, can replace a conflicting lead/presubscription relance, and does not interrupt planned setting/closing calls.
+- Workflow readiness now flags resolved conversations with active actions and open conversations with conflicting main actions, while allowing the intentional temporary `reply` + planned call exception.
 - Added tests for resolution/reopen guards, do-not-contact inbound review, template requests, reply-to-follow-up chaining, send-time reply outcomes, call retry chaining, and Streamlit action guidance.
 - Unknown WhatsApp prospects display as `Inconnu(e)` instead of `WhatsApp Unknown`.
 - WhatsApp window labels now read `Ferme le ... à ...`, `Fermée le ... à ...`, or `Jamais ouverte`.
@@ -129,16 +142,16 @@ The current hard blocker for production cutover is SchoolDrive-side: the project
 - Documented Twilio WhatsApp sender migration strategy in `docs/TWILIO_SENDER_MIGRATION.md`.
 - Inbound WhatsApp identity guardrail added: exact phone match attaches automatically; zero or multiple matches create a temporary `À identifier` lead with manual name/course fields.
 - V2 identity-resolution debt is documented in `docs/TECHNICAL_DEBT.md`.
-- Live SchoolDrive projector validation reached a hard blocker: `lead:124126` arrived with `armsg:1005384` as `queued`, but Claude MCP verified the same AR is `sent` in SchoolDrive and no newer webhook reached Cockpit.
+- Historical SchoolDrive diagnostic: `lead:124126` arrived with `armsg:1005384` as `queued`, while Claude MCP verified the same AR was already `sent` in SchoolDrive and no newer webhook reached Cockpit. Tiago later reported that the projector was published; the remaining gate is a fresh live website-form validation.
 
 ## Next Checkpoints
 
-1. Get the SchoolDrive AR-sent trigger/projector fixed or deployed, then validate a real AR status-change event into staging.
-2. Use the real SchoolDrive MCP replay as the current staging baseline and keep the `KEEP_CURRENT_UTC` timestamp convention.
-3. If SchoolDrive is pending, run the synthetic SchoolDrive smoke test on staging after each relevant deployment, but do not treat smoke tests as proof that the real AR-sent trigger works.
-4. Verify live-payload behavior in staging: upsert, stale-event ignore, duplicate-event ignore, WhatsApp body rendering, Tanjona +72h follow-up creation, queued-message no-follow-up, and archive resolution.
+1. Deploy the latest workflow changes to staging.
+2. Create a restore point, then clean/rebuild staging SchoolDrive data if the historical replay pollution makes validation unreadable.
+3. Resume live SchoolDrive validation with a fresh Lead and Presubscription once the worker/projector is visibly running.
+4. Verify live-payload behavior in staging: upsert, stale-event ignore, duplicate-event ignore, WhatsApp body rendering, Tanjona +72h follow-up creation, queued-message no-follow-up, archive resolution, and course-start conflict behavior.
 5. Run a focused UI scenario validation with François or Laura once real SchoolDrive records are visible.
-6. Fix any scenario failures before adding new features.
+6. Run staging `pre_cutover_check` and fix any scenario failure before adding new features.
 7. Keep PROD disconnected until staging scenario behavior and the production cutover checklist are validated.
 8. Only after scenario validation, do a moderate refactor of the large files into UI pages/components, workflow services, seed/reset, and repositories.
 9. Monitor Twilio template approval. Full closed-window validation waits for one approved real template.

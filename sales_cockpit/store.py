@@ -363,6 +363,47 @@ def get_integration_readiness() -> dict[str, Any]:
               )
             """,
         )
+        resolved_conversations_with_action_count = _scalar_count(
+            conn,
+            """
+            SELECT COUNT(*)
+            FROM conversations c
+            WHERE c.status = 'resolved'
+              AND EXISTS (
+                SELECT 1
+                FROM tasks t
+                WHERE t.conversation_id = c.id
+                  AND t.status IN ('planned', 'open', 'in_progress', 'blocked')
+              )
+            """,
+        )
+        conversations_with_multiple_main_actions = _scalar_count(
+            conn,
+            """
+            SELECT COUNT(*)
+            FROM (
+                SELECT
+                    c.id,
+                    COUNT(*) AS total_actions,
+                    SUM(CASE WHEN t.type = 'reply' THEN 1 ELSE 0 END) AS reply_actions,
+                    SUM(CASE WHEN t.type IN ('setting_call', 'closing_call') THEN 1 ELSE 0 END) AS call_actions,
+                    SUM(CASE WHEN t.type = 'follow_up' THEN 1 ELSE 0 END) AS followup_actions
+                FROM conversations c
+                JOIN tasks t ON t.conversation_id = c.id
+                WHERE c.status = 'open'
+                  AND t.status IN ('planned', 'open', 'in_progress', 'blocked')
+                  AND t.type IN ('reply', 'follow_up', 'setting_call', 'closing_call', 'contact_review', 'other')
+                GROUP BY c.id
+                HAVING total_actions > 1
+                   AND NOT (
+                        total_actions = 2
+                        AND reply_actions = 1
+                        AND call_actions = 1
+                        AND followup_actions = 0
+                   )
+            )
+            """,
+        )
         open_action_count = _scalar_count(
             conn,
             "SELECT COUNT(*) FROM tasks WHERE status IN ('planned', 'open', 'in_progress', 'blocked')",
@@ -392,6 +433,11 @@ def get_integration_readiness() -> dict[str, Any]:
         twilio_detail = "Sender non configuré"
 
     backup = _latest_backup_status(settings.environment)
+    workflow_ok = (
+        conversations_without_action == 0
+        and resolved_conversations_with_action_count == 0
+        and conversations_with_multiple_main_actions == 0
+    )
     checks = [
         _readiness_check(
             "SchoolDrive",
@@ -419,10 +465,14 @@ def get_integration_readiness() -> dict[str, Any]:
         ),
         _readiness_check(
             "Workflow",
-            conversations_without_action == 0,
+            workflow_ok,
             "Aucune conversation active sans action"
-            if conversations_without_action == 0
-            else f"{conversations_without_action} conversation(s) active(s) sans prochaine action",
+            if workflow_ok
+            else (
+                f"{conversations_without_action} sans action, "
+                f"{resolved_conversations_with_action_count} terminée(s) avec action, "
+                f"{conversations_with_multiple_main_actions} doublon(s) d'action"
+            ),
             "danger",
         ),
     ]
@@ -461,6 +511,8 @@ def get_integration_readiness() -> dict[str, Any]:
             "pending_template_request_count": pending_template_request_count,
             "schooldrive_waiting_first_autoresponder_count": schooldrive_waiting_first_autoresponder_count,
             "open_conversations_without_action": conversations_without_action,
+            "resolved_conversations_with_action_count": resolved_conversations_with_action_count,
+            "conversations_with_multiple_main_actions": conversations_with_multiple_main_actions,
         },
     }
 
@@ -646,6 +698,12 @@ def ingest_schooldrive_snapshot(envelope: dict[str, Any]) -> dict[str, Any]:
                 lead_id=lead_id,
                 conversation_id=conversation_id,
             )
+            if _latest_sent_schooldrive_autoresponder_at(conn, lead_id):
+                _ensure_course_start_followup(
+                    conn,
+                    lead_id=lead_id,
+                    conversation_id=conversation_id,
+                )
 
         conn.execute(
             """
@@ -1087,6 +1145,185 @@ def _ensure_initial_schooldrive_followup(
         "followup_scheduled_from_schooldrive_autoresponder",
         new={"task_id": action_id, "due_at": due_at, "assigned_to_user_id": setter2_id},
         metadata={"conversation_id": conversation_id},
+    )
+    _ensure_course_start_followup(conn, lead_id, conversation_id)
+
+
+def _course_start_anchor_for_lead(conn: Any, lead_id: int) -> tuple[str | None, str | None]:
+    lead = row_to_dict(
+        conn.execute(
+            """
+            SELECT course_category_short_title, schooldrive_payload_json
+            FROM leads
+            WHERE id = ?
+            """,
+            (lead_id,),
+        ).fetchone()
+    )
+    if not lead:
+        return None, None
+
+    payload_start_date = None
+    try:
+        payload = json.loads(lead.get("schooldrive_payload_json") or "{}")
+        payload_start_date = (
+            ((payload.get("data") or {}).get("course") or {}).get("start_date")
+            or None
+        )
+    except (TypeError, json.JSONDecodeError):
+        payload_start_date = None
+
+    if payload_start_date:
+        return f"{payload_start_date}T08:00:00Z", "Date de cours SchoolDrive"
+
+    category = (lead.get("course_category_short_title") or "").strip().upper()
+    if not category:
+        return None, None
+    row = conn.execute(
+        """
+        SELECT default_start_date, default_course_name
+        FROM course_default_sessions
+        WHERE course_category = ? AND active = 1
+        """,
+        (category,),
+    ).fetchone()
+    if not row:
+        return None, None
+    return f"{row['default_start_date']}T08:00:00Z", f"Session de référence {row['default_course_name']}"
+
+
+def _first_relevant_course_start_step(
+    conn: Any,
+    anchor_iso: str,
+    now: datetime,
+) -> tuple[dict[str, Any], str] | None:
+    rows = conn.execute(
+        """
+        SELECT *
+        FROM sequence_steps
+        WHERE sequence_code = 'course_start' AND active = 1
+        ORDER BY step_index
+        """
+    ).fetchall()
+    steps = rows_to_dicts(rows)
+    if not steps:
+        return None
+
+    anchor = parse_dt(anchor_iso)
+    if not anchor or anchor < now:
+        return None
+
+    fallback: tuple[dict[str, Any], str] | None = None
+    for step in steps:
+        due_at = _due_for_sequence_step(anchor_iso, step)
+        due_dt = parse_dt(due_at)
+        if not due_dt:
+            continue
+        if due_dt >= now:
+            return step, due_at
+        fallback = (step, iso_utc(now))
+    return fallback
+
+
+def _ensure_course_start_followup(
+    conn: Any,
+    lead_id: int,
+    conversation_id: int,
+) -> None:
+    lead = row_to_dict(
+        conn.execute(
+            """
+            SELECT first_name, last_name, lead_status, contact_status, course_category_short_title
+            FROM leads
+            WHERE id = ?
+            """,
+            (lead_id,),
+        ).fetchone()
+    )
+    if not lead or followups_are_blocked(lead):
+        return
+    if not _course_category_is_supported(conn, lead.get("course_category_short_title")):
+        return
+
+    active_call = _first_active_action_for_lead(
+        conn,
+        lead_id,
+        action_types=("setting_call", "closing_call"),
+    )
+    if active_call:
+        return
+
+    existing_course = _first_active_action_for_lead(
+        conn,
+        lead_id,
+        action_types=("follow_up",),
+        sequence_codes=("course_start",),
+    )
+    if existing_course:
+        return
+
+    anchor_iso, anchor_label = _course_start_anchor_for_lead(conn, lead_id)
+    if not anchor_iso:
+        return
+    step_and_due = _first_relevant_course_start_step(conn, anchor_iso, utc_now())
+    if not step_and_due:
+        return
+    step, due_at = step_and_due
+
+    active_followup = _first_active_action_for_lead(
+        conn,
+        lead_id,
+        action_types=("follow_up",),
+    )
+    course_due = parse_dt(due_at)
+    should_replace_followup = False
+    if active_followup and active_followup.get("sequence_code") != "course_start":
+        followup_due = parse_dt(active_followup.get("due_at"))
+        if course_due and followup_due:
+            should_replace_followup = abs((course_due - followup_due).total_seconds()) <= 24 * 3600
+        if course_due and course_due <= utc_now() + timedelta(hours=24):
+            should_replace_followup = True
+        if not should_replace_followup:
+            return
+        _complete_open_actions_for_lead(
+            conn,
+            lead_id,
+            user_id=None,
+            outcome="Relance annulée : relance début de cours prioritaire",
+            included_types=("follow_up",),
+            excluded_sequence_codes=("course_start",),
+        )
+
+    setter2_id = setter2_user_id(conn)
+    if not setter2_id:
+        return
+    action_id = _insert_next_action(
+        conn,
+        lead_id=lead_id,
+        conversation_id=conversation_id,
+        action_type="follow_up",
+        title=f"Relancer {lead_full_name(lead)} avant début de cours",
+        assigned_to_user_id=setter2_id,
+        created_by_user_id=None,
+        urgency="high",
+        due_at=due_at,
+        status="planned" if course_due and course_due > utc_now() else "open",
+        trigger_reason="course_start_approaching",
+        sequence_code="course_start",
+        sequence_step_index=step["step_index"],
+        metadata=_sequence_anchor_metadata(anchor_iso, anchor_label or "Début de cours"),
+    )
+    insert_event(
+        conn,
+        lead_id,
+        "course_start_followup_scheduled",
+        new={
+            "task_id": action_id,
+            "due_at": due_at,
+            "step_index": step["step_index"],
+            "assigned_to_user_id": setter2_id,
+        },
+        metadata={"conversation_id": conversation_id, "anchor_at": anchor_iso},
     )
 
 
@@ -1689,8 +1926,8 @@ def assign_standard_next_action(
         titles = {
             "reply": f"Répondre à {full_name}",
             "follow_up": f"Relancer {full_name}",
-            "setting_call": f"Appeler {full_name} pour setting",
-            "closing_call": f"Appeler {full_name} pour closing",
+            "setting_call": f"Documenter l'appel setting de {full_name}",
+            "closing_call": f"Documenter l'appel closing de {full_name}",
         }
         trigger_reasons = {
             "reply": "standard_reply_assigned",
@@ -1823,7 +2060,7 @@ def handoff_to_closer(
             lead_id=conv["lead_id"],
             conversation_id=conversation_id,
             action_type="closing_call",
-            title=f"Contacter {full_name} pour closing",
+            title=f"Documenter l'appel closing de {full_name}",
             assigned_to_user_id=closer_user_id,
             created_by_user_id=user_id,
             urgency="high",
@@ -1957,8 +2194,8 @@ def set_conversation_status(
             action_labels = {
                 "reply": "Répondre à",
                 "follow_up": "Relancer",
-                "setting_call": "Appeler",
-                "closing_call": "Contacter pour closing",
+                "setting_call": "Documenter l'appel setting de",
+                "closing_call": "Documenter l'appel closing de",
             }
             prefix = action_labels.get(action_type, "Traiter")
             created_action_id = _insert_next_action(
@@ -2078,18 +2315,33 @@ def _complete_open_actions_for_lead(
     user_id: int | None,
     outcome: str,
     excluded_types: tuple[str, ...] = (),
+    included_types: tuple[str, ...] | None = None,
+    excluded_sequence_codes: tuple[str, ...] = (),
 ) -> None:
     params: list[Any] = [lead_id]
     exclusion = ""
+    inclusion = ""
+    sequence_exclusion = ""
+    if included_types:
+        placeholders = ", ".join("?" for _ in included_types)
+        inclusion = f" AND type IN ({placeholders})"
+        params.extend(included_types)
     if excluded_types:
         placeholders = ", ".join("?" for _ in excluded_types)
         exclusion = f" AND type NOT IN ({placeholders})"
         params.extend(excluded_types)
+    if excluded_sequence_codes:
+        placeholders = ", ".join("?" for _ in excluded_sequence_codes)
+        sequence_exclusion = (
+            f" AND (sequence_code IS NULL OR sequence_code NOT IN ({placeholders}))"
+        )
+        params.extend(excluded_sequence_codes)
 
     rows = conn.execute(
         f"""
         SELECT id FROM tasks
-        WHERE lead_id = ? AND status IN ('open', 'in_progress', 'planned', 'blocked'){exclusion}
+        WHERE lead_id = ? AND status IN ('open', 'in_progress', 'planned', 'blocked')
+        {inclusion}{exclusion}{sequence_exclusion}
         """,
         params,
     ).fetchall()
@@ -2122,6 +2374,7 @@ def _first_active_action_for_lead(
     lead_id: int,
     action_types: tuple[str, ...] | None = None,
     include_blocked: bool = True,
+    sequence_codes: tuple[str, ...] | None = None,
 ) -> dict[str, Any] | None:
     statuses = "('open', 'in_progress', 'planned', 'blocked')" if include_blocked else "('open', 'in_progress', 'planned')"
     filters = ["lead_id = ?", f"status IN {statuses}"]
@@ -2130,6 +2383,10 @@ def _first_active_action_for_lead(
         placeholders = ", ".join("?" for _ in action_types)
         filters.append(f"type IN ({placeholders})")
         params.extend(action_types)
+    if sequence_codes:
+        placeholders = ", ".join("?" for _ in sequence_codes)
+        filters.append(f"sequence_code IN ({placeholders})")
+        params.extend(sequence_codes)
     row = conn.execute(
         f"""
         SELECT *
@@ -2330,12 +2587,19 @@ def _close_outbound_action_and_chain(
                 if _is_setter1_user(conn, assigned_to_user_id)
                 else setter1_user_id(conn)
             ) or action.get("assigned_to_user_id") or user_id
+            _complete_open_actions_for_lead(
+                conn,
+                conv["lead_id"],
+                user_id,
+                outcome="Appel setting remplacé",
+                included_types=("setting_call",),
+            )
             next_action_id = _insert_next_action(
                 conn,
                 lead_id=conv["lead_id"],
                 conversation_id=conv["id"],
                 action_type="setting_call",
-                title=f"Appeler {full_name} pour setting",
+                title=f"Documenter l'appel setting de {full_name}",
                 assigned_to_user_id=assignee_id,
                 created_by_user_id=user_id,
                 urgency="high",
@@ -2351,6 +2615,13 @@ def _close_outbound_action_and_chain(
             closer_id = assigned_to_user_id or default_closer_user_id(conn)
             if not closer_id:
                 return
+            _complete_open_actions_for_lead(
+                conn,
+                conv["lead_id"],
+                user_id,
+                outcome="Appel closing remplacé",
+                included_types=("closing_call",),
+            )
             conn.execute(
                 """
                 UPDATE leads
@@ -2364,7 +2635,7 @@ def _close_outbound_action_and_chain(
                 lead_id=conv["lead_id"],
                 conversation_id=conv["id"],
                 action_type="closing_call",
-                title=f"Contacter {full_name} pour closing",
+                title=f"Documenter l'appel closing de {full_name}",
                 assigned_to_user_id=closer_id,
                 created_by_user_id=user_id,
                 urgency="high",
@@ -2411,6 +2682,23 @@ def _close_outbound_action_and_chain(
                 "conversation_resolved_by_reply_outcome",
                 user_id=user_id,
                 metadata={"outcome": action_outcome, "message_id": message_id},
+            )
+            return
+
+        active_call = _first_active_action_for_lead(
+            conn,
+            conv["lead_id"],
+            action_types=("setting_call", "closing_call"),
+        )
+        if active_call:
+            insert_event(
+                conn,
+                conv["lead_id"],
+                "reply_completed_planned_call_kept",
+                user_id=user_id,
+                previous={"reply_task_id": action["id"]},
+                new={"kept_call_task_id": active_call["id"], "kept_call_type": active_call["type"]},
+                metadata={"conversation_id": conv["id"]},
             )
             return
 
@@ -2526,11 +2814,7 @@ def _upsert_reply_action_for_inbound(
         lead_id,
         user_id=None,
         outcome="Nouveau message reçu",
-        excluded_types=(
-            ("contact_review",)
-            if lead.get("contact_status") in STOP_CONTACT_STATUSES
-            else ("reply",)
-        ),
+        included_types=("follow_up",),
     )
 
     if lead.get("contact_status") in STOP_CONTACT_STATUSES:
@@ -4446,12 +4730,12 @@ def _sync_next_action_for_sales_stage(
     if sales_stage == "closing":
         target_type = "closing_call"
         assignee_id = row.get("closer_user_id") or default_closer_user_id(conn)
-        title = f"Contacter {full_name} pour closing"
+        title = f"Documenter l'appel closing de {full_name}"
         urgency = "high"
     elif sales_stage == "appointment_booked":
         target_type = "setting_call"
         assignee_id = row.get("setter_user_id") or _default_active_user_id(conn, "setter")
-        title = f"Appeler {full_name} pour setting"
+        title = f"Documenter l'appel setting de {full_name}"
         urgency = "high"
     elif sales_stage in {"new", "setting"}:
         target_type = "reply"
@@ -5310,6 +5594,25 @@ def complete_action_with_workflow(
         next_action_id = None
         if task["type"] == "reply":
             if outcome == "reply_no_appointment":
+                active_call = _first_active_action_for_lead(
+                    conn,
+                    task["lead_id"],
+                    action_types=("setting_call", "closing_call"),
+                )
+                if active_call:
+                    insert_event(
+                        conn,
+                        task["lead_id"],
+                        "reply_completed_planned_call_kept",
+                        user_id=user_id,
+                        previous={"reply_task_id": task_id},
+                        new={
+                            "kept_call_task_id": active_call["id"],
+                            "kept_call_type": active_call["type"],
+                        },
+                        metadata={"conversation_id": conversation_id},
+                    )
+                    return True, "Action terminée. L'appel déjà planifié reste actif."
                 first_step = _get_sequence_step(conn, "setter_no_next_step", 1)
                 if not first_step:
                     return False, "Étape de relance introuvable."
@@ -5328,12 +5631,19 @@ def complete_action_with_workflow(
                     if _is_setter1_user(conn, assigned_to_user_id)
                     else setter1_user_id(conn)
                 ) or task.get("assigned_to_user_id") or user_id
+                _complete_open_actions_for_lead(
+                    conn,
+                    task["lead_id"],
+                    user_id,
+                    outcome="Appel setting remplacé",
+                    included_types=("setting_call",),
+                )
                 next_action_id = _insert_next_action(
                     conn,
                     lead_id=task["lead_id"],
                     conversation_id=conversation_id,
                     action_type="setting_call",
-                    title=f"Appeler {full_name} pour setting",
+                    title=f"Documenter l'appel setting de {full_name}",
                     assigned_to_user_id=assignee_id,
                     created_by_user_id=user_id,
                     urgency="high",
@@ -5346,6 +5656,13 @@ def complete_action_with_workflow(
                 closer_id = assigned_to_user_id or default_closer_user_id(conn)
                 if not closer_id or not conversation_id:
                     return False, "Closer ou conversation introuvable."
+                _complete_open_actions_for_lead(
+                    conn,
+                    task["lead_id"],
+                    user_id,
+                    outcome="Appel closing remplacé",
+                    included_types=("closing_call",),
+                )
                 conn.execute(
                     """
                     UPDATE leads
@@ -5359,7 +5676,7 @@ def complete_action_with_workflow(
                     lead_id=task["lead_id"],
                     conversation_id=conversation_id,
                     action_type="closing_call",
-                    title=f"Contacter {full_name} pour closing",
+                    title=f"Documenter l'appel closing de {full_name}",
                     assigned_to_user_id=closer_id,
                     created_by_user_id=user_id,
                     urgency="high",
@@ -5389,7 +5706,7 @@ def complete_action_with_workflow(
                     lead_id=task["lead_id"],
                     conversation_id=conversation_id,
                     action_type="closing_call",
-                    title=f"Contacter {full_name} pour closing",
+                    title=f"Documenter l'appel closing de {full_name}",
                     assigned_to_user_id=closer_id,
                     created_by_user_id=user_id,
                     urgency="high",
@@ -5410,7 +5727,7 @@ def complete_action_with_workflow(
                         lead_id=task["lead_id"],
                         conversation_id=conversation_id,
                         action_type="setting_call",
-                        title=f"Rappeler {full_name} pour setting",
+                        title=f"Documenter le rappel setting de {full_name}",
                         assigned_to_user_id=task["assigned_to_user_id"] or user_id,
                         created_by_user_id=user_id,
                         urgency="high",
@@ -5431,7 +5748,7 @@ def complete_action_with_workflow(
                         lead_id=task["lead_id"],
                         conversation_id=conversation_id,
                         action_type="setting_call",
-                        title=f"Rappeler {full_name} pour setting",
+                        title=f"Documenter le rappel setting de {full_name}",
                         assigned_to_user_id=task["assigned_to_user_id"] or user_id,
                         created_by_user_id=user_id,
                         urgency="high",
@@ -5499,7 +5816,7 @@ def complete_action_with_workflow(
                         lead_id=task["lead_id"],
                         conversation_id=conversation_id,
                         action_type="closing_call",
-                        title=f"Rappeler {full_name} pour closing",
+                        title=f"Documenter le rappel closing de {full_name}",
                         assigned_to_user_id=task["assigned_to_user_id"] or user_id,
                         created_by_user_id=user_id,
                         urgency="high",
@@ -5520,7 +5837,7 @@ def complete_action_with_workflow(
                         lead_id=task["lead_id"],
                         conversation_id=conversation_id,
                         action_type="closing_call",
-                        title=f"Rappeler {full_name} pour closing",
+                        title=f"Documenter le rappel closing de {full_name}",
                         assigned_to_user_id=task["assigned_to_user_id"] or user_id,
                         created_by_user_id=user_id,
                         urgency="high",
