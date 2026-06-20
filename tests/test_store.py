@@ -105,6 +105,19 @@ def test_integration_readiness_summary_exposes_core_sections() -> None:
     assert "open_conversations_without_action" in readiness["workflow"]
 
 
+def test_integration_readiness_accepts_mock_twilio_without_sender(monkeypatch) -> None:
+    monkeypatch.setenv("SALES_COCKPIT_TWILIO_MODE", "mock")
+    monkeypatch.delenv("SALES_COCKPIT_TWILIO_WHATSAPP_SENDER", raising=False)
+    get_settings.cache_clear()
+    seed_initial_data()
+
+    readiness = get_integration_readiness()
+
+    twilio = next(item for item in readiness["checks"] if item["name"] == "Twilio")
+    assert twilio["state"] == "ready"
+    assert "mock" in twilio["detail"]
+
+
 def test_readiness_allows_schooldrive_waiting_for_first_sent_autoresponder() -> None:
     seed_initial_data()
     queued_payload = build_smoke_steps(

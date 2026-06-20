@@ -377,6 +377,20 @@ def get_integration_readiness() -> dict[str, Any]:
             "SELECT COUNT(*) FROM template_requests WHERE status IN ('to_create', 'submitted')",
         )
 
+    twilio_mode = (settings.twilio_mode or "mock").lower()
+    twilio_live_ready = bool(
+        settings.twilio_account_sid
+        and settings.twilio_auth_token
+        and settings.twilio_whatsapp_sender
+    )
+    twilio_ready = twilio_mode == "mock" or twilio_live_ready
+    if twilio_mode == "mock":
+        twilio_detail = "Mode mock, aucun envoi WhatsApp réel"
+    elif twilio_live_ready:
+        twilio_detail = "Configuration présente"
+    else:
+        twilio_detail = "Sender non configuré"
+
     backup = _latest_backup_status(settings.environment)
     checks = [
         _readiness_check(
@@ -393,8 +407,8 @@ def get_integration_readiness() -> dict[str, Any]:
         ),
         _readiness_check(
             "Twilio",
-            bool(settings.twilio_account_sid and settings.twilio_auth_token and settings.twilio_whatsapp_sender),
-            "Configuration présente" if settings.twilio_whatsapp_sender else "Sender non configuré",
+            twilio_ready,
+            twilio_detail,
             "warning",
         ),
         _readiness_check(
@@ -432,6 +446,7 @@ def get_integration_readiness() -> dict[str, Any]:
         },
         "twilio": {
             "mode": settings.twilio_mode,
+            "content_read_only": bool(settings.twilio_content_read_only),
             "account_configured": bool(settings.twilio_account_sid),
             "sender": settings.twilio_whatsapp_sender or "",
             "status_callback_configured": bool(settings.twilio_status_callback_url),
