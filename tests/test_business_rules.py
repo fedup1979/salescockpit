@@ -2,6 +2,7 @@ from sales_cockpit.business_rules import (
     ACTION_STATUSES,
     CONTACT_STATUSES,
     MAIN_ACTION_TYPES,
+    PILOTAGE_VALIDATION_CASES,
     RESOLUTION_REASONS,
     SEQUENCE_STEPS,
     SUPPORT_ACTIONS,
@@ -35,6 +36,23 @@ def test_action_workflow_rules_are_structured() -> None:
         <= set(item)
         for item in WORKFLOW_TRANSITIONS
     )
+
+
+def test_pilotage_validation_cases_are_structured() -> None:
+    required = {
+        "statut",
+        "depart",
+        "evenement",
+        "reponse_systeme",
+        "utilisateur",
+        "resolution_action",
+        "prochaine_action",
+    }
+    assert len(PILOTAGE_VALIDATION_CASES) >= 30
+    assert all(required <= set(item) for item in PILOTAGE_VALIDATION_CASES)
+    assert any("Ne plus contacter" in item["depart"] for item in PILOTAGE_VALIDATION_CASES)
+    assert any("début du cours" in item["evenement"].lower() for item in PILOTAGE_VALIDATION_CASES)
+    assert any(item["statut"] != "Actif" for item in PILOTAGE_VALIDATION_CASES)
 
 
 def test_validated_business_objects_are_declared() -> None:

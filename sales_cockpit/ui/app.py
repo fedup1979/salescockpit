@@ -19,6 +19,7 @@ from sales_cockpit.business_rules import (
     LEAD_TYPES,
     MAIN_ACTION_TYPES,
     OPERATING_RULES,
+    PILOTAGE_VALIDATION_CASES,
     QUALIFICATION_STATUSES,
     RESOLUTION_REASONS,
     SALES_ACTORS,
@@ -2746,26 +2747,61 @@ def render_pilotage_scenario_tables(user: dict) -> None:
 
 
 def render_pilotage_conflict_rules() -> None:
-    st.markdown("### Règles de conflit")
-    st.caption("Ces règles expliquent ce qui doit se passer quand plusieurs flux ou événements se chevauchent.")
+    st.markdown("### Lecture de la logique métier")
+    st.caption(
+        "Cette section sert à valider la logique complète : état de départ, événement, réponse du système, "
+        "geste utilisateur, résolution et prochaine action. Les cas utilisent un seul cours de référence, "
+        "car la logique est identique pour APP, FSM, AS et les autres cours une fois configurés."
+    )
+
+    st.markdown("### Règles transversales")
+    st.caption("Ces règles gagnent quand deux flux ou événements se chevauchent.")
     for index, rule in enumerate(PILOTAGE_CONFLICT_RULES, start=1):
         st.markdown(f"**{index}. {rule['Situation']}**")
         st.write(rule["Règle"])
+
+    st.markdown("### Tous les cas à valider")
+    st.caption(
+        "Les lignes `Actif` décrivent le comportement actuellement attendu du cockpit. "
+        "Les lignes `Partiel / à valider` ou `V2 / à valider` signalent les règles connues mais non finalisées."
+    )
+    st.dataframe(PILOTAGE_VALIDATION_CASES, hide_index=True, use_container_width=True, height=760)
+
     st.markdown("### Règles métier de référence")
-    selected = [
-        item for item in OPERATING_RULES
-        if item["rule"] in {
-            "Fenêtre WhatsApp",
-            "Premier template automatique",
-            "Relances hors fenêtre",
-            "Délai minimum WhatsApp",
-            "Conflit lead vs cours",
-            "Message entrant pendant appel planifié",
-            "Non pertinent",
-            "Ne plus contacter",
+    st.caption("Table brute des règles générales utilisées par le système et par la matrice ci-dessus.")
+    st.dataframe(pilotage_function_rows(OPERATING_RULES), hide_index=True, use_container_width=True, height=360)
+
+    st.markdown("### Table technique de transition")
+    st.caption(
+        "Vue plus technique : action courante + trigger + résultat -> prochaine action. "
+        "Elle complète la matrice métier et sert de garde-fou pour l'implémentation."
+    )
+    st.dataframe(pilotage_function_rows(WORKFLOW_TRANSITIONS), hide_index=True, use_container_width=True, height=460)
+
+
+def pilotage_function_rows(rows: list[dict]) -> list[dict]:
+    return [
+        {
+            key: pilotage_function_text(value)
+            for key, value in row.items()
         }
+        for row in rows
     ]
-    st.dataframe(selected, hide_index=True, use_container_width=True, height=300)
+
+
+def pilotage_function_text(value):
+    if not isinstance(value, str):
+        return value
+    replacements = {
+        "Tanjona": "Setter II",
+        "Mihary": "Setter I",
+        "Yasmine": "Closer",
+        "Setter 1": "Setter I",
+    }
+    text = value
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
 
 
 def render_pilotage_simulator() -> None:
