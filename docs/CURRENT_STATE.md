@@ -84,30 +84,39 @@ Real ESSR templates should be synchronized from the real ESSR Twilio account in 
 
 ### Template Mapping
 
-Implemented locally after the previous documentation update:
+Implemented and deployed in commit `f8e8a0b`.
 
 - `sequence_template_mappings` links a follow-up sequence step to a real `whatsapp_templates` row.
 - Mapping dimensions: `sequence_code`, `sequence_step_index`, `lead_type`, `course_category`.
 - `all` is supported for lead type and course category.
-- Admin > Séquences lets admins add, update, or deactivate recommended templates.
+- Pilotage > Flux par scénario lets admins assign approved Twilio templates while looking at the full message body.
+- Admin > Séquences still displays the technical mapping table.
+- Only real Twilio templates approved by WhatsApp can be mapped. Draft, pending, rejected, local demo, and `HX_MOCK_*` templates are rejected.
 - During a `follow_up` action, the Conversation tab displays the recommended template when a mapping matches the prospect.
 
 This lets Laura map real Twilio templates to events such as "APP relance 3" without changing the core workflow.
 
 ### Pilotage Page
 
-Implemented in commit `6c48293`.
+Implemented in commit `6c48293`, then expanded in commit `f8e8a0b`.
 
 `Pilotage` is an admin-only commercial tuning page for Laura. It keeps the existing technical Admin page intact, but exposes the workflow in a more human-readable way:
 
 - overview of normal flows;
+- active course categories handled by structured flows;
 - default course sessions by category;
+- editable sequence steps: delay, meaning, template required, active/inactive;
 - scenario timelines by lead type, course category and sequence;
 - full template message body, Twilio SID and template status for each step;
+- approved template assignment by flow, step, lead type and course category;
 - natural-language conflict rules;
 - simple simulator for lead-relative and course-start timelines.
 
 Default course sessions live in `course_default_sessions`. They are used as a planning layer when a SchoolDrive Lead has only a course category, for example `APP`, but no specific session or `start_date`. SchoolDrive data remains authoritative: if SchoolDrive provides a real session/start date, it wins over the default session.
+
+Structured course categories live in `course_categories`. V1 seeds `FSM`, `APP`, and `AS`. If SchoolDrive sends a lead or presubscription with a sent WhatsApp for an unsupported category, Sales Cockpit still stores and displays the conversation, but it does not create the automated Tanjona relance sequence. Instead it creates a human review action for Setter I/Mihary with trigger `unconfigured_course_category`.
+
+V1 behavior: changing sequence steps or template mappings affects only newly created future sequences. Existing open tasks are not recalculated. V2 debt: add a controlled recalculation button.
 
 ### SchoolDrive
 
@@ -116,6 +125,7 @@ Validated:
 - SchoolDrive can POST lead and presubscription snapshots to staging.
 - Sales Cockpit accepts the payload, upserts the lead, creates/updates the conversation, stores SchoolDrive URLs, and materializes WhatsApp autoresponders in the thread.
 - Sent autoresponder snapshots create a Tanjona follow-up at `sent_at + 72h`.
+- The first sent SchoolDrive autoresponder is the anchor for the initial no-reply sequence. Later SchoolDrive autoresponders are stored in the thread but must not recreate the initial follow-up.
 - Queued autoresponder snapshots do not create a follow-up.
 - Archived records resolve the conversation and close actions.
 - Duplicate and stale event handling works.

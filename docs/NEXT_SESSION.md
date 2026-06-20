@@ -89,6 +89,11 @@ Do not claim production readiness until a real AR-sent event reaches Cockpit and
 - While a prospect is `Ne plus contacter`, all WhatsApp sends are blocked, including free-form messages and templates. The user must complete the contact review and lift the status before replying.
 - Missing templates create `template_requests` linked to the blocked follow-up action.
 - Follow-up sequences and sequence steps are stored structurally in SQLite and displayed in Admin.
+- Pilotage lets admins edit sequence step delay/meaning/template-required/active state without code. Do not delete steps; deactivate them.
+- Pilotage lets admins assign approved real Twilio templates by flow, step, lead type and course category.
+- Template mappings must only use real Twilio templates approved by WhatsApp. Draft, pending, rejected, local demo, and `HX_MOCK_*` templates are deliberately ignored/rejected for operational recommendations.
+- Structured course categories live in `course_categories`. V1 seeds `FSM`, `APP`, and `AS`. Unsupported SchoolDrive categories are stored, displayed, and routed to a Setter I review task instead of receiving an automated Tanjona relance sequence.
+- V1 step/template changes affect only newly created future sequences. Existing open tasks are not recalculated.
 - Outbound WhatsApp messages close the active `reply` or `follow_up` action and create the next follow-up when applicable.
 - `reply` and `follow_up` should not be manually marked as sent in the main Actions flow. The normal proof is the outbound WhatsApp message from the Conversation composer.
 - The Conversation composer can capture the send-time outcome for a `reply`: no appointment, setting appointment booked, closing appointment booked, non pertinent, or ne plus contacter.
@@ -100,7 +105,7 @@ Do not claim production readiness until a real AR-sent event reaches Cockpit and
 - Non-admin users can search templates and create template requests only.
 - Twilio templates are synchronized from the Twilio Content API through `sales_cockpit/services/twilio_content.py`.
 - In `sandbox` or `live` mode, approved templates are sendable only if they have a real Twilio `twilio_content_sid`; `HX_MOCK` demo templates are excluded from the send list.
-- The Modèles page defaults to `Twilio DEV` in sandbox/live mode to avoid confusing real Content API templates with local demo templates.
+- The Modèles page labels real Content API templates as `Twilio`; demo templates remain separate.
 - ESSR production WhatsApp sender migration is documented in `docs/TWILIO_SENDER_MIGRATION.md`; do not assume buying a new Twilio number validates the ESSR sender.
 - Delivery statuses are shown in conversation messages with WhatsApp-style checks: sent, delivered, read, failed, or queued/sending.
 - Front must remain read-only until an explicit import/cutover decision. The current Front work is a read-only API client, dry-run script, retry handling, and documentation for historical import.

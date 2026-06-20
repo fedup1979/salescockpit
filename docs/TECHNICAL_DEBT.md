@@ -36,3 +36,37 @@ Sales Cockpit still needs a real identity-resolution workflow:
 ### Cutover Risk
 
 Do not auto-attach an inbound WhatsApp to a candidate when more than one lead shares the same phone number. Wrong identity attachment is more dangerous than a temporary `À identifier` record.
+
+## Sequence Recalculation
+
+### V1 Implemented Guardrail
+
+Admins can tune active course categories, sequence steps, and template mappings in Sales Cockpit. These changes deliberately affect only future sequences created after the save.
+
+Existing open tasks keep their original due date, step index, assignee, and recommended template. This avoids silently changing work already visible in a user's queue.
+
+### V2 Debt
+
+Add a controlled recalculation workflow:
+
+- preview which open or future tasks would change;
+- show old versus new due date, step, template and assignee;
+- let an admin apply the recalculation only to selected sequences, categories, or leads;
+- write an audit log entry for every recalculated task;
+- never recalculate completed, cancelled, archived, signed, non pertinent, or do-not-contact conversations.
+
+## Unsupported Course Categories
+
+### V1 Implemented Guardrail
+
+If SchoolDrive sends a lead or presubscription for a category not active in `course_categories`, Sales Cockpit stores the conversation and SchoolDrive WhatsApp messages, but creates a Setter I review task instead of starting the structured Tanjona follow-up sequence.
+
+### V2 Debt
+
+Add a guided admin workflow to activate a new course category:
+
+- choose or create the category;
+- configure the default session;
+- define templates for every required flow step;
+- run a simulator before activation;
+- optionally reprocess the waiting review tasks once the category is configured.

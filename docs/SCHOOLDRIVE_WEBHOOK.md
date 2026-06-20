@@ -89,17 +89,17 @@ Do not treat the SchoolDrive integration as production-ready until this real pat
 
 ## Action Rule
 
-If the accepted snapshot contains a sent autoresponder with `sent_at`, and no active action exists, the cockpit creates:
+If the accepted snapshot contains a first sent autoresponder with `sent_at`, and no active action exists, the cockpit creates:
 
 ```text
 type = follow_up
 assigned_to = Tanjona
-due_at = latest sent_at + 72h
+due_at = first sent_at + 72h
 sequence_code = lead_no_reply
 sequence_step_index = 1
 ```
 
-If no sent autoresponder exists yet, the cockpit waits for the next SchoolDrive snapshot instead of inventing a date.
+If no sent autoresponder exists yet, the cockpit waits for the next SchoolDrive snapshot instead of inventing a date. Later sent SchoolDrive autoresponders are stored in the thread, but they must not recreate the initial no-reply follow-up once that initial follow-up has existed.
 
 If `is_archived` is true, the cockpit resolves the conversation, closes open actions, and adds an internal note.
 
