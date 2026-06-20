@@ -96,6 +96,8 @@ Do not claim production readiness until a real AR-sent event reaches Cockpit and
 - Relance WhatsApp steps are `action_type='follow_up'` and must have a recommended approved real Twilio template for each operational category.
 - Pilotage lets admins assign approved real Twilio templates by flow, step, lead type and course category.
 - Template mappings must only use real Twilio templates approved by WhatsApp. Draft, pending, rejected, local demo, and `HX_MOCK_*` templates are deliberately ignored/rejected for operational recommendations.
+- Initial template premapping exists in `scripts/premap_sequence_templates.py`. It maps the approved ESSR Twilio templates to every required `follow_up` step for `FSM`, `APP`, and `AS` using `lead_type = all`. It was applied to staging and prod on 2026-06-20 with 75 mappings total, 25 per category. Treat it as an AI-generated first pass to validate with Laura, not as final commercial truth.
+- `scripts/premap_sequence_templates.py --dry-run` is safe and should be used before reapplying. The script is idempotent and uses the existing `upsert_sequence_template_mapping` guardrails, so it only accepts active `follow_up` steps and approved real Twilio templates.
 - Structured course categories live in `course_categories`. V1 seeds `FSM`, `APP`, and `AS`. Unsupported SchoolDrive categories are stored, displayed, and routed to a Setter I review task instead of receiving an automated Tanjona relance sequence.
 - V1 step/template changes affect only newly created future sequences. Existing open tasks are not recalculated.
 - Outbound WhatsApp messages close the active `reply` or `follow_up` action and create the next follow-up when applicable.

@@ -1,6 +1,6 @@
 # Current Project State
 
-Last updated: 2026-06-20 10:54 Europe/Zurich.
+Last updated: 2026-06-20 15:33 Europe/Zurich.
 
 This is the first document to read when resuming Sales Cockpit.
 
@@ -95,6 +95,28 @@ Implemented and deployed in commit `f8e8a0b`.
 - During a `follow_up` action, the Conversation tab displays the recommended template when a mapping matches the prospect.
 
 This lets Laura map real Twilio templates to events such as "APP relance 3" without changing the core workflow.
+
+Initial ESSR premapping was applied on staging and prod on 2026-06-20:
+
+- script: `scripts/premap_sequence_templates.py`;
+- scope: `FSM`, `APP`, `AS`;
+- count: 75 mappings total, 25 per category;
+- dimensions: `lead_type = all`, category-specific `course_category`;
+- safety: only approved real Twilio templates with real `HX...` Content SIDs are accepted;
+- note stored on mappings: `Pré-mapping IA à valider avec Laura.`;
+- purpose: give Laura a strong starting point for fine-tuning, not lock the commercial decision.
+
+Backups created immediately before the write:
+
+- staging: `/opt/sales-cockpit/backups/staging/sales_cockpit_staging_20260620T133220Z.db.gz`;
+- prod: `/opt/sales-cockpit/backups/prod/sales_cockpit_prod_20260620T133220Z.db.gz`.
+
+Verification after premapping:
+
+- staging: `APP=25`, `AS=25`, `FSM=25`, missing required follow-up mappings `0`;
+- prod: `APP=25`, `AS=25`, `FSM=25`, missing required follow-up mappings `0`;
+- staging `pre_cutover_check`: OK;
+- prod API/UI/Twilio/Backup/Workflow checks: OK; prod readiness still warns that no SchoolDrive webhook has been received, which is expected until SchoolDrive prod is connected.
 
 ### Pilotage Page
 

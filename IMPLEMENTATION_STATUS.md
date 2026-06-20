@@ -115,6 +115,8 @@ The current hard blocker for production cutover is SchoolDrive-side: the project
 - Added automated backup cron installer: `deploy/scripts/install_backup_cron.sh`.
 - Added pre-cutover CLI check: `scripts/pre_cutover_check.py`.
 - Added Twilio template audit CLI: `scripts/twilio_template_audit.py`.
+- Added initial ESSR template premapping CLI: `scripts/premap_sequence_templates.py`.
+- Applied the initial AI-selected premapping on staging and prod: 75 approved real Twilio template mappings total, 25 each for `FSM`, `APP`, and `AS`. This is explicitly a starting point for Laura's commercial validation.
 - Documented backup/restore procedure in `docs/BACKUP_RESTORE.md`.
 - Staging backup and restore have been tested successfully on DigitalOcean.
 - Latest staging readiness is green for SchoolDrive, Front, Twilio, Backup, and Workflow.
