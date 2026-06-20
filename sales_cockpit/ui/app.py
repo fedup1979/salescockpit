@@ -296,19 +296,33 @@ def render_shell() -> None:
     if user["role"] == "admin":
         nav_options.insert(2, "Pilotage")
         nav_options.append("Admin")
+    nav = resolve_navigation(nav_options)
     with st.sidebar:
         st.subheader("Sales Cockpit")
         st.caption(f"{display_user_name(user)} · {display_user_role(user)}")
-        nav = st.radio(
-            "Navigation",
-            nav_options,
-            label_visibility="collapsed",
-            key="main_navigation",
-        )
+        desktop_radio_kwargs = {
+            "label": "Navigation",
+            "options": nav_options,
+            "label_visibility": "collapsed",
+            "key": "desktop_navigation",
+        }
+        if "desktop_navigation" not in st.session_state:
+            desktop_radio_kwargs["index"] = safe_index(nav_options, nav)
+        st.radio(**desktop_radio_kwargs)
         render_bug_report_button(user, nav)
         if st.button("Déconnexion", use_container_width=True):
             st.session_state.pop("user", None)
             st.rerun()
+
+    with st.container(key="mobile_nav"):
+        mobile_select_kwargs = {
+            "label": "Page",
+            "options": nav_options,
+            "key": "mobile_navigation",
+        }
+        if "mobile_navigation" not in st.session_state:
+            mobile_select_kwargs["index"] = safe_index(nav_options, nav)
+        st.selectbox(**mobile_select_kwargs)
 
     if nav == "Tâches":
         render_work_queue(user)
@@ -322,6 +336,34 @@ def render_shell() -> None:
         render_user_guide()
     elif nav == "Admin":
         render_admin(user)
+
+
+def resolve_navigation(nav_options: list[str]) -> str:
+    fallback = nav_options[0]
+    current = (
+        st.session_state.get("active_navigation")
+        or st.session_state.get("main_navigation")
+        or fallback
+    )
+    if current not in nav_options:
+        current = fallback
+
+    desktop_value = st.session_state.get("desktop_navigation", current)
+    mobile_value = st.session_state.get("mobile_navigation", current)
+    last_desktop = st.session_state.get("_last_desktop_navigation", current)
+    last_mobile = st.session_state.get("_last_mobile_navigation", current)
+
+    if desktop_value in nav_options and desktop_value != last_desktop:
+        current = desktop_value
+    elif mobile_value in nav_options and mobile_value != last_mobile:
+        current = mobile_value
+
+    st.session_state["active_navigation"] = current
+    st.session_state["desktop_navigation"] = current
+    st.session_state["mobile_navigation"] = current
+    st.session_state["_last_desktop_navigation"] = current
+    st.session_state["_last_mobile_navigation"] = current
+    return current
 
 
 def render_bug_report_button(user: dict, page: str) -> None:
