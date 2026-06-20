@@ -2765,18 +2765,33 @@ def render_pilotage_conflict_rules() -> None:
         "Les lignes `Actif` décrivent le comportement actuellement attendu du cockpit. "
         "Les lignes `Partiel / à valider` ou `V2 / à valider` signalent les règles connues mais non finalisées."
     )
-    st.dataframe(PILOTAGE_VALIDATION_CASES, hide_index=True, use_container_width=True, height=760)
+    st.dataframe(
+        pilotage_rows_with_natural_language(PILOTAGE_VALIDATION_CASES, "validation_case"),
+        hide_index=True,
+        use_container_width=True,
+        height=760,
+    )
 
     st.markdown("### Règles métier de référence")
     st.caption("Table brute des règles générales utilisées par le système et par la matrice ci-dessus.")
-    st.dataframe(pilotage_function_rows(OPERATING_RULES), hide_index=True, use_container_width=True, height=360)
+    st.dataframe(
+        pilotage_rows_with_natural_language(OPERATING_RULES, "operating_rule"),
+        hide_index=True,
+        use_container_width=True,
+        height=360,
+    )
 
     st.markdown("### Table technique de transition")
     st.caption(
         "Vue plus technique : action courante + trigger + résultat -> prochaine action. "
         "Elle complète la matrice métier et sert de garde-fou pour l'implémentation."
     )
-    st.dataframe(pilotage_function_rows(WORKFLOW_TRANSITIONS), hide_index=True, use_container_width=True, height=460)
+    st.dataframe(
+        pilotage_rows_with_natural_language(WORKFLOW_TRANSITIONS, "workflow_transition"),
+        hide_index=True,
+        use_container_width=True,
+        height=460,
+    )
 
 
 def pilotage_function_rows(rows: list[dict]) -> list[dict]:
@@ -2787,6 +2802,54 @@ def pilotage_function_rows(rows: list[dict]) -> list[dict]:
         }
         for row in rows
     ]
+
+
+def pilotage_rows_with_natural_language(rows: list[dict], kind: str) -> list[dict]:
+    output = []
+    for row in rows:
+        normalized = {
+            key: pilotage_function_text(value)
+            for key, value in row.items()
+        }
+        normalized["Langage naturel"] = pilotage_natural_language(normalized, kind)
+        output.append(normalized)
+    return output
+
+
+def pilotage_natural_language(row: dict, kind: str) -> str:
+    if kind == "validation_case":
+        return (
+            f"Lorsque le dossier est dans la situation « {row.get('depart', '')} » "
+            f"et que {lower_first(row.get('evenement', ''))} "
+            f"alors {lower_first(row.get('reponse_systeme', ''))} "
+            f"L'utilisateur doit : {lower_first(row.get('utilisateur', ''))} "
+            f"L'action est résolue ainsi : {lower_first(row.get('resolution_action', ''))} "
+            f"La prochaine action est : {lower_first(row.get('prochaine_action', ''))}"
+        )
+    if kind == "operating_rule":
+        return (
+            f"Lorsque la règle « {row.get('rule', '')} » s'applique "
+            f"et que {lower_first(row.get('value', ''))} "
+            f"alors {lower_first(row.get('effect', ''))}"
+        )
+    if kind == "workflow_transition":
+        return (
+            f"Lorsque l'action courante est « {row.get('current_action', '')} » "
+            f"et que le trigger « {row.get('trigger', '')} » produit « {row.get('outcome', '')} », "
+            f"alors la prochaine action est « {row.get('next_action', '')} », "
+            f"assignée à « {row.get('owner', '')} », avec échéance « {row.get('due', '')} ». "
+            f"La conversation est « {row.get('conversation', '')} ». "
+            f"À prévoir : {lower_first(row.get('required_support', ''))} "
+            f"Effet système : {lower_first(row.get('side_effects', ''))}"
+        )
+    return ""
+
+
+def lower_first(value) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return text[:1].lower() + text[1:]
 
 
 def pilotage_function_text(value):
