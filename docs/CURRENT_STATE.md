@@ -1,6 +1,6 @@
 # Current Project State
 
-Last updated: 2026-06-20 17:19 Europe/Zurich.
+Last updated: 2026-06-20 17:27 Europe/Zurich.
 
 This is the first document to read when resuming Sales Cockpit.
 
@@ -35,13 +35,19 @@ Important new runtime rule: a prospect message during an already planned setting
 - Production UI: `http://139.59.158.77:8501`
 - Production API: `http://139.59.158.77:8601`
 
-Latest known deployed checkpoint before the current local workflow changes:
+Latest staging deployment:
 
 ```text
-aae5808 Add inbound identity review guardrail
+169e93a Preserve planned calls in workflow
 ```
 
-Staging and cold production were both verified on that older checkpoint. The current local branch contains newer workflow changes; check `git log`, deploy state, and service status before assuming staging or production is running them.
+Staging was redeployed and verified on this commit on 2026-06-20 at 17:27 Europe/Zurich. Production was not redeployed during this step and remains cold/mock until an explicit production cutover step.
+
+Restore point before the staging deploy:
+
+```text
+/opt/sales-cockpit/backups/staging/sales_cockpit_staging_20260620T152700Z.db.gz
+```
 
 ## Current Integration Status
 
@@ -62,16 +68,18 @@ Working:
 - backup/restore scripts and cron.
 - pre-cutover readiness check.
 
-Latest known staging check:
+Latest known staging check after deploying `169e93a`:
 
 ```text
 scripts/pre_cutover_check.py: OK
 SchoolDrive: ready
 Front: ready
-Twilio: ready
+Twilio: ready, mode mock
 Backup: ready
 Workflow: ready
 open_conversations_without_action: 0
+resolved_conversations_with_action_count: 0
+conversations_with_multiple_main_actions: 0
 ```
 
 ### Twilio
@@ -304,17 +312,16 @@ V2 debt for proper identity resolution is documented in `docs/TECHNICAL_DEBT.md`
 
 ## Immediate Next Steps
 
-1. Commit and deploy the latest local workflow changes to staging before further live testing.
-2. Create a restore point, then clean/rebuild staging SchoolDrive data polluted by the historical replay if required for a readable validation set.
-3. Resume the live website-form test once SchoolDrive worker/projector activity is visible:
+1. Create a restore point, then clean/rebuild staging SchoolDrive data polluted by the historical replay if required for a readable validation set.
+2. Resume the live website-form test once SchoolDrive worker/projector activity is visible:
    - first snapshot received;
    - automatic WhatsApp sent;
    - AR-sent snapshot received;
    - autoresponder stored as `sent`;
    - Tanjona follow-up created.
-4. Run staging `pre_cutover_check`.
-5. If green, prepare production SchoolDrive projector config but do not activate operational traffic until explicit GO.
-6. Keep Twilio production and SchoolDrive production cutover separate and controlled.
+3. Run staging `pre_cutover_check` again after the live website-form test.
+4. If green, prepare production SchoolDrive projector config but do not activate operational traffic until explicit GO.
+5. Keep Twilio production and SchoolDrive production cutover separate and controlled.
 
 ## Operating Lesson Learned
 

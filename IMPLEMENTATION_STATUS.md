@@ -2,9 +2,17 @@
 
 ## Current Status
 
-V1 staging build is runnable. Production is deployed cold and remains in Twilio `mock` mode.
+V1 staging build is runnable and currently deployed on commit `169e93a Preserve planned calls in workflow`. Production is deployed cold and remains in Twilio `mock` mode.
 
 The current production gate is a fresh live SchoolDrive validation after the worker/projector is confirmed running: website form -> SchoolDrive lead/presubscription -> automatic WhatsApp AR -> AR sent snapshot -> Sales Cockpit thread + Tanjona follow-up.
+
+Latest staging deployment check after `169e93a`:
+
+- API health: OK.
+- UI health: OK.
+- `scripts/pre_cutover_check.py`: OK.
+- Twilio mode on staging: `mock`.
+- Workflow consistency: no active conversation without action, no resolved conversation with active action, no conflicting main actions.
 
 The canonical workflow model is now:
 
@@ -146,16 +154,15 @@ The canonical workflow model is now:
 
 ## Next Checkpoints
 
-1. Deploy the latest workflow changes to staging.
-2. Create a restore point, then clean/rebuild staging SchoolDrive data if the historical replay pollution makes validation unreadable.
-3. Resume live SchoolDrive validation with a fresh Lead and Presubscription once the worker/projector is visibly running.
-4. Verify live-payload behavior in staging: upsert, stale-event ignore, duplicate-event ignore, WhatsApp body rendering, Tanjona +72h follow-up creation, queued-message no-follow-up, archive resolution, and course-start conflict behavior.
-5. Run a focused UI scenario validation with François or Laura once real SchoolDrive records are visible.
-6. Run staging `pre_cutover_check` and fix any scenario failure before adding new features.
-7. Keep PROD disconnected until staging scenario behavior and the production cutover checklist are validated.
-8. Only after scenario validation, do a moderate refactor of the large files into UI pages/components, workflow services, seed/reset, and repositories.
-9. Monitor Twilio template approval. Full closed-window validation waits for one approved real template.
-10. After additional SchoolDrive backfill, run Front rematch, review conversion dry-run, then execute matched conversion only if rows are ready.
+1. Create a restore point, then clean/rebuild staging SchoolDrive data if the historical replay pollution makes validation unreadable.
+2. Resume live SchoolDrive validation with a fresh Lead and Presubscription once the worker/projector is visibly running.
+3. Verify live-payload behavior in staging: upsert, stale-event ignore, duplicate-event ignore, WhatsApp body rendering, Tanjona +72h follow-up creation, queued-message no-follow-up, archive resolution, and course-start conflict behavior.
+4. Run a focused UI scenario validation with François or Laura once real SchoolDrive records are visible.
+5. Run staging `pre_cutover_check` and fix any scenario failure before adding new features.
+6. Keep PROD disconnected until staging scenario behavior and the production cutover checklist are validated.
+7. Only after scenario validation, do a moderate refactor of the large files into UI pages/components, workflow services, seed/reset, and repositories.
+8. Monitor Twilio template approval. Full closed-window validation waits for one approved real template.
+9. After additional SchoolDrive backfill, run Front rematch, review conversion dry-run, then execute matched conversion only if rows are ready.
 11. Keep Front read-only and avoid attaching history until matched rows are reviewed.
 12. Review whether attached Front history should appear by default or behind a conversation filter.
 13. Add the real V2 identity-resolution workflow: SchoolDrive recrawl/search, temporary lead merge, ambiguous candidate selection, and Front unmatched reconciliation.

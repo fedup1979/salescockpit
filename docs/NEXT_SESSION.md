@@ -194,6 +194,18 @@ Latest known local validation after the planned-call/course-start workflow chang
 
 - `pytest`: 108 tests passing.
 - `compileall`: passed for `sales_cockpit` and `scripts`.
+- Staging deployed commit: `169e93a Preserve planned calls in workflow`.
+- Restore point before deploy: `/opt/sales-cockpit/backups/staging/sales_cockpit_staging_20260620T152700Z.db.gz`.
+- Staging API/UI health passed after deploy.
+- Staging `pre_cutover_check` passed after deploy:
+  - SchoolDrive ready;
+  - Front ready;
+  - Twilio ready in `mock` mode;
+  - Backup ready;
+  - Workflow ready;
+  - `open_conversations_without_action = 0`;
+  - `resolved_conversations_with_action_count = 0`;
+  - `conversations_with_multiple_main_actions = 0`.
 - New automated coverage confirms:
   - inbound during a planned setting call creates an urgent reply and preserves the planned call;
   - replying without changing the appointment returns the planned call as next action;
@@ -205,21 +217,21 @@ Latest known local validation after the planned-call/course-start workflow chang
 - Timestamp decision after the real MCP replay: `KEEP_CURRENT_UTC`. No cleanup, no replay, and no `-2h` conversion are required.
 - Twilio staging template sync passed. Staging currently sees 10 real Twilio DEV templates: 4 `pending`, 6 `draft`, and 0 real approved templates.
 - Test template `sc_dev_accuse_reception_fr_001` was created and submitted for WhatsApp approval; current status is `pending`.
-- Staging is currently in Twilio `live` mode with real DEV WhatsApp sender `+41445054269` and `SALES_COCKPIT_TWILIO_ALLOWED_RECIPIENTS=+41762845576`, so real SchoolDrive prospects cannot be messaged accidentally.
+- Staging is currently checked as Twilio `mock` mode after the 2026-06-20 workflow deploy. Do not assume live sending until the environment is explicitly inspected again.
 - SQLite backup and restore have been tested successfully on staging with `deploy/scripts/backup_sqlite.sh` and `deploy/scripts/restore_sqlite.sh`.
 - Automated backup cron is installed and cron service is active on the droplet.
 - Front token is configured on staging. After fixing pagination limiting, a dry-run successfully read 1 Front conversation and 1 WhatsApp message with `writes: 0`.
 - Front pilot staging result: 13 Front conversations and 159 Front messages stored in the buffer tables. After the latest SchoolDrive MCP backfill and rematch: 11 `unmatched`, 1 `ambiguous`, 1 `matched`.
 - The matched Front row is `cnv_1mz0vz4w`, phone `+33669502201`, linked to `subscription:131887` / Lea Bucco. Front history attachment added 11 `front_history` messages. Conversion dry-run skipped it because a `follow_up` action already exists.
 - Admin readiness on staging is green for SchoolDrive, Front, Twilio, Backup, and Workflow. The workflow count explicitly separates 1 SchoolDrive record waiting for the first sent autoresponder from true open conversations without action.
-- Staging pre-cutover check passed with `scripts/pre_cutover_check.py --api-base http://127.0.0.1:8602 --ui-url http://127.0.0.1:8502`.
+- Latest staging pre-cutover check passed with `scripts/pre_cutover_check.py --api-base http://127.0.0.1:8602 --ui-url http://127.0.0.1:8502`.
 - `scripts/reset_demo.py`: verified on a temporary SQLite database and creates 19 `SD-DEMO-*` leads.
 - Streamlit AppTest smoke covers reply-action guidance and absence of the generic `Terminer l'action` button in the main Actions flow.
 - Pytest uses an isolated temporary SQLite database via `tests/conftest.py`; it should not create test leads in the local app database.
 - Streamlit smoke tests passed during the session.
 - Streamlit and FastAPI were restarted after a stale import issue.
 - Latest backups created on the droplet:
-  - staging: `/opt/sales-cockpit/backups/staging/sales_cockpit_staging_20260619T124345Z.db.gz`
+  - staging: `/opt/sales-cockpit/backups/staging/sales_cockpit_staging_20260620T152700Z.db.gz`
   - prod: `/opt/sales-cockpit/backups/prod/sales_cockpit_prod_20260619T124345Z.db.gz`
 
 If a future session sees an import error for a recently added function, restart Streamlit. Streamlit can keep old modules in memory.
