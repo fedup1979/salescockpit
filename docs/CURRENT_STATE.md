@@ -1,6 +1,6 @@
 # Current Project State
 
-Last updated: 2026-06-20 20:05 Europe/Zurich.
+Last updated: 2026-06-20 20:09 Europe/Zurich.
 
 This is the first document to read when resuming Sales Cockpit.
 
@@ -11,7 +11,8 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 ## Production Readiness Snapshot
 
 - Latest checkpoint before hardening audit: `a02f10c`.
-- Latest deployed staging UI/API check before this audit: OK on commit `a1917d8`.
+- Latest deployed staging UI/API check: OK on commit `db6f03b`.
+- Latest deployed production cold check: OK on commit `db6f03b`, Twilio `mock`, no SchoolDrive/Front production traffic connected.
 - Latest local automated validation after this audit: `116 passed`, `compileall` OK, `git diff --check` OK, BOM scan clean.
 - Latest staging pre-cutover check before this audit: OK.
 - Staging Twilio mode: `mock`, no real WhatsApp send from Sales Cockpit.
@@ -21,6 +22,8 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 - Front: read-only buffer foundation exists; Front is not a blocker for the Laura workflow review.
 - Go/no-go: good for Laura business review in staging; not yet GO for operational WhatsApp cutover.
 - Hardening completed locally after the checkpoint: app API token guard, mock webhook token guard, Twilio status regression guard, Twilio SID uniqueness, production seed without demo conversations, fake attachment uploader removed, documentation aligned.
+- Staging pre-cutover after deployment: OK, including API security and seed checks.
+- Production cold pre-cutover after deployment with `--allow-cold-prod`: OK, including API security, seed checks, and zero active workflow anomalies.
 
 The main remaining blocker before operational production cutover is a fresh live end-to-end SchoolDrive validation after the SchoolDrive WhatsApp/projector worker is confirmed running:
 

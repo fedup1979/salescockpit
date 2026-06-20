@@ -200,7 +200,10 @@ Latest known local validation after the production-hardening audit:
 - `git diff --check`: passed.
 - BOM scan: clean for tracked/project files.
 - Staging deploy source: `main` branch via `deploy/scripts/deploy_env.sh`.
-- Exact staging commit: verify on the droplet with `git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD`.
+- Latest verified staging commit: `db6f03b`.
+- Latest verified cold production commit: `db6f03b`.
+- Staging `pre_cutover_check` passed after deployment.
+- Production `pre_cutover_check --allow-cold-prod` passed after deployment; Twilio remains `mock`, seed demo is false, and SchoolDrive/Front are intentionally not connected there yet.
 - Restore points live in `/opt/sales-cockpit/backups/staging/`.
 - Staging API/UI health passed after deploy.
 - Staging `pre_cutover_check` passed after deploy:

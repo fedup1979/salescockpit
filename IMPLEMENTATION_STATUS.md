@@ -15,6 +15,7 @@ Latest recorded staging deployment check:
 - Workflow consistency: no active conversation without action, no resolved conversation with active action, no conflicting main actions.
 - API security readiness checks app API tokens and mock webhook tokens outside local tests.
 - Latest local hardening validation: `116 passed`, `compileall` OK, `git diff --check` OK, BOM scan clean.
+- Staging and cold production are both deployed on `db6f03b`; staging pre-cutover is OK, and production cold pre-cutover is OK with Twilio still in `mock` mode.
 
 The canonical workflow model is now:
 
