@@ -1,6 +1,6 @@
 # Current Project State
 
-Last updated: 2026-06-20 09:23 Europe/Zurich.
+Last updated: 2026-06-20 10:29 Europe/Zurich.
 
 This is the first document to read when resuming Sales Cockpit.
 
@@ -176,6 +176,28 @@ AR sent in SchoolDrive
 ```
 
 If this is not green, production may be prepared but must not become operational for the sales team.
+
+### Live Test Pause Point
+
+Status at 2026-06-20 10:29 Europe/Zurich:
+
+- Francois submitted one real test presubscription from the website.
+- Sales Cockpit staging did not receive any new SchoolDrive webhook event after the synthetic smoke events.
+- Staging API logs showed no recent POST to `/webhooks/schooldrive/lead-or-presubscription`.
+- SchoolDrive was expected to send an automatic WhatsApp, but it did not.
+- Current working hypothesis: the SchoolDrive WhatsApp worker/projector is off or not processing the new record.
+- Francois is waiting for Tiago to restart/fix the SchoolDrive worker.
+
+Resume the live test from here:
+
+1. Once Tiago confirms the SchoolDrive worker is running, submit or inspect a fresh real Lead.
+2. Check whether Sales Cockpit staging receives the first SchoolDrive snapshot.
+3. Check whether SchoolDrive sends the automatic WhatsApp.
+4. Check whether the AR-sent event reaches Sales Cockpit as a newer snapshot.
+5. Confirm that the thread shows the WhatsApp body and that a Tanjona follow-up is created at `sent_at + 72h`.
+6. Repeat the same path for a real presubscription if the Lead path works.
+
+Do not change Twilio settings while resuming this test. The real ESSR Twilio account has only been read through the Content API; no Twilio webhook, sender, template, or send configuration should be changed until the explicit cutover decision.
 
 ## Production Gates
 
