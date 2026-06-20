@@ -3075,6 +3075,8 @@ def list_sequence_template_mappings() -> list[dict[str, Any]]:
                 wt.status AS template_status,
                 wt.language AS template_language,
                 wt.category AS template_category,
+                wt.body AS template_body,
+                wt.twilio_content_type,
                 wt.twilio_content_sid
             FROM sequence_template_mappings stm
             LEFT JOIN sequence_steps ss
@@ -3086,6 +3088,142 @@ def list_sequence_template_mappings() -> list[dict[str, Any]]:
             """
         ).fetchall()
     return rows_to_dicts(rows)
+
+
+def list_course_default_sessions(active_only: bool = True) -> list[dict[str, Any]]:
+    filters = []
+    if active_only:
+        filters.append("active = 1")
+    where = f"WHERE {' AND '.join(filters)}" if filters else ""
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM course_default_sessions
+            {where}
+            ORDER BY course_category
+            """
+        ).fetchall()
+    return rows_to_dicts(rows)
+
+
+def upsert_course_default_session(
+    user_id: int,
+    course_category: str,
+    default_course_name: str,
+    default_start_date: str,
+    default_session_name: str = "",
+    schooldrive_url: str = "",
+    note: str = "",
+) -> tuple[bool, str]:
+    category = (course_category or "").strip().upper()
+    course_name = (default_course_name or "").strip()
+    start_date = (default_start_date or "").strip()
+    session_name = (default_session_name or "").strip()
+    url = (schooldrive_url or "").strip()
+    clean_note = (note or "").strip()
+    if not category:
+        return False, "Catégorie de cours obligatoire."
+    if not course_name:
+        return False, "Nom du cours ou de la session obligatoire."
+    if not start_date:
+        return False, "Date de début obligatoire."
+    try:
+        datetime.fromisoformat(start_date)
+    except ValueError:
+        return False, "Date de début invalide. Format attendu : AAAA-MM-JJ."
+    now = iso_utc()
+    with connect() as conn:
+        ok, message = _require_admin_user(conn, user_id)
+        if not ok:
+            return False, message
+        conn.execute(
+            """
+            INSERT INTO course_default_sessions (
+                course_category, default_course_name, default_session_name,
+                default_start_date, schooldrive_url, note, active,
+                created_by_user_id, updated_by_user_id, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+            ON CONFLICT(course_category) DO UPDATE SET
+                default_course_name = excluded.default_course_name,
+                default_session_name = excluded.default_session_name,
+                default_start_date = excluded.default_start_date,
+                schooldrive_url = excluded.schooldrive_url,
+                note = excluded.note,
+                active = 1,
+                updated_by_user_id = excluded.updated_by_user_id,
+                updated_at = excluded.updated_at
+            """,
+            (
+                category,
+                course_name,
+                session_name or None,
+                start_date,
+                url or None,
+                clean_note or None,
+                user_id,
+                user_id,
+                now,
+                now,
+            ),
+        )
+        row = conn.execute(
+            "SELECT id FROM course_default_sessions WHERE course_category = ?",
+            (category,),
+        ).fetchone()
+        conn.execute(
+            """
+            INSERT INTO user_activity_log (
+                user_id, event_type, entity_type, entity_id, metadata_json, created_at
+            ) VALUES (?, 'course_default_session_upserted', 'course_default_session', ?, ?, ?)
+            """,
+            (
+                user_id,
+                row["id"] if row else None,
+                json.dumps(
+                    {
+                        "course_category": category,
+                        "default_course_name": course_name,
+                        "default_start_date": start_date,
+                    },
+                    ensure_ascii=False,
+                ),
+                now,
+            ),
+        )
+    return True, "Session par défaut enregistrée."
+
+
+def deactivate_course_default_session(user_id: int, session_id: int) -> tuple[bool, str]:
+    now = iso_utc()
+    with connect() as conn:
+        ok, message = _require_admin_user(conn, user_id)
+        if not ok:
+            return False, message
+        existing = conn.execute(
+            "SELECT id FROM course_default_sessions WHERE id = ? AND active = 1",
+            (session_id,),
+        ).fetchone()
+        if not existing:
+            return False, "Session par défaut introuvable."
+        conn.execute(
+            """
+            UPDATE course_default_sessions
+            SET active = 0, updated_by_user_id = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (user_id, now, session_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO user_activity_log (
+                user_id, event_type, entity_type, entity_id, created_at
+            ) VALUES (?, 'course_default_session_deactivated', 'course_default_session', ?, ?)
+            """,
+            (user_id, session_id, now),
+        )
+    return True, "Session par défaut désactivée."
 
 
 def upsert_sequence_template_mapping(

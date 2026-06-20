@@ -13,6 +13,7 @@ from sales_cockpit.store import (
     create_bug_report,
     create_template,
     create_template_request,
+    deactivate_course_default_session,
     get_conversation,
     get_integration_readiness,
     get_next_action_for_lead,
@@ -21,6 +22,7 @@ from sales_cockpit.store import (
     handoff_to_closer,
     list_actions_for_lead,
     list_conversations,
+    list_course_default_sessions,
     list_messages,
     list_sequence_template_mappings,
     list_template_requests,
@@ -34,6 +36,7 @@ from sales_cockpit.store import (
     send_template_message,
     set_conversation_status,
     sync_twilio_templates,
+    upsert_course_default_session,
     update_lead_qualification,
     update_temporary_identity,
     upsert_sequence_template_mapping,
@@ -829,6 +832,35 @@ def test_sequence_template_mapping_recommends_matching_twilio_template(monkeypat
     assert recommended is not None
     assert recommended["template_id"] == template["id"]
     assert recommended["template_name"] == "app_relance_1"
+
+
+def test_course_default_session_can_be_configured_and_deactivated() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+
+    ok, message = upsert_course_default_session(
+        admin["id"],
+        "app",
+        "APP VISIO E26",
+        "2026-07-11",
+        default_session_name="APP été 2026",
+        schooldrive_url="https://schooldrive.essr.ch/sd/example",
+        note="Session par défaut pour les leads APP.",
+    )
+
+    assert ok is True
+    assert "enregistr" in message
+    sessions = list_course_default_sessions()
+    assert len(sessions) == 1
+    assert sessions[0]["course_category"] == "APP"
+    assert sessions[0]["default_course_name"] == "APP VISIO E26"
+    assert sessions[0]["default_start_date"] == "2026-07-11"
+
+    ok, message = deactivate_course_default_session(admin["id"], sessions[0]["id"])
+
+    assert ok is True
+    assert "désactiv" in message
+    assert list_course_default_sessions() == []
 
 
 def test_seeded_conversations_include_schooldrive_lead_types() -> None:

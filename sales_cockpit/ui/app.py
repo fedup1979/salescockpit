@@ -41,6 +41,7 @@ from sales_cockpit.store import (
     create_bug_report,
     create_template_request,
     create_template,
+    deactivate_course_default_session,
     deactivate_sequence_template_mapping,
     get_conversation,
     get_integration_readiness,
@@ -50,6 +51,7 @@ from sales_cockpit.store import (
     get_template,
     list_actions_for_lead,
     list_conversations,
+    list_course_default_sessions,
     list_front_import_records,
     list_messages,
     list_sequence_steps,
@@ -65,6 +67,7 @@ from sales_cockpit.store import (
     send_template_message,
     set_conversation_status,
     sync_twilio_templates,
+    upsert_course_default_session,
     upsert_sequence_template_mapping,
     update_template_request_status,
     update_lead_qualification,
@@ -99,6 +102,33 @@ REPLY_SEND_OUTCOME_LABELS = {
     "do_not_contact": "Ne plus contacter : clore et bloquer",
 }
 CALL_ACTION_TYPES = {"setting_call", "closing_call"}
+PILOTAGE_DEFAULT_CATEGORIES = ["APP", "AS", "FSM"]
+PILOTAGE_CONFLICT_RULES = [
+    {
+        "Situation": "Le prospect répond",
+        "Règle": "La réponse entrante interrompt les relances futures et crée une action Répondre au message pour Mihary.",
+    },
+    {
+        "Situation": "Relance lead et relance cours au même moment",
+        "Règle": "La relance liée au début du cours gagne. La relance liée au cycle du lead est annulée.",
+    },
+    {
+        "Situation": "Fenêtre WhatsApp fermée",
+        "Règle": "Le message libre est interdit. L'utilisateur doit sélectionner un template WhatsApp approuvé.",
+    },
+    {
+        "Situation": "Aucun template adapté",
+        "Règle": "La relance est bloquée et une demande de modèle doit être créée avant l'envoi.",
+    },
+    {
+        "Situation": "Ne plus contacter",
+        "Règle": "Aucun message ne peut être envoyé tant que le statut n'est pas levé. Si le prospect réécrit, une revue Setter I est créée.",
+    },
+    {
+        "Situation": "Signature, non pertinent ou conversation close",
+        "Règle": "Toutes les actions ouvertes ou futures liées à la conversation sont arrêtées.",
+    },
+]
 
 DISPLAY_LABELS = {
     "all": "Toutes",
@@ -264,6 +294,7 @@ def render_shell() -> None:
     st.session_state.user = user
     nav_options = ["Tâches", "Inbox", "Modèles", "Mode d'emploi"]
     if user["role"] == "admin":
+        nav_options.insert(2, "Pilotage")
         nav_options.append("Admin")
     with st.sidebar:
         st.subheader("Sales Cockpit")
@@ -272,6 +303,7 @@ def render_shell() -> None:
             "Navigation",
             nav_options,
             label_visibility="collapsed",
+            key="main_navigation",
         )
         render_bug_report_button(user, nav)
         if st.button("Déconnexion", use_container_width=True):
@@ -284,6 +316,8 @@ def render_shell() -> None:
         render_inbox(user)
     elif nav == "Modèles":
         render_templates(user)
+    elif nav == "Pilotage":
+        render_pilotage(user)
     elif nav == "Mode d'emploi":
         render_user_guide()
     elif nav == "Admin":
@@ -1901,6 +1935,7 @@ def page_access_matrix() -> list[dict]:
             "Rôle": "Admin",
             "Tâches": True,
             "Inbox": True,
+            "Pilotage": True,
             "Modèles": True,
             "Mode d'emploi": True,
             "Admin": True,
@@ -1909,6 +1944,7 @@ def page_access_matrix() -> list[dict]:
             "Rôle": "Setter I",
             "Tâches": True,
             "Inbox": True,
+            "Pilotage": False,
             "Modèles": True,
             "Mode d'emploi": True,
             "Admin": False,
@@ -1917,6 +1953,7 @@ def page_access_matrix() -> list[dict]:
             "Rôle": "Setter II",
             "Tâches": True,
             "Inbox": True,
+            "Pilotage": False,
             "Modèles": True,
             "Mode d'emploi": True,
             "Admin": False,
@@ -1925,11 +1962,430 @@ def page_access_matrix() -> list[dict]:
             "Rôle": "Closer",
             "Tâches": True,
             "Inbox": True,
+            "Pilotage": False,
             "Modèles": True,
             "Mode d'emploi": True,
             "Admin": False,
         },
     ]
+
+
+def render_pilotage(user: dict) -> None:
+    st.title("Pilotage")
+    st.caption(
+        "Vue lisible pour régler les flux commerciaux avec Laura : sessions par défaut, templates par scénario, règles de conflit et simulation."
+    )
+    if user["role"] != "admin":
+        st.warning("Cette page est réservée aux admins.")
+        return
+
+    tabs = st.tabs([
+        "Vue d'ensemble",
+        "Sessions par défaut",
+        "Flux par scénario",
+        "Règles de conflit",
+        "Simulateur",
+    ])
+    with tabs[0]:
+        render_pilotage_overview()
+    with tabs[1]:
+        render_pilotage_default_sessions(user)
+    with tabs[2]:
+        render_pilotage_scenario_tables()
+    with tabs[3]:
+        render_pilotage_conflict_rules()
+    with tabs[4]:
+        render_pilotage_simulator()
+
+
+def render_pilotage_overview() -> None:
+    sequences = list_sequences()
+    mappings = list_sequence_template_mappings()
+    default_sessions = list_course_default_sessions()
+    real_templates = [item for item in list_templates() if is_real_twilio_template(item)]
+    approved_real = [item for item in real_templates if item.get("status") == "approved"]
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("Flux actifs", len(sequences))
+    metric_cols[1].metric("Templates réels", len(real_templates))
+    metric_cols[2].metric("Templates approuvés", len(approved_real))
+    metric_cols[3].metric("Sessions par défaut", len(default_sessions))
+
+    st.markdown("### Comment lire cette page")
+    st.markdown(
+        """
+        - **Sessions par défaut** : règle utilisée quand SchoolDrive envoie un Lead avec une catégorie, mais sans session précise.
+        - **Flux par scénario** : liste des événements prévus, avec le template recommandé et le message complet.
+        - **Règles de conflit** : ce qui gagne quand deux flux se chevauchent ou quand le prospect répond.
+        - **Simulateur** : prévisualisation rapide de la timeline à partir d'un type de lead, d'une catégorie et d'une date de cours.
+
+        La donnée SchoolDrive réelle gagne toujours. Une session par défaut ne sert qu'à piloter les relances liées au cours quand le Lead n'a pas encore de session explicite.
+        """
+    )
+
+    st.markdown("### Flux normaux")
+    overview_rows = [
+        {
+            "Flux": item["label"],
+            "Déclencheur": item["trigger"],
+            "Timeline": item["timeline"],
+            "Responsable": item["owner"],
+            "Arrêt": item["stop_when"],
+        }
+        for item in sequences
+    ]
+    st.dataframe(overview_rows, hide_index=True, use_container_width=True, height=300)
+
+    st.markdown("### Points à régler avec Laura")
+    missing = []
+    for step in list_sequence_steps():
+        has_mapping = any(
+            mapping["sequence_code"] == step["sequence_code"]
+            and int(mapping["sequence_step_index"]) == int(step["step_index"])
+            for mapping in mappings
+        )
+        if step.get("template_name") and not has_mapping:
+            missing.append(
+                {
+                    "Flux": label_sequence_code(step["sequence_code"]),
+                    "Étape": step["step_index"],
+                    "Quand": step["delay"],
+                    "À décider": "Choisir le template réel Twilio",
+                }
+            )
+    if missing:
+        st.dataframe(missing, hide_index=True, use_container_width=True, height=260)
+    else:
+        st.success("Toutes les étapes avec template disposent déjà d'une recommandation.")
+
+
+def render_pilotage_default_sessions(user: dict) -> None:
+    st.markdown("### Sessions par défaut par catégorie")
+    st.caption(
+        "Utilisées uniquement quand un Lead SchoolDrive arrive sans session précise. Si SchoolDrive fournit une vraie session ou une vraie date de début, elle gagne."
+    )
+    sessions = list_course_default_sessions(active_only=False)
+    active_sessions = [item for item in sessions if item.get("active")]
+    if active_sessions:
+        rows = [
+            {
+                "Catégorie": item["course_category"],
+                "Session par défaut": item["default_course_name"],
+                "Nom session": item.get("default_session_name") or "",
+                "Début": item["default_start_date"],
+                "URL SchoolDrive": item.get("schooldrive_url") or "",
+                "Note": item.get("note") or "",
+            }
+            for item in active_sessions
+        ]
+        st.dataframe(rows, hide_index=True, use_container_width=True, height=260)
+    else:
+        st.info("Aucune session par défaut configurée. Ajoute au minimum APP, AS et FSM avant le réglage fin des flux cours.")
+
+    category_options = sorted(set(PILOTAGE_DEFAULT_CATEGORIES + [item["course_category"] for item in active_sessions]))
+    with st.form("course_default_session_form"):
+        edit_choice = st.selectbox(
+            "Catégorie",
+            category_options + ["Autre"],
+            index=0,
+        )
+        custom_category = ""
+        if edit_choice == "Autre":
+            custom_category = st.text_input("Nouvelle catégorie", placeholder="Ex. AMS")
+        category = custom_category if edit_choice == "Autre" else edit_choice
+        current = next(
+            (item for item in active_sessions if item["course_category"] == category),
+            None,
+        )
+        course_name = st.text_input(
+            "Session ou cours par défaut",
+            value=(current or {}).get("default_course_name", ""),
+            placeholder="Ex. APP VISIO E26",
+        )
+        session_name = st.text_input(
+            "Nom session, optionnel",
+            value=(current or {}).get("default_session_name") or "",
+        )
+        start_date = st.date_input(
+            "Date de début",
+            value=parse_iso_date_or_today((current or {}).get("default_start_date")),
+        )
+        schooldrive_url = st.text_input(
+            "Lien SchoolDrive, optionnel",
+            value=(current or {}).get("schooldrive_url") or "",
+        )
+        note = st.text_area(
+            "Note",
+            value=(current or {}).get("note") or "",
+            height=80,
+            placeholder="Ex. Session par défaut pour les leads APP tant qu'aucune session précise n'est connue.",
+        )
+        submitted = st.form_submit_button("Enregistrer la session par défaut")
+    if submitted:
+        ok, message = upsert_course_default_session(
+            user["id"],
+            category,
+            course_name,
+            start_date.isoformat(),
+            default_session_name=session_name,
+            schooldrive_url=schooldrive_url,
+            note=note,
+        )
+        show_result(ok, message)
+        if ok:
+            st.rerun()
+
+    if active_sessions:
+        with st.expander("Désactiver une session par défaut", expanded=False):
+            with st.form("deactivate_course_default_session_form"):
+                session = st.selectbox(
+                    "Session",
+                    active_sessions,
+                    format_func=lambda item: f"{item['course_category']} · {item['default_course_name']} · {item['default_start_date']}",
+                )
+                submitted = st.form_submit_button("Désactiver")
+            if submitted:
+                ok, message = deactivate_course_default_session(user["id"], int(session["id"]))
+                show_result(ok, message)
+                if ok:
+                    st.rerun()
+
+
+def render_pilotage_scenario_tables() -> None:
+    st.markdown("### Flux par scénario")
+    st.caption("Chaque étape montre le template recommandé, son SID Twilio et le message complet.")
+    categories = pilotage_categories()
+    sequences = list_sequences()
+    col_a, col_b, col_c = st.columns([0.8, 0.8, 1.2])
+    with col_a:
+        lead_type = st.selectbox(
+            "Type",
+            ["lead", "presubscription", "all"],
+            format_func=lambda value: {
+                "lead": "Lead",
+                "presubscription": "Préinscription",
+                "all": "Tous",
+            }[value],
+        )
+    with col_b:
+        category = st.selectbox("Catégorie", categories)
+    with col_c:
+        sequence_code = st.selectbox(
+            "Flux",
+            [item["code"] for item in sequences],
+            format_func=label_sequence_code,
+        )
+
+    render_sequence_timeline(sequence_code, lead_type, category)
+
+
+def render_pilotage_conflict_rules() -> None:
+    st.markdown("### Règles de conflit")
+    st.caption("Ces règles expliquent ce qui doit se passer quand plusieurs flux ou événements se chevauchent.")
+    for index, rule in enumerate(PILOTAGE_CONFLICT_RULES, start=1):
+        st.markdown(f"**{index}. {rule['Situation']}**")
+        st.write(rule["Règle"])
+    st.markdown("### Règles métier de référence")
+    selected = [
+        item for item in OPERATING_RULES
+        if item["rule"] in {
+            "Fenêtre WhatsApp",
+            "Premier template automatique",
+            "Relances hors fenêtre",
+            "Délai minimum WhatsApp",
+            "Conflit lead vs cours",
+            "Non pertinent",
+            "Ne plus contacter",
+        }
+    ]
+    st.dataframe(selected, hide_index=True, use_container_width=True, height=300)
+
+
+def render_pilotage_simulator() -> None:
+    st.markdown("### Simulateur de flux")
+    st.caption("Prévisualisation simple. Le simulateur ne crée aucune tâche et n'envoie aucun message.")
+    default_sessions = {item["course_category"]: item for item in list_course_default_sessions()}
+    categories = pilotage_categories()
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        lead_type = st.selectbox(
+            "Type de dossier",
+            ["lead", "presubscription"],
+            format_func=lambda value: "Lead" if value == "lead" else "Préinscription",
+            key="pilotage_sim_lead_type",
+        )
+    with col_b:
+        category = st.selectbox("Catégorie", categories, key="pilotage_sim_category")
+    with col_c:
+        selected_session = default_sessions.get(category)
+        default_date = parse_iso_date_or_today((selected_session or {}).get("default_start_date"))
+        start_date = st.date_input("Date de début utilisée", value=default_date, key="pilotage_sim_start")
+
+    if lead_type == "lead" and selected_session:
+        st.info(
+            f"Pour un Lead {category} sans session SchoolDrive, le simulateur utilise : "
+            f"{selected_session['default_course_name']} ({selected_session['default_start_date']})."
+        )
+    elif lead_type == "lead":
+        st.warning(f"Aucune session par défaut n'est configurée pour {category}. Les relances liées au cours ne peuvent pas être calculées.")
+
+    selected_sequences = ["lead_no_reply", "setter_no_next_step", "closer_will_sign", "course_start"]
+    for code in selected_sequences:
+        st.markdown(f"#### {label_sequence_code(code)}")
+        rows = build_simulated_timeline(code, start_date)
+        st.dataframe(rows, hide_index=True, use_container_width=True)
+
+
+def render_sequence_timeline(sequence_code: str, lead_type: str, category: str) -> None:
+    steps = list_sequence_steps(sequence_code)
+    mappings = list_sequence_template_mappings()
+    templates_by_name = {item["name"]: item for item in list_templates()}
+    if not steps:
+        st.warning("Aucune étape pour ce flux.")
+        return
+    sequence = next((item for item in list_sequences() if item["code"] == sequence_code), None)
+    if sequence:
+        st.markdown(f"#### {sequence['label']}")
+        st.caption(f"{sequence['trigger']} Arrêt : {sequence['stop_when']}")
+    for step in steps:
+        mapping = resolve_mapping_for_step(mappings, step, lead_type, category)
+        template = None
+        if mapping:
+            template = {
+                "name": mapping.get("template_name"),
+                "status": mapping.get("template_status"),
+                "language": mapping.get("template_language"),
+                "category": mapping.get("template_category"),
+                "body": mapping.get("template_body") or "",
+                "twilio_content_sid": mapping.get("twilio_content_sid"),
+                "twilio_content_type": mapping.get("twilio_content_type"),
+            }
+        elif step.get("template_name"):
+            template = templates_by_name.get(step["template_name"])
+
+        with st.container(border=True):
+            top_cols = st.columns([0.6, 1.2, 1.2, 1.1], vertical_alignment="top")
+            top_cols[0].markdown(f"**Étape {step['step_index']}**")
+            top_cols[1].markdown(f"**Quand**  \n{step['delay']}")
+            top_cols[2].markdown(f"**Événement**  \n{step['meaning']}")
+            if template:
+                top_cols[3].markdown(
+                    f"**Template**  \n{template.get('name') or 'Sans nom'}  \n"
+                    f"`{template.get('twilio_content_sid') or 'SID absent'}`"
+                )
+            else:
+                top_cols[3].markdown("**Template**  \nAucun")
+
+            if template:
+                status_cols = st.columns([0.5, 0.5, 2.0])
+                status_cols[0].markdown(f"**Statut**  \n{template_status_label(template)}")
+                status_cols[1].markdown(f"**Catégorie**  \n{labelize(template.get('category'))}")
+                mapping_note = (mapping or {}).get("note") if mapping else ""
+                status_cols[2].caption(mapping_note or "Mapping exact, spécifique ou fallback démo selon disponibilité.")
+                st.markdown("**Message complet**")
+                st.code(template.get("body") or "Corps de message indisponible.", language="text")
+            else:
+                st.warning("Aucun template n'est encore associé à cette étape.")
+
+
+def resolve_mapping_for_step(
+    mappings: list[dict],
+    step: dict,
+    lead_type: str,
+    category: str,
+) -> dict | None:
+    normalized_type = "all" if lead_type == "all" else lead_type
+    normalized_category = "all" if category == "Toutes" else category.upper()
+    candidates = [
+        item for item in mappings
+        if item["sequence_code"] == step["sequence_code"]
+        and int(item["sequence_step_index"]) == int(step["step_index"])
+        and item["lead_type"] in {"all", normalized_type}
+        and item["course_category"] in {"all", normalized_category}
+    ]
+    if not candidates:
+        return None
+    return sorted(
+        candidates,
+        key=lambda item: (
+            item["lead_type"] == normalized_type,
+            item["course_category"] == normalized_category,
+            item.get("updated_at") or "",
+        ),
+        reverse=True,
+    )[0]
+
+
+def pilotage_categories() -> list[str]:
+    configured = [item["course_category"] for item in list_course_default_sessions()]
+    mapped = [
+        item["course_category"]
+        for item in list_sequence_template_mappings()
+        if item.get("course_category") and item["course_category"] != "all"
+    ]
+    categories = sorted(set(PILOTAGE_DEFAULT_CATEGORIES + configured + mapped))
+    return categories or PILOTAGE_DEFAULT_CATEGORIES
+
+
+def label_sequence_code(code: str | None) -> str:
+    if not code:
+        return "Flux inconnu"
+    sequence = next((item for item in list_sequences() if item["code"] == code), None)
+    return sequence["label"] if sequence else code
+
+
+def parse_iso_date_or_today(value: str | None):
+    if value:
+        try:
+            return datetime.fromisoformat(value).date()
+        except ValueError:
+            pass
+    return utc_now().date()
+
+
+def build_simulated_timeline(sequence_code: str, course_start_date) -> list[dict]:
+    anchor = utc_now()
+    rows = []
+    for step in list_sequence_steps(sequence_code):
+        due_label = simulate_due_label(step["delay"], anchor, course_start_date)
+        rows.append(
+            {
+                "Étape": step["step_index"],
+                "Quand": step["delay"],
+                "Date simulée": due_label,
+                "Action": step["meaning"],
+                "Template démo": step.get("template_name") or "Aucun",
+            }
+        )
+        if step["delay"].startswith("+"):
+            anchor = advance_anchor(anchor, step["delay"])
+    return rows
+
+
+def simulate_due_label(delay: str, anchor: datetime, course_start_date) -> str:
+    value = (delay or "").strip()
+    if value.startswith("J-"):
+        try:
+            days = int(value.replace("J-", ""))
+            return (course_start_date - timedelta(days=days)).isoformat()
+        except ValueError:
+            return value
+    due = advance_anchor(anchor, value)
+    return due.strftime("%Y-%m-%d %H:%M")
+
+
+def advance_anchor(anchor: datetime, delay: str) -> datetime:
+    value = (delay or "").strip().lower()
+    if "72h" in value:
+        return anchor + timedelta(hours=72)
+    if "24h" in value:
+        return anchor + timedelta(hours=24)
+    if "2h" in value:
+        return anchor + timedelta(hours=2)
+    if "30j" in value:
+        return anchor + timedelta(days=30)
+    if "7j" in value:
+        return anchor + timedelta(days=7)
+    return anchor
 
 
 def render_admin(user: dict) -> None:

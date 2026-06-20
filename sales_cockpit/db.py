@@ -226,6 +226,21 @@ CREATE TABLE IF NOT EXISTS sequence_template_mappings (
     UNIQUE(sequence_code, sequence_step_index, lead_type, course_category)
 );
 
+CREATE TABLE IF NOT EXISTS course_default_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    course_category TEXT NOT NULL UNIQUE,
+    default_course_name TEXT NOT NULL,
+    default_session_name TEXT,
+    default_start_date TEXT NOT NULL,
+    schooldrive_url TEXT,
+    note TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    updated_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS template_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
