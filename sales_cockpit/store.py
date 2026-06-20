@@ -433,6 +433,13 @@ def get_integration_readiness() -> dict[str, Any]:
         twilio_detail = "Sender non configuré"
 
     backup = _latest_backup_status(settings.environment)
+    environment = (settings.environment or "local").lower()
+    external_environment = environment not in {"local", "test"}
+    api_security_ok = not external_environment or bool(settings.api_token)
+    mock_webhook_security_ok = not external_environment or bool(
+        settings.mock_webhook_token or settings.api_token
+    )
+    production_seed_ok = environment not in {"prod", "production"} or not settings.seed_demo_data
     workflow_ok = (
         conversations_without_action == 0
         and resolved_conversations_with_action_count == 0
@@ -475,6 +482,22 @@ def get_integration_readiness() -> dict[str, Any]:
             ),
             "danger",
         ),
+        _readiness_check(
+            "API security",
+            api_security_ok and mock_webhook_security_ok,
+            "API et webhook mock protégés"
+            if api_security_ok and mock_webhook_security_ok
+            else "Token API ou token mock manquant",
+            "danger",
+        ),
+        _readiness_check(
+            "Seed data",
+            production_seed_ok,
+            "Configuration seed compatible avec l'environnement"
+            if production_seed_ok
+            else "Données démo activées en production",
+            "danger",
+        ),
     ]
 
     return {
@@ -513,6 +536,11 @@ def get_integration_readiness() -> dict[str, Any]:
             "open_conversations_without_action": conversations_without_action,
             "resolved_conversations_with_action_count": resolved_conversations_with_action_count,
             "conversations_with_multiple_main_actions": conversations_with_multiple_main_actions,
+        },
+        "security": {
+            "api_token_configured": bool(settings.api_token),
+            "mock_webhook_token_configured": bool(settings.mock_webhook_token),
+            "seed_demo_data": bool(settings.seed_demo_data),
         },
     }
 
@@ -2109,7 +2137,7 @@ def handoff_to_closer(
                 "notes": notes,
             },
         )
-    return True, f"Passage au closer créé pour {closer['full_name']}."
+    return True, f"Appel closing créé pour {closer['full_name']}."
 
 
 def set_conversation_status(
@@ -2261,7 +2289,7 @@ def set_conversation_status(
             },
         )
 
-    label = "rouverte" if status == "open" else "marquée comme résolue"
+    label = "rouverte" if status == "open" else "terminée"
     return True, f"Conversation {label}."
 
 
@@ -3640,7 +3668,7 @@ def add_sequence_step(
                 now,
             ),
         )
-    return True, "Étape ajoutée. Elle s'appliquera aux nouvelles séquences."
+    return True, "Étape ajoutée. Elle s'appliquera aux nouveaux flux."
 
 
 def upsert_sequence_step(
@@ -3689,7 +3717,7 @@ def upsert_sequence_step(
             (sequence_code, step_index),
         ).fetchone()
         if not step:
-            return False, "Étape de séquence introuvable."
+            return False, "Étape de flux introuvable."
         conn.execute(
             """
             UPDATE sequence_steps
@@ -3740,7 +3768,7 @@ def upsert_sequence_step(
                 now,
             ),
         )
-    return True, "Étape enregistrée. Elle s'appliquera aux nouvelles séquences."
+    return True, "Étape enregistrée. Elle s'appliquera aux nouveaux flux."
 
 
 def reactivate_sequence_step(user_id: int, step_id: int) -> tuple[bool, str]:
@@ -3816,7 +3844,7 @@ def deactivate_sequence_step(user_id: int, step_id: int) -> tuple[bool, str]:
                 now,
             ),
         )
-    return True, "Étape désactivée. Elle ne sera pas utilisée pour les nouvelles séquences."
+    return True, "Étape désactivée. Elle ne sera pas utilisée pour les nouveaux flux."
 
 
 def _normalize_sequence_step_admin_values(
@@ -4156,7 +4184,7 @@ def upsert_sequence_template_mapping(
             (sequence_code, sequence_step_index),
         ).fetchone()
         if not step:
-            return False, "Étape de séquence introuvable."
+            return False, "Étape de flux introuvable."
         if step["action_type"] != "follow_up":
             return False, "Un template ne peut être recommandé que pour une relance WhatsApp."
         template = conn.execute(
@@ -5253,6 +5281,26 @@ def record_inbound_message(
         }
 
 
+_TWILIO_STATUS_PRIORITY = {
+    "accepted": 10,
+    "scheduled": 10,
+    "queued": 20,
+    "sending": 30,
+    "sent": 40,
+    "failed": 45,
+    "undelivered": 45,
+    "send_error": 45,
+    "delivered": 50,
+    "read": 60,
+}
+
+
+def _twilio_status_priority(status: str | None) -> int:
+    if not status:
+        return 0
+    return _TWILIO_STATUS_PRIORITY.get(status.strip().lower(), 0)
+
+
 def record_twilio_status_callback(
     message_sid: str,
     status: str,
@@ -5261,7 +5309,7 @@ def record_twilio_status_callback(
     raw_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     message_sid = message_sid.strip()
-    status = status.strip()
+    status = status.strip().lower()
     if not message_sid:
         raise ValueError("MessageSid is required.")
     if not status:
@@ -5271,7 +5319,7 @@ def record_twilio_status_callback(
     with connect() as conn:
         row = conn.execute(
             """
-            SELECT id, lead_id, conversation_id
+            SELECT id, lead_id, conversation_id, twilio_status
             FROM messages
             WHERE twilio_message_sid = ?
             ORDER BY id DESC
@@ -5281,6 +5329,33 @@ def record_twilio_status_callback(
         ).fetchone()
         if not row:
             return {"status": "unknown_message", "message_sid": message_sid}
+        current_status = row["twilio_status"]
+        if _twilio_status_priority(status) < _twilio_status_priority(current_status):
+            insert_event(
+                conn,
+                row["lead_id"],
+                "twilio_message_status_ignored",
+                new={
+                    "message_id": row["id"],
+                    "message_sid": message_sid,
+                    "current_status": current_status,
+                    "ignored_status": status,
+                    "error_code": error_code,
+                    "error_message": error_message,
+                },
+                metadata={
+                    "conversation_id": row["conversation_id"],
+                    "raw_payload": raw_payload or {},
+                    "ignored_at": now,
+                    "reason": "status_regression",
+                },
+            )
+            return {
+                "status": "stale_status",
+                "message_sid": message_sid,
+                "current_status": current_status,
+                "ignored_status": status,
+            }
         conn.execute(
             """
             UPDATE messages

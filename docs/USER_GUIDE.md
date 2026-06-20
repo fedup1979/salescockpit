@@ -38,7 +38,7 @@ Un WhatsApp que nous envoyons ne suffit pas à ouvrir la fenêtre. Il faut que l
 
 ## Conversations actives et terminées
 
-Une conversation active doit normalement avoir une seule prochaine action principale. S'il y a une conversation active sans prochaine action, c'est une anomalie à signaler.
+Une conversation active doit normalement avoir au moins une action de pilotage claire. S'il y a une conversation active sans prochaine action, c'est une anomalie à signaler.
 
 Il existe une exception importante : si un appel setting ou closing est déjà planifié et que le prospect écrit avant l'appel, le cockpit crée une action urgente **Répondre au message** sans annuler l'appel planifié. Après la réponse, si le rendez-vous reste inchangé, l'appel planifié redevient la prochaine action visible.
 

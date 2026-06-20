@@ -84,7 +84,7 @@ Inbox tabs are work queues:
 Visible queue and conversation controls:
 
 - Left split-screen cards use `Voir`, not `Ouvrir`.
-- Conversation-state buttons use short labels: `Clore` and `Réactiver`.
+- Conversation-state buttons use `Clore la conversation` and `Réactiver`.
 - The `Prochaine action` summary card shows only action type, due date/time, and the responsible-person badge.
 
 Operational rule:

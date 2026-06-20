@@ -1,4 +1,4 @@
-﻿# Sales Cockpit Business Logic
+# Sales Cockpit Business Logic
 
 Ce document est la référence métier de Sales Cockpit.
 

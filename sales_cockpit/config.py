@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     db_path: Path = Path("data/sales_cockpit.db")
     storage_path: Path = Path("storage")
     seed_password: str = "ChangeMe!2026"
+    seed_demo_data: bool = True
+    api_token: str | None = None
+    mock_webhook_token: str | None = None
     twilio_mode: str = "mock"
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None

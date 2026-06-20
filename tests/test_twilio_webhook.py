@@ -129,6 +129,57 @@ def test_twilio_status_callback_updates_message(monkeypatch) -> None:
     get_settings.cache_clear()
 
 
+def test_twilio_status_callback_ignores_status_regression(monkeypatch) -> None:
+    _configure_twilio(monkeypatch)
+    seed_initial_data()
+    client = TestClient(app)
+
+    inbound_url = "http://testserver/webhooks/twilio/whatsapp/inbound"
+    inbound_params = {
+        "From": "whatsapp:+41790003334",
+        "To": "whatsapp:+14155238886",
+        "Body": "Merci.",
+        "MessageSid": "SM_TEST_STATUS_REGRESSION",
+        "SmsStatus": "received",
+    }
+    client.post(
+        "/webhooks/twilio/whatsapp/inbound",
+        data=inbound_params,
+        headers={"X-Twilio-Signature": _signature(inbound_url, inbound_params)},
+    )
+
+    status_url = "http://testserver/webhooks/twilio/whatsapp/status"
+    delivered_params = {
+        "MessageSid": "SM_TEST_STATUS_REGRESSION",
+        "MessageStatus": "delivered",
+    }
+    sent_params = {
+        "MessageSid": "SM_TEST_STATUS_REGRESSION",
+        "MessageStatus": "sent",
+    }
+    delivered = client.post(
+        "/webhooks/twilio/whatsapp/status",
+        data=delivered_params,
+        headers={"X-Twilio-Signature": _signature(status_url, delivered_params)},
+    )
+    stale = client.post(
+        "/webhooks/twilio/whatsapp/status",
+        data=sent_params,
+        headers={"X-Twilio-Signature": _signature(status_url, sent_params)},
+    )
+
+    assert delivered.status_code == 200
+    assert stale.status_code == 200
+    assert stale.json()["callback_status"] == "stale_status"
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT twilio_status FROM messages WHERE twilio_message_sid = ?",
+            ("SM_TEST_STATUS_REGRESSION",),
+        ).fetchone()
+    assert row["twilio_status"] == "delivered"
+    get_settings.cache_clear()
+
+
 def test_legacy_json_mock_inbound_still_works_without_twilio_signature(monkeypatch) -> None:
     monkeypatch.delenv("SALES_COCKPIT_TWILIO_AUTH_TOKEN", raising=False)
     monkeypatch.setenv("SALES_COCKPIT_TWILIO_VALIDATE_SIGNATURE", "true")

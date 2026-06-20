@@ -106,10 +106,13 @@ def test_integration_readiness_summary_exposes_core_sections() -> None:
         "Twilio",
         "Backup",
         "Workflow",
+        "API security",
+        "Seed data",
     }
     assert readiness["front"]["message_count"] == 1
     assert readiness["front"]["migration_counts"]["active"] == 1
     assert "open_conversations_without_action" in readiness["workflow"]
+    assert "api_token_configured" in readiness["security"]
 
 
 def test_integration_readiness_accepts_mock_twilio_without_sender(monkeypatch) -> None:

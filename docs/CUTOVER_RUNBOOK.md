@@ -28,6 +28,9 @@ Production should use HTTPS before final cutover.
 - Staging has been cleaned after any historical event replay and rebuilt with records created on or after 2026-03-01.
 - Twilio WhatsApp sender for the production business is verified and approved.
 - Twilio templates from the real ESSR account are synchronized locally with `SALES_COCKPIT_TWILIO_CONTENT_READ_ONLY=true`.
+- `SALES_COCKPIT_API_TOKEN` is configured for staging/prod.
+- `SALES_COCKPIT_MOCK_WEBHOOK_TOKEN` is configured if JSON mock webhooks are used outside local tests.
+- Production runs with `SALES_COCKPIT_SEED_DEMO_DATA=false`.
 - Front API read-only token is valid.
 - Backup and restore scripts have been tested.
 - Laura validates the final operational workflow with real or near-real staging examples.
@@ -128,7 +131,7 @@ sudo bash /opt/sales-cockpit/staging/app/deploy/scripts/install_backup_cron.sh
    - latest team message waiting for prospect: `follow_up`, usually Tanjona;
    - unclear status: manual review.
 
-Automatic conversion from Front buffer rows to Sales Cockpit actions is not implemented yet. Until it is implemented and tested, create or assign these actions manually in Sales Cockpit.
+Controlled conversion from matched Front buffer rows exists via `scripts/front_convert_matched.py`, dry-run by default, with guards around existing open actions. It has not yet been validated for a large cutover. Until a reviewed conversion batch passes, create or assign these actions manually in Sales Cockpit.
 
 ## T0: Attach History
 

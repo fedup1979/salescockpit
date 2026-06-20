@@ -1,4 +1,4 @@
-﻿# Next Session Handoff
+# Next Session Handoff
 
 ## Current State
 
@@ -193,10 +193,12 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 
 ## Current Validation
 
-Latest known local validation after the planned-call/course-start workflow changes and documentation alignment:
+Latest known local validation after the production-hardening audit:
 
-- `pytest --basetemp=.pytest-tmp\run`: 110 tests passing.
-- `compileall`: passed for `sales_cockpit`.
+- `pytest --basetemp=.pytest-tmp\full`: 116 tests passing.
+- `compileall`: passed for `sales_cockpit`, `scripts`, and `tests`.
+- `git diff --check`: passed.
+- BOM scan: clean for tracked/project files.
 - Staging deploy source: `main` branch via `deploy/scripts/deploy_env.sh`.
 - Exact staging commit: verify on the droplet with `git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD`.
 - Restore points live in `/opt/sales-cockpit/backups/staging/`.
@@ -262,13 +264,15 @@ Stop-Process -Id <PID> -Force
 
 ## Known Gaps
 
-- SchoolDrive snapshot webhook exists; synthetic smoke validation is available, but real Tiago payload validation is still pending.
+- SchoolDrive snapshot webhook exists; synthetic smoke, real replay, duplicate/stale handling, and real payload-shape validation have passed. The remaining gate is a fresh live website-form path through AR `sent` snapshot.
 - SchoolDrive URL format is provided by Tiago's webhook contract and should be checked during the first staging replay.
 - Notion connector is placeholder only.
 - Twilio is mock by default locally. Staging was previously tested with Sandbox and then with the DEV sender `+41445054269`, but the DEV WhatsApp account was later blocked by Meta. Do not assume staging can send live WhatsApp. Current safe posture is `mock` for staging and production until explicit cutover.
 - Twilio Content API synchronization exists. Real template approval and closed-window template sending still need an end-to-end staging validation with an approved Twilio template.
 - Front import is partially connected in safe pilot mode. Read-only client, dry-run, buffer persistence, exact phone matching, buffer rematch, dry-run-first matched conversion, and Admin visibility exist. Full historical import, ambiguous matching review, and conversation-level history filtering are still pending.
-- Attachments UI exists but persistence/send is not implemented.
+- WhatsApp attachments are explicitly unavailable in V1; the composer shows this as a note rather than a fake upload control.
+- API endpoints for app-style reads/writes require `SALES_COCKPIT_API_TOKEN` outside local tests. JSON mock inbound webhooks also require `SALES_COCKPIT_MOCK_WEBHOOK_TOKEN` or the API token outside local tests.
+- Production should use `SALES_COCKPIT_SEED_DEMO_DATA=false`; this keeps users, rules, and templates, but removes local `SD-DEMO-*` conversations.
 - Auth is local password-based only.
 - GitHub remote exists: `https://github.com/fedup1979/salescockpit`.
 - DigitalOcean staging exists on `http://139.59.158.77:8502`.

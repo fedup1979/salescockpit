@@ -4,7 +4,7 @@ from hmac import compare_digest
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from sales_cockpit import __version__
@@ -114,13 +114,69 @@ def health() -> dict:
     return {"status": "ok", "version": __version__, "mode": settings.twilio_mode}
 
 
+def _clean_bearer_token(value: str | None) -> str:
+    return (value or "").strip().lstrip("\ufeff")
+
+
+def require_api_access(
+    authorization: str | None = Header(default=None),
+    x_sales_cockpit_api_key: str | None = Header(default=None),
+) -> None:
+    settings = get_settings()
+    expected_token = _clean_bearer_token(settings.api_token)
+    if not expected_token:
+        raise HTTPException(status_code=503, detail="Sales Cockpit API token is not configured.")
+    provided_token = _extract_access_token(authorization, x_sales_cockpit_api_key)
+    if not provided_token:
+        raise HTTPException(status_code=401, detail="Missing Sales Cockpit API token.")
+    if not compare_digest(provided_token.encode("utf-8"), expected_token.encode("utf-8")):
+        raise HTTPException(status_code=403, detail="Invalid Sales Cockpit API token.")
+
+
+def _extract_access_token(
+    authorization: str | None,
+    api_key_header: str | None,
+) -> str:
+    if authorization:
+        prefix = "Bearer "
+        if authorization.startswith(prefix):
+            return _clean_bearer_token(authorization[len(prefix) :])
+    return _clean_bearer_token(api_key_header)
+
+
+def _validate_mock_json_webhook_access(request: Request) -> None:
+    settings = get_settings()
+    environment = (settings.environment or "local").lower()
+    if environment in {"local", "test"}:
+        return
+    expected_token = _clean_bearer_token(settings.mock_webhook_token or settings.api_token)
+    if not expected_token:
+        raise HTTPException(status_code=503, detail="Mock webhook token is not configured.")
+    provided_token = _extract_access_token(
+        request.headers.get("authorization"),
+        request.headers.get("x-sales-cockpit-mock-token")
+        or request.headers.get("x-sales-cockpit-api-key"),
+    )
+    if not provided_token:
+        raise HTTPException(status_code=401, detail="Missing mock webhook token.")
+    if not compare_digest(provided_token.encode("utf-8"), expected_token.encode("utf-8")):
+        raise HTTPException(status_code=403, detail="Invalid mock webhook token.")
+
+
 @app.get("/leads")
-def leads(search: str = "", stage: str = "all") -> list[dict]:
+def leads(
+    search: str = "",
+    stage: str = "all",
+    _api_access: None = Depends(require_api_access),
+) -> list[dict]:
     return list_conversations(search=search, stage=stage)
 
 
 @app.get("/conversations/{conversation_id}")
-def conversation(conversation_id: int) -> dict:
+def conversation(
+    conversation_id: int,
+    _api_access: None = Depends(require_api_access),
+) -> dict:
     conv = get_conversation(conversation_id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -129,7 +185,11 @@ def conversation(conversation_id: int) -> dict:
 
 
 @app.post("/conversations/{conversation_id}/messages")
-def send_freeform(conversation_id: int, request: FreeformMessageRequest) -> dict:
+def send_freeform(
+    conversation_id: int,
+    request: FreeformMessageRequest,
+    _api_access: None = Depends(require_api_access),
+) -> dict:
     ok, message = send_freeform_message(conversation_id, request.user_id, request.body)
     if not ok:
         raise HTTPException(status_code=400, detail=message)
@@ -137,7 +197,11 @@ def send_freeform(conversation_id: int, request: FreeformMessageRequest) -> dict
 
 
 @app.post("/conversations/{conversation_id}/template-messages")
-def send_template(conversation_id: int, request: TemplateMessageRequest) -> dict:
+def send_template(
+    conversation_id: int,
+    request: TemplateMessageRequest,
+    _api_access: None = Depends(require_api_access),
+) -> dict:
     ok, message = send_template_message(
         conversation_id, request.user_id, request.template_id, request.variables
     )
@@ -147,12 +211,19 @@ def send_template(conversation_id: int, request: TemplateMessageRequest) -> dict
 
 
 @app.get("/templates")
-def templates(search: str = "", approved_only: bool = False) -> list[dict]:
+def templates(
+    search: str = "",
+    approved_only: bool = False,
+    _api_access: None = Depends(require_api_access),
+) -> list[dict]:
     return list_templates(search=search, approved_only=approved_only)
 
 
 @app.post("/templates")
-def create_whatsapp_template(request: TemplateCreateRequest) -> dict:
+def create_whatsapp_template(
+    request: TemplateCreateRequest,
+    _api_access: None = Depends(require_api_access),
+) -> dict:
     try:
         template_id = create_template(
             user_id=request.user_id,
@@ -175,6 +246,7 @@ async def twilio_inbound(
 ) -> dict[str, Any]:
     content_type = request.headers.get("content-type", "").lower()
     if "application/json" in content_type:
+        _validate_mock_json_webhook_access(request)
         return await _record_mock_inbound(request)
 
     params = await _twilio_form_params(request)
@@ -253,10 +325,6 @@ def schooldrive_lead_or_presubscription(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "ok", **result}
-
-
-def _clean_bearer_token(value: str | None) -> str:
-    return (value or "").strip().lstrip("\ufeff")
 
 
 async def _record_mock_inbound(request: Request) -> dict[str, Any]:

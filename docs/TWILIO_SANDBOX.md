@@ -61,7 +61,7 @@ Use either:
 
 For Twilio Sandbox, the sender is usually the sandbox WhatsApp number shown in Twilio Console.
 
-For a real DEV WhatsApp sender on staging:
+Historical DEV sender note. The former real DEV WhatsApp sender was later blocked by Meta, so do not rely on it for production validation. Keep this example only as a reminder of the allowlist pattern; read `docs/TWILIO_SENDER_MIGRATION.md` before using any real sender.
 
 ```text
 SALES_COCKPIT_TWILIO_MODE=live

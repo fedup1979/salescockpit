@@ -75,9 +75,9 @@ Compte : `setter2@essr.ch`.
 4. Vérifier la confirmation.
 5. Aller dans `Modèles`.
 6. Vérifier la demande dans `Demandes de modèles à créer`.
-7. Créer un modèle mock depuis la demande si nécessaire.
+7. Vérifier que la demande est visible et traitable par un admin.
 
-Résultat attendu : la demande est visible dans `Modèles`. Si un modèle mock est créé et approuvé, la relance bloquée est débloquée.
+Résultat attendu : la demande est visible dans `Modèles`. En staging/prod, seule l'approbation d'un vrai template Twilio peut débloquer une recommandation opérationnelle.
 
 ## P4 Setting Call Vers Closing
 

@@ -1,12 +1,26 @@
 # Current Project State
 
-Last updated: 2026-06-20 17:27 Europe/Zurich.
+Last updated: 2026-06-20 20:05 Europe/Zurich.
 
 This is the first document to read when resuming Sales Cockpit.
 
 ## Executive Summary
 
 Sales Cockpit is deployed and running in staging on DigitalOcean. Production is deployed cold and remains in Twilio `mock` mode.
+
+## Production Readiness Snapshot
+
+- Latest checkpoint before hardening audit: `a02f10c`.
+- Latest deployed staging UI/API check before this audit: OK on commit `a1917d8`.
+- Latest local automated validation after this audit: `116 passed`, `compileall` OK, `git diff --check` OK, BOM scan clean.
+- Latest staging pre-cutover check before this audit: OK.
+- Staging Twilio mode: `mock`, no real WhatsApp send from Sales Cockpit.
+- Production Twilio mode: `mock`, prepared cold only.
+- SchoolDrive webhook ingestion: implemented and passing synthetic/replay checks.
+- Current SchoolDrive live gate: validate one fresh website form through AR `sent` snapshot and Tanjona +72h follow-up.
+- Front: read-only buffer foundation exists; Front is not a blocker for the Laura workflow review.
+- Go/no-go: good for Laura business review in staging; not yet GO for operational WhatsApp cutover.
+- Hardening completed locally after the checkpoint: app API token guard, mock webhook token guard, Twilio status regression guard, Twilio SID uniqueness, production seed without demo conversations, fake attachment uploader removed, documentation aligned.
 
 The main remaining blocker before operational production cutover is a fresh live end-to-end SchoolDrive validation after the SchoolDrive WhatsApp/projector worker is confirmed running:
 
@@ -210,14 +224,14 @@ The SchoolDrive MCP currently returns naive timestamps that track UTC. Do not su
 
 Historical note: Claude Code previously diagnosed `lead:124126` and proved that Sales Cockpit behaved correctly with a `queued` snapshot, but that SchoolDrive had not emitted a newer AR-sent snapshot for that record.
 
-Tiago later reported that the SchoolDrive event projector was published, including a filter to skip leads/subscriptions created before `2026-03-01`. Staging then received a large replay and is polluted with historical records.
+Tiago later reported that the SchoolDrive event projector was published, including a filter to skip leads/subscriptions created before `2026-03-01`. A previous staging run received a large historical replay; the latest recorded staging check after cleanup/rebuild is small again and suitable for focused validation.
 
-Current staging state before cleanup:
+Latest recorded staging state before this audit:
 
 ```text
-schooldrive_events: 5364
-schooldrive_leads: 1791
-min schooldrive_aggregated_updated_at: 2026-02-13T20:43:06+00:00
+schooldrive_events: accepted 6, ignored 1
+schooldrive_leads: 4
+workflow: open_conversations_without_action = 0
 ```
 
 Production is still clean from SchoolDrive:
@@ -318,7 +332,7 @@ V2 debt for proper identity resolution is documented in `docs/TECHNICAL_DEBT.md`
 
 ## Immediate Next Steps
 
-1. Create a restore point, then clean/rebuild staging SchoolDrive data polluted by the historical replay if required for a readable validation set.
+1. Keep the current small staging dataset unless a focused reset is needed for Laura's review.
 2. Resume the live website-form test once SchoolDrive worker/projector activity is visible:
    - first snapshot received;
    - automatic WhatsApp sent;

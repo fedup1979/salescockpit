@@ -32,7 +32,7 @@ Use system fonts. Keep labels compact and readable. Avoid display typography.
 
 ## Layout
 
-- Inbox first.
+- Tâches first.
 - Dense but not cramped.
 - Left navigation, central work area, right detail panel when useful.
 - Cards only for repeated entities or bounded panels.

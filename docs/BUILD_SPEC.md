@@ -1,4 +1,4 @@
-﻿# Sales Cockpit Build Spec
+# Sales Cockpit Build Spec
 
 ## Purpose
 
@@ -33,7 +33,7 @@ Seed password for local mock mode: `ChangeMe!2026`.
 - `sales_cockpit/store.py`: app data access and business operations.
 - `sales_cockpit/services/whatsapp_rules.py`: WhatsApp 24-hour window logic.
 - `sales_cockpit/services/twilio_client.py`: mock-by-default WhatsApp client with Twilio sandbox/live support.
-- `sales_cockpit/services/schooldrive.py`: placeholder read-only connector.
+- `sales_cockpit/api/main.py` + `sales_cockpit/store.py`: implemented SchoolDrive snapshot webhook ingestion. `sales_cockpit/services/schooldrive.py` remains only a small URL/helper placeholder for future read-only enrichment.
 - `sales_cockpit/services/notion.py`: placeholder read-only connector.
 - `scripts/reset_demo.py`: resets local `SD-DEMO-*` scenarios before manual validation.
 - `docs/ACTION_WORKFLOW.md`: source of truth for action workflow decisions and transition table.
@@ -208,7 +208,7 @@ Dropdown labels are displayed in French. Internal values remain in English.
 - Schedule and absence-transfer rules, currently declarative.
 - Follow-up sequences.
 - SchoolDrive lead types: `lead` and `presubscription` (`Lead` / `Préinscription` in the UI).
-- Demo template catalog used until Twilio template sync exists.
+- Demo template catalog used only for local/mock/demo mode. Real operational recommendations must use synchronized Twilio templates approved by WhatsApp.
 
 ## Current Data Model Highlights
 
@@ -242,7 +242,7 @@ SQLite requirements:
 The seed creates:
 
 - 6 initial users, including Tanjona at `setter2@essr.ch`.
-- 23 demo conversations.
+- 19 coherent demo conversations (`SD-DEMO-4001` through `SD-DEMO-4019`).
 - At least 10 conversations with WhatsApp window open.
 - At least 10 conversations with WhatsApp window closed.
 - A few conversations marked as resolved.
@@ -250,7 +250,7 @@ The seed creates:
 - Demo WhatsApp templates for lead, setting, closer-will-sign, course-date, and out-of-hours sequences.
 - Next actions across reply, setting call, follow-up, and closing call.
 
-Seed data is idempotent and should not duplicate existing demo leads.
+Seed data is idempotent and should not duplicate existing demo leads. Production should run with `SALES_COCKPIT_SEED_DEMO_DATA=false`, which keeps users/rules/templates but removes `SD-DEMO-*` conversations.
 
 ## Test Commands
 

@@ -23,7 +23,7 @@ The tool helps setters and closers manage WhatsApp conversations, call tasks, te
 - Know whether the WhatsApp 24-hour window is open or closed.
 - Send free-form messages only when allowed.
 - Use approved templates when the 24-hour window is closed.
-- Create templates when no template fits.
+- Request templates when no template fits; real template creation and submission are admin-only.
 - Manage call tasks.
 - Qualify leads.
 - Preserve complete conversation history for a future AI setter.

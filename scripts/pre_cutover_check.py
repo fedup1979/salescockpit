@@ -133,6 +133,7 @@ def _summary(readiness: dict[str, Any]) -> dict[str, Any]:
         "twilio_mode": readiness["twilio"]["mode"],
         "twilio_statuses": readiness["twilio"]["status_counts"],
         "workflow": readiness["workflow"],
+        "security": readiness.get("security", {}),
     }
 
 

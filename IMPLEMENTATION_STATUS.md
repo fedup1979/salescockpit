@@ -1,4 +1,4 @@
-﻿# Sales Cockpit Implementation Status
+# Sales Cockpit Implementation Status
 
 ## Current Status
 
@@ -13,6 +13,8 @@ Latest recorded staging deployment check:
 - `scripts/pre_cutover_check.py`: OK.
 - Twilio mode on staging: `mock`.
 - Workflow consistency: no active conversation without action, no resolved conversation with active action, no conflicting main actions.
+- API security readiness checks app API tokens and mock webhook tokens outside local tests.
+- Latest local hardening validation: `116 passed`, `compileall` OK, `git diff --check` OK, BOM scan clean.
 
 The canonical workflow model is now:
 
@@ -151,6 +153,15 @@ The canonical workflow model is now:
 - Inbound WhatsApp identity guardrail added: exact phone match attaches automatically; zero or multiple matches create a temporary `À identifier` lead with manual name/course fields.
 - V2 identity-resolution debt is documented in `docs/TECHNICAL_DEBT.md`.
 - Historical SchoolDrive diagnostic: `lead:124126` arrived with `armsg:1005384` as `queued`, while Claude MCP verified the same AR was already `sent` in SchoolDrive and no newer webhook reached Cockpit. Tiago later reported that the projector was published; the remaining gate is a fresh live website-form validation.
+
+## Latest Hardening
+
+- App-style FastAPI endpoints require `SALES_COCKPIT_API_TOKEN` outside local tests.
+- JSON mock Twilio inbound webhook calls require `SALES_COCKPIT_MOCK_WEBHOOK_TOKEN` or the API token outside local tests.
+- Twilio status callbacks ignore status regressions, so a late `sent` callback cannot overwrite `delivered` or `read`.
+- Twilio message SIDs are normalized to uniqueness and protected by a partial unique index.
+- `SALES_COCKPIT_SEED_DEMO_DATA=false` keeps the core seed but removes `SD-DEMO-*` conversations for clean production databases.
+- The WhatsApp composer no longer shows a fake attachment uploader; attachments are explicitly out of V1.
 
 ## Next Checkpoints
 

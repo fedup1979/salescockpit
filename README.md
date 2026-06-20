@@ -1,8 +1,8 @@
-﻿# Sales Cockpit
+# Sales Cockpit
 
 Internal ESSR sales cockpit for WhatsApp conversations, next actions, lead qualification, template management, and future AI setter readiness.
 
-The current build starts in mock mode. It does not touch Twilio, Front.io, SchoolDrive, or Notion production flows.
+Local development starts in mock mode. Staging and production can read configured integrations, for example SchoolDrive webhooks, Twilio Content API templates, and Front read-only buffer imports, but they must not change production Twilio, Front.io, SchoolDrive, or Notion flows without an explicit cutover decision.
 
 ## Local Setup
 
@@ -31,6 +31,7 @@ uvicorn sales_cockpit.api.main:app --reload --port 8000
 ## Initial Users
 
 The seed password is controlled by `SALES_COCKPIT_SEED_PASSWORD`.
+Demo conversations are controlled by `SALES_COCKPIT_SEED_DEMO_DATA`; keep it `true` locally and in staging validation databases, but set it to `false` for production databases.
 
 Default local password:
 
@@ -80,6 +81,8 @@ Seeded accounts:
 ## Safety
 
 Do not put production secrets in Git. Use `.env` locally or DigitalOcean environment variables for staging.
+
+Outside local tests, app-style FastAPI endpoints require `SALES_COCKPIT_API_TOKEN`. JSON mock Twilio inbound webhooks require `SALES_COCKPIT_MOCK_WEBHOOK_TOKEN` or the API token. Real Twilio form webhooks still use `X-Twilio-Signature`.
 
 ## Deployment
 

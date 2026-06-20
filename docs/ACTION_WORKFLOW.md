@@ -1,4 +1,4 @@
-﻿# Sales Cockpit Action Workflow
+# Sales Cockpit Action Workflow
 
 Ce document formalise la logique métier validée avec François autour des actions commerciales.
 
@@ -265,7 +265,7 @@ Règle : une relance de cours gagne contre une relance relative au lead dans une
 - Les outcomes `setting_call` sont : passer au closing, pas joint, pas prêt / pas de suite claire, non pertinent, ne plus contacter.
 - Les outcomes `closing_call` sont : signé, va signer, pas joint, joint mais pas décidé, non pertinent.
 - Une mini note est obligatoire après un appel.
-- Tous les utilisateurs peuvent créer ou demander un template.
+- Tous les utilisateurs peuvent demander un template. Seuls les admins peuvent créer, synchroniser ou soumettre un template à Twilio.
 - Une action de template apparaît dans la file seulement si elle bloque réellement une relance.
 - `Ne plus contacter` est un statut de contact séparé, pas une qualification commerciale.
 

@@ -616,6 +616,7 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
         WHERE type = 'call'
         """
     )
+    _ensure_twilio_message_sid_unique(conn)
     conn.execute(
         """
         UPDATE sequence_steps
@@ -1120,6 +1121,50 @@ def _reset_demo_dataset_if_needed(conn: sqlite3.Connection, now) -> None:
             updated_at = excluded.updated_at
         """,
         (DEMO_SEED_VERSION, iso_utc(now)),
+    )
+
+
+def _disable_demo_dataset(conn: sqlite3.Connection) -> None:
+    conn.execute("DELETE FROM leads WHERE schooldrive_lead_id LIKE 'SD-DEMO-%'")
+    conn.execute("DELETE FROM app_metadata WHERE key = 'demo_seed_version'")
+
+
+def _ensure_twilio_message_sid_unique(conn: sqlite3.Connection) -> None:
+    duplicate_sids = conn.execute(
+        """
+        SELECT twilio_message_sid
+        FROM messages
+        WHERE twilio_message_sid IS NOT NULL
+        GROUP BY twilio_message_sid
+        HAVING COUNT(*) > 1
+        """
+    ).fetchall()
+    for duplicate in duplicate_sids:
+        sid = duplicate["twilio_message_sid"]
+        rows = conn.execute(
+            """
+            SELECT id
+            FROM messages
+            WHERE twilio_message_sid = ?
+            ORDER BY id
+            """,
+            (sid,),
+        ).fetchall()
+        for row in rows[1:]:
+            conn.execute(
+                """
+                UPDATE messages
+                SET twilio_message_sid = ?
+                WHERE id = ?
+                """,
+                (f"{sid}#duplicate:{row['id']}", row["id"]),
+            )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_twilio_message_sid_unique
+        ON messages(twilio_message_sid)
+        WHERE twilio_message_sid IS NOT NULL
+        """
     )
 
 
@@ -1887,17 +1932,20 @@ def seed_initial_data() -> None:
             "SELECT id FROM users WHERE email = ?", ("tiago.jacobs@gmail.com",)
         ).fetchone()["id"]
 
-        _reset_demo_dataset_if_needed(conn, now)
-
-        demo_leads = _build_demo_scenarios(
-            now,
-            mihary_id,
-            setter2_id,
-            yasmine_id,
-            laura_id,
-            francois_id,
-            tiago_id,
-        )
+        if not settings.seed_demo_data:
+            _disable_demo_dataset(conn)
+            demo_leads = []
+        else:
+            _reset_demo_dataset_if_needed(conn, now)
+            demo_leads = _build_demo_scenarios(
+                now,
+                mihary_id,
+                setter2_id,
+                yasmine_id,
+                laura_id,
+                francois_id,
+                tiago_id,
+            )
 
         for lead in demo_leads:
             existing = conn.execute(
