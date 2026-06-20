@@ -1,6 +1,6 @@
 # Current Project State
 
-Last updated: 2026-06-20 10:29 Europe/Zurich.
+Last updated: 2026-06-20 10:54 Europe/Zurich.
 
 This is the first document to read when resuming Sales Cockpit.
 
@@ -93,6 +93,21 @@ Implemented locally after the previous documentation update:
 - During a `follow_up` action, the Conversation tab displays the recommended template when a mapping matches the prospect.
 
 This lets Laura map real Twilio templates to events such as "APP relance 3" without changing the core workflow.
+
+### Pilotage Page
+
+Implemented in commit `6c48293`.
+
+`Pilotage` is an admin-only commercial tuning page for Laura. It keeps the existing technical Admin page intact, but exposes the workflow in a more human-readable way:
+
+- overview of normal flows;
+- default course sessions by category;
+- scenario timelines by lead type, course category and sequence;
+- full template message body, Twilio SID and template status for each step;
+- natural-language conflict rules;
+- simple simulator for lead-relative and course-start timelines.
+
+Default course sessions live in `course_default_sessions`. They are used as a planning layer when a SchoolDrive Lead has only a course category, for example `APP`, but no specific session or `start_date`. SchoolDrive data remains authoritative: if SchoolDrive provides a real session/start date, it wins over the default session.
 
 ### SchoolDrive
 
