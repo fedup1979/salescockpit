@@ -4,6 +4,8 @@ Last updated: 2026-06-22 16:13 Europe/Zurich.
 
 This is the first document to read when resuming Sales Cockpit.
 
+Important follow-up: the adversarial review findings from 2026-06-22 are preserved in `docs/ADVERSARIAL_REVIEW.md`. They are not implemented yet. Read that file before declaring the system ready for live WhatsApp cutover.
+
 ## Executive Summary
 
 Sales Cockpit is deployed and running in staging on DigitalOcean. Production is deployed cold and remains in Twilio `mock` mode.

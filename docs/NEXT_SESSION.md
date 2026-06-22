@@ -4,6 +4,8 @@
 
 Read `docs/CURRENT_STATE.md` first. It contains the current production-readiness state, the exact SchoolDrive AR-sent blocker, and the next operational decisions.
 
+Also read `docs/ADVERSARIAL_REVIEW.md` before making cutover decisions. It records the latest adversarial review findings; the listed corrections are deliberately not implemented yet.
+
 Sales Cockpit is a runnable staging prototype.
 
 Local URLs:
