@@ -2,6 +2,23 @@
 
 This document tracks deliberate V1 shortcuts that must not be forgotten during staging and production cutover.
 
+## Refactoring Before Official V2
+
+V1 intentionally concentrated a lot of behavior in a small number of files to move fast during the cutover window. This is acceptable for the V1 launch, but it must not become the long-term architecture.
+
+Before starting the official V2 feature track, extract:
+
+- `workflow_engine`: parcours/flux/action transitions, call cycles, no-show logic, course-start arbitration, safeguards;
+- `schooldrive_ingest`: webhook idempotency, snapshot freshness, payload normalization, SchoolDrive business signals;
+- `twilio_templates`: Content API sync, template requests, approval/unblock logic, mapping validation;
+- `twilio_messaging`: outbox send path, status callbacks, delivery-state transitions, live-mode guards;
+- `admin_actions`: bug reports, template requests, default-session reviews, integration incidents;
+- `pilotage`: read models and writes for Laura's tuning page.
+
+Current large files to split first: `sales_cockpit/store.py`, `sales_cockpit/ui/app.py`, `sales_cockpit/db.py`.
+
+Do this as a cleanup phase before adding IA automation, PBX/softphone, A/B testing, or richer SchoolDrive write-back. The goal is to keep the V1 cutover stable while making V2 safer to extend.
+
 ## Identity Resolution
 
 ### V1 Implemented Guardrail
@@ -57,6 +74,8 @@ Add a controlled recalculation workflow:
 - write an audit log entry for every recalculated task;
 - never recalculate completed, cancelled, archived, signed, non pertinent, or do-not-contact conversations.
 
+Do not add draft/publish/rollback for Pilotage in V1. It was considered and rejected as overkill for the cutover. Revisit only if Laura's tuning cadence creates real operational risk.
+
 ## Unsupported Course Categories
 
 ### V1 Implemented Guardrail
@@ -94,6 +113,8 @@ Add a global scheduling/recalculation workflow:
 - explain conflicts before applying changes;
 - preserve planned setting/closing calls as non-interruptible actions;
 - write audit logs for every cancelled/replaced task.
+
+Also add a periodic check for default sessions that have passed, even if no new SchoolDrive event arrives that day. V1 creates an admin action when such a stale default session is encountered during ingestion; V2 should find it proactively.
 
 ## Admin Work Queues
 
@@ -139,3 +160,16 @@ Add optional WhatsApp reminders before planned appointments:
 - template mapping by course, role, and appointment type.
 
 These reminders must never override the appointment itself.
+
+## API/UI Workflow Parity
+
+Some API endpoints are intentionally thin V1 wrappers around the core store functions. Before exposing these endpoints to external IA agents or automation tools, verify that the API path enforces exactly the same outcome logic as the Streamlit UI:
+
+- action outcome selection;
+- next-action creation;
+- template recommendation and request blocking;
+- safeguards and outbox behavior;
+- call reschedule/cancel/documentation flows;
+- terminal statuses and SchoolDrive signals.
+
+The rule for V2: external tools may call APIs only after each workflow-changing endpoint has a dedicated test proving parity with the UI/store path.

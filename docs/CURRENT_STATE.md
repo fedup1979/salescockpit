@@ -1,6 +1,6 @@
 # Current Project State
 
-Last updated: 2026-06-22 13:27 Europe/Zurich.
+Last updated: 2026-06-22 16:13 Europe/Zurich.
 
 This is the first document to read when resuming Sales Cockpit.
 
@@ -13,7 +13,7 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 - Latest checkpoint before hardening audit: `a02f10c`.
 - Latest deployed staging UI/API check: OK on commit `db6f03b`.
 - Latest deployed production cold check: OK on commit `db6f03b`, Twilio `mock`, no SchoolDrive/Front production traffic connected.
-- Latest local automated validation after the V1 workflow update: `125 passed`, `compileall` OK.
+- Latest local automated validation after the hardening update: `133 passed`, `compileall` OK.
 - Latest staging pre-cutover check before this audit: OK.
 - Staging Twilio mode: `mock`, no real WhatsApp send from Sales Cockpit.
 - Production Twilio mode: `mock`, prepared cold only.
@@ -23,6 +23,7 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 - Go/no-go: good for Laura business review in staging; not yet GO for operational WhatsApp cutover.
 - Hardening completed locally after the checkpoint: app API token guard, mock webhook token guard, Twilio status regression guard, Twilio SID uniqueness, production seed without demo conversations, fake attachment uploader removed, documentation aligned.
 - Latest local V1 workflow update: `eligible` is now the default qualification; setting/closing indécis and no-show flows are distinct; call appointments can be rescheduled or cancelled; bug reports and template requests create admin actions; outbound WhatsApp safeguards are configurable in Admin.
+- Latest hardening update: no-show call retries are now scoped by `call_cycle_id`; business-rule seeds are versioned and migrate legacy `post_call_undecided` rows; Twilio template sync can unblock linked template requests; strict production cutover checks exist; SchoolDrive signed/do-not-contact/course-full/session-past signals are handled; follow-up quotas do not block human replies; outbound WhatsApp writes a pending outbox row before calling Twilio; core list queries now have indexes and pagination guards.
 - Staging pre-cutover after deployment: OK, including API security and seed checks.
 - Production cold pre-cutover after deployment with `--allow-cold-prod`: OK, including API security, seed checks, and zero active workflow anomalies.
 
@@ -68,6 +69,8 @@ git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD
 ```
 
 Production remains cold/mock until an explicit production cutover step.
+
+Before switching the real WhatsApp routing, run `scripts/pre_cutover_check.py --strict-prod` against HTTPS production endpoints. The strict check intentionally fails if production is still cold/mock, if secrets look like placeholders, if Twilio callbacks are not HTTPS, if a backup is missing/stale, if template requests are pending, if blocked actions remain, or if approved real Twilio mappings are missing.
 
 Restore points are stored in:
 
@@ -205,6 +208,8 @@ Important invariants:
 - A planned setting/closing call means the future work is to document the call at the scheduled time. The call is visible in the conversation detail so Setter I or the closer knows an appointment already exists and can modify it in `Actions`.
 - Course-start relances may replace a lead/presubscription relance when they conflict within 24h, but they must not replace an already planned setting/closing call.
 - Course-start dates come first from SchoolDrive `data.course.start_date`; if a Lead only has a category, Sales Cockpit uses the active default session for that category.
+- If a default session date is already past, Sales Cockpit creates an admin action asking to update the default session instead of silently doing nothing.
+- If SchoolDrive marks a course/session full, Sales Cockpit cancels open follow-up relances and routes the case to Setter I to propose another session. If an appointment is already planned, that appointment remains the primary action and receives a visible course-full note.
 
 ### SchoolDrive
 

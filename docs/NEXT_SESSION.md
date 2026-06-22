@@ -47,6 +47,8 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 
 ## Important Recent Decisions
 
+- Latest local hardening validation: `133 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\run`, plus `compileall` OK.
+- Use `--basetemp=.pytest-tmp\run` on Windows if Pytest fails after successful test execution because it cannot clean `pytest-current` in `%TEMP%`.
 - The action is now explicitly validated as the central operational unit of the system.
 - Canonical model: `Parcours` = commercial state, `Flux` = configurable follow-up scenario, `Action` = operational work item.
 - A conversation with `open` status must normally have one open next action.
@@ -112,6 +114,13 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - The Actions tab is contextual: WhatsApp actions explain where to send, call actions collect result + mandatory note, blocked relances show template-request state, and the standard planner can create `reply`, `follow_up`, `setting_call`, or `closing_call`.
 - `Actions avancées` should stay minimal. In V1 it only contains `Message fait hors cockpit`. Do not reintroduce generic manual action creation, manual handoff to closer, manual data correction, or conversation reopen there.
 - Setting and closing calls can be completed with business outcomes that create the next action.
+- No-show retries are counted per appointment cycle through `tasks.call_cycle_id` and `tasks.call_attempt_index`. A new setting/closing appointment starts a new cycle, so old no-shows do not make the system skip to the wrong retry.
+- Business-rule seed data is versioned in `app_metadata.business_rules_version`. When the version changes, canonical sequence steps are migrated and legacy active `post_call_undecided` steps are deactivated.
+- Template requests can be unblocked by Twilio sync if a real approved template is linked or if the exact template name/SID appears in the request reason/context.
+- Outbound WhatsApp sends now create a pending local message before calling Twilio; if Twilio fails, the message remains in the thread with `twilio_status='send_error'`.
+- Follow-up quotas apply to relances, not to urgent human replies. The global kill switch and `do_not_contact` still block all sends.
+- SchoolDrive signals now handled: signed, do-not-contact/opt-outs, course/session full, stale default session date.
+- `scripts/pre_cutover_check.py --strict-prod` is the mandatory final gate before routing real production WhatsApp traffic to Sales Cockpit.
 - Only admins can create, synchronize, or submit WhatsApp templates to Twilio.
 - Non-admin users can search templates and create template requests only.
 - Twilio templates are synchronized from the Twilio Content API through `sales_cockpit/services/twilio_content.py`.
@@ -144,7 +153,7 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - Pre-cutover CLI check exists: `scripts/pre_cutover_check.py`.
 - Twilio template audit CLI exists: `scripts/twilio_template_audit.py`.
 - Production cutover runbook exists: `docs/CUTOVER_RUNBOOK.md`.
-- Lead-relative reminders follow `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
+- Lead-relative reminders are absolute from the flow trigger: `T+72h, T+144h, T+216h, T+16j, T+23j, T+53j, stop`.
 - Course-date reminders win over lead-relative reminders when they conflict, but must not interrupt a planned setting/closing call.
 - Minimum outbound WhatsApp follow-up delay is 24h.
 - Tanjona is currently seeded as `setter2@essr.ch`.

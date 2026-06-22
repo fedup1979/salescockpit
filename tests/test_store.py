@@ -4,6 +4,7 @@ from uuid import uuid4
 from sales_cockpit.config import get_settings
 from sales_cockpit.db import connect, seed_initial_data
 from sales_cockpit.services.twilio_content import TwilioContentTemplate
+from sales_cockpit.services.twilio_client import TwilioMessageError
 from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
 from sales_cockpit.store import (
     assign_standard_next_action,
@@ -854,6 +855,62 @@ def test_setting_call_not_reached_creates_call_retry_before_followup() -> None:
     assert retry["sequence_step_index"] == 1
 
 
+def test_new_setting_appointment_after_no_show_starts_new_call_cycle() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je suis disponible pour un appel.")
+    reply = get_next_action_for_lead(result["lead_id"])
+
+    ok, _ = complete_action_with_workflow(
+        reply["id"],
+        admin["id"],
+        "setting_booked",
+        note="Premier RDV setting fixé.",
+        next_due_at=iso_utc(utc_now()),
+        assigned_to_user_id=reply["assigned_to_user_id"],
+    )
+    assert ok is True
+    first_call = get_next_action_for_lead(result["lead_id"])
+    ok, _ = complete_action_with_workflow(
+        first_call["id"],
+        admin["id"],
+        "not_reached",
+        note="Pas de réponse au premier RDV.",
+    )
+    assert ok is True
+    first_retry = get_next_action_for_lead(result["lead_id"])
+    assert first_retry["sequence_step_index"] == 1
+    old_cycle_id = first_retry["call_cycle_id"]
+
+    setter_1 = next(user for user in list_users() if user["email"] == "service.etudiants@essr.ch")
+    ok, message = assign_standard_next_action(
+        result["conversation_id"],
+        admin["id"],
+        "setting_call",
+        setter_1["id"],
+        iso_utc(utc_now() + timedelta(days=1)),
+        "Nouveau RDV fixé après reprise de contact.",
+    )
+    assert ok is True, message
+    new_call = get_next_action_for_lead(result["lead_id"])
+    assert new_call["type"] == "setting_call"
+    assert new_call["call_attempt_index"] == 1
+    assert new_call["call_cycle_id"] != old_cycle_id
+
+    ok, _ = complete_action_with_workflow(
+        new_call["id"],
+        admin["id"],
+        "not_reached",
+        note="Pas de réponse sur le nouveau RDV.",
+    )
+    assert ok is True
+    new_retry = get_next_action_for_lead(result["lead_id"])
+    assert new_retry["sequence_code"] == "setting_call_not_reached"
+    assert new_retry["sequence_step_index"] == 1
+    assert new_retry["call_attempt_index"] == 2
+    assert new_retry["call_cycle_id"] == new_call["call_cycle_id"]
+
+
 def test_seed_includes_setter2_and_demo_templates() -> None:
     seed_initial_data()
     users = list_users(active_only=False)
@@ -906,6 +963,104 @@ def test_sync_twilio_templates_upserts_content_sid(monkeypatch) -> None:
     assert len(templates) == 1
     assert templates[0]["twilio_content_sid"] == "HX1234567890abcdef1234567890abcdef"
     assert templates[0]["status"] == "approved"
+
+
+def test_business_rule_seed_migrates_existing_sequence_rows() -> None:
+    seed_initial_data()
+    with connect() as conn:
+        conn.execute(
+            "UPDATE sequence_steps SET delay = '+999h', offset_amount = 999 WHERE sequence_code = 'lead_no_reply' AND step_index = 2"
+        )
+        conn.execute(
+            """
+            INSERT INTO sequences (code, label, timeline, trigger, owner, stop_when, active)
+            VALUES (
+                'post_call_undecided',
+                'Ancien post-appel indécis',
+                'Legacy',
+                'Legacy',
+                'Setter II',
+                'Legacy',
+                1
+            )
+            ON CONFLICT(code) DO NOTHING
+            """
+        )
+        sequence_id = conn.execute(
+            "SELECT id FROM sequences WHERE code = 'post_call_undecided'"
+        ).fetchone()["id"]
+        conn.execute(
+            """
+            INSERT INTO sequence_steps (
+                sequence_id, sequence_code, step_index, delay, action_type,
+                offset_direction, offset_amount, offset_unit, requires_template, meaning, active
+            ) VALUES (?, 'post_call_undecided', 1, '+72h', 'follow_up', 'after', 72, 'hours', 1, 'Legacy', 1)
+            ON CONFLICT(sequence_code, step_index) DO UPDATE SET active = 1
+            """,
+            (sequence_id,),
+        )
+        conn.execute(
+            "UPDATE app_metadata SET value = 'old-version' WHERE key = 'business_rules_version'"
+        )
+
+    seed_initial_data()
+
+    lead_steps = list_sequence_steps("lead_no_reply", active_only=False)
+    step_2 = next(step for step in lead_steps if step["step_index"] == 2)
+    assert step_2["delay"] == "T+6j"
+    assert step_2["offset_amount"] == 6
+    assert step_2["offset_unit"] == "days"
+    old_steps = list_sequence_steps("post_call_undecided", active_only=False)
+    assert old_steps
+    assert all(step["active"] == 0 for step in old_steps)
+
+
+def test_sync_twilio_templates_auto_unblocks_linked_template_request(monkeypatch) -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je veux une réponse précise.")
+    ok, _ = send_freeform_message(result["conversation_id"], admin["id"], "Je reviens vers vous.")
+    assert ok is True
+    followup = get_next_action_for_lead(result["lead_id"])
+    assert followup["type"] == "follow_up"
+
+    ok, _ = create_template_request(
+        result["conversation_id"],
+        admin["id"],
+        "Créer twilio_template_special",
+        "twilio_template_special pour ce cas.",
+        task_id=followup["id"],
+    )
+    assert ok is True
+    request = next(item for item in list_template_requests() if item["task_id"] == followup["id"])
+    assert get_next_action_for_lead(result["lead_id"])["status"] == "blocked"
+
+    remote = TwilioContentTemplate(
+        content_sid="HXcccccccccccccccccccccccccccccccc",
+        name="twilio_template_special",
+        language="fr",
+        category="utility",
+        body="Bonjour {{first_name}}, voici la réponse.",
+        status="approved",
+        content_type="twilio/text",
+        variables={"first_name": "Camille"},
+        payload={"sid": "HXcccccccccccccccccccccccccccccccc"},
+    )
+    monkeypatch.setattr("sales_cockpit.store.list_twilio_templates", lambda: [remote])
+
+    ok, message = sync_twilio_templates(admin["id"])
+
+    assert ok is True
+    assert "1 demande" in message
+    unblocked = get_next_action_for_lead(result["lead_id"])
+    assert unblocked["id"] == followup["id"]
+    assert unblocked["status"] == "open"
+    updated_request = next(item for item in list_template_requests() if item["id"] == request["id"])
+    assert updated_request["status"] == "approved"
+    assert not [
+        item for item in list_admin_actions()
+        if item.get("template_request_id") == request["id"]
+    ]
 
 
 def test_twilio_content_read_only_blocks_remote_template_creation(monkeypatch) -> None:
@@ -1390,7 +1545,19 @@ def test_blocked_followup_cannot_be_closed_by_unrelated_template_send() -> None:
     assert "Relance" in message
     assert get_next_action_for_lead(result["lead_id"])["status"] == "blocked"
 
-    ok, _ = update_template_request_status(request["id"], admin["id"], "approved", template["id"])
+    approved_template_id = create_template(
+        user_id=admin["id"],
+        name="relance_demande_specifique",
+        body="Bonjour, je reviens vers vous avec la bonne information.",
+        status="approved",
+        language="fr",
+        category="utility",
+        placeholders={},
+        twilio_content_sid="HXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    ok, _ = update_template_request_status(
+        request["id"], admin["id"], "approved", approved_template_id
+    )
     assert ok is True
     unblocked = get_next_action_for_lead(result["lead_id"])
     assert unblocked["status"] == "open"
@@ -1562,6 +1729,86 @@ def test_schooldrive_business_signals_stop_or_route_work() -> None:
     assert ok is True
 
 
+def test_course_full_keeps_planned_call_as_primary_action() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    schooldrive_id = f"lead:{uuid4().hex[:8]}"
+    result = record_inbound_message(unique_phone(), "Je veux un appel avant de choisir la session.")
+    with connect() as conn:
+        conn.execute(
+            "UPDATE leads SET schooldrive_lead_id = ?, course_category_short_title = 'APP' WHERE id = ?",
+            (schooldrive_id, result["lead_id"]),
+        )
+    reply = get_next_action_for_lead(result["lead_id"])
+    ok, _ = complete_action_with_workflow(
+        reply["id"],
+        admin["id"],
+        "setting_booked",
+        note="RDV setting fixé.",
+        next_due_at=iso_utc(utc_now() + timedelta(days=1)),
+        assigned_to_user_id=reply["assigned_to_user_id"],
+    )
+    assert ok is True
+    call = get_next_action_for_lead(result["lead_id"])
+
+    payload = schooldrive_signal_payload(
+        {
+            "schooldrive_id": schooldrive_id,
+            "course": {"category": "APP", "course_name": "APP TEST", "is_full": True},
+        }
+    )
+    ingest_schooldrive_snapshot(payload)
+
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["id"] == call["id"]
+    assert next_action["type"] == "setting_call"
+    assert "session est complète" in (next_action["description"] or "")
+    active_other = [
+        item for item in list_actions_for_lead(result["lead_id"], "all")
+        if item["type"] == "other" and item["status"] in {"open", "planned", "in_progress", "blocked"}
+    ]
+    assert active_other == []
+
+
+def test_past_default_session_creates_admin_review_action() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    ok, _ = upsert_course_default_session(
+        admin["id"],
+        "APP",
+        "APP ancienne session",
+        "2026-01-01",
+        default_session_name="APP ancienne",
+    )
+    assert ok is True
+
+    payload = schooldrive_signal_payload(
+        {
+            "course": {"category": "APP", "course_name": None, "start_date": None},
+            "whatsapp_autoresponders": [
+                {
+                    "message_id": f"armsg:{uuid4().hex[:8]}",
+                    "autoresponder_id": 1,
+                    "short_name": "MKT-APP-TEST",
+                    "whatsapp_template_id": "HXdddddddddddddddddddddddddddddddd",
+                    "whatsapp_template_variables_mapping": {"first_name": "Test"},
+                    "whatsapp_send_body": "Bonjour.",
+                    "status": "sent",
+                    "sent_at": iso_utc(utc_now()),
+                }
+            ],
+        }
+    )
+    ingest_schooldrive_snapshot(payload)
+
+    admin_actions = [
+        item for item in list_admin_actions()
+        if item["type"] == "default_session_review"
+    ]
+    assert len(admin_actions) == 1
+    assert "APP" in admin_actions[0]["title"]
+
+
 def test_outbound_safeguards_can_block_whatsapp_sends() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
@@ -1573,6 +1820,82 @@ def test_outbound_safeguards_can_block_whatsapp_sends() -> None:
     ok, message = send_freeform_message(result["conversation_id"], admin["id"], "Bonjour.")
     assert ok is False
     assert "kill switch" in message
+
+
+def test_followup_quota_blocks_followup_but_allows_human_reply() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    phone = unique_phone()
+    result = record_inbound_message(phone, "Bonjour.")
+    reply = get_next_action_for_lead(result["lead_id"])
+    ok, _ = send_freeform_message(result["conversation_id"], reply["assigned_to_user_id"], "Bonjour.")
+    assert ok is True
+    ok, _ = update_outbound_safeguards(admin["id"], {"outbound_max_per_lead_day": 1})
+    assert ok is True
+
+    followup = get_next_action_for_lead(result["lead_id"])
+    assert followup["type"] == "follow_up"
+    ok, message = send_freeform_message(result["conversation_id"], followup["assigned_to_user_id"], "Relance.")
+    assert ok is False
+    assert "limite quotidienne" in message
+
+    record_inbound_message(phone, "Je réponds finalement.")
+    reply = get_next_action_for_lead(result["lead_id"])
+    assert reply["type"] == "reply"
+    ok, message = send_freeform_message(result["conversation_id"], reply["assigned_to_user_id"], "Merci.")
+    assert ok is True, message
+
+
+def test_inbound_cancels_blocked_followup_and_creates_reply() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    phone = unique_phone()
+    result = record_inbound_message(phone, "Bonjour.")
+    reply = get_next_action_for_lead(result["lead_id"])
+    ok, _ = send_freeform_message(result["conversation_id"], reply["assigned_to_user_id"], "Bonjour.")
+    assert ok is True
+    followup = get_next_action_for_lead(result["lead_id"])
+    ok, _ = create_template_request(
+        result["conversation_id"],
+        admin["id"],
+        "Modèle manquant pour relance.",
+        "Contexte.",
+        task_id=followup["id"],
+    )
+    assert ok is True
+    assert get_next_action_for_lead(result["lead_id"])["status"] == "blocked"
+
+    record_inbound_message(phone, "Je viens de répondre.")
+
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "reply"
+    blocked_followups = [
+        item for item in list_actions_for_lead(result["lead_id"], "all")
+        if item["type"] == "follow_up" and item["status"] == "blocked"
+    ]
+    assert blocked_followups == []
+
+
+def test_outbox_keeps_send_error_message_when_twilio_fails(monkeypatch) -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Bonjour.")
+
+    class FailingClient:
+        def send_freeform(self, to_phone: str, body: str):
+            raise TwilioMessageError("temporary Twilio failure")
+
+    monkeypatch.setattr("sales_cockpit.store.get_whatsapp_client", lambda: FailingClient())
+
+    ok, message = send_freeform_message(result["conversation_id"], admin["id"], "Bonjour.")
+
+    assert ok is False
+    assert "Twilio" in message
+    messages = list_messages(result["conversation_id"])
+    failed = [item for item in messages if item["direction"] == "outbound"]
+    assert len(failed) == 1
+    assert failed[0]["twilio_status"] == "send_error"
+    assert failed[0]["twilio_error_message"] == "temporary Twilio failure"
 
 
 def unique_phone() -> str:

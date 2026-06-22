@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
@@ -13,7 +15,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from sales_cockpit.config import get_settings
-from sales_cockpit.db import init_db
+from sales_cockpit.db import connect, seed_initial_data
 from sales_cockpit.store import get_integration_readiness
 
 
@@ -26,11 +28,16 @@ def main() -> None:
         action="store_true",
         help="Do not fail only because SchoolDrive/Front are empty. Useful for cold prod preparation.",
     )
+    parser.add_argument(
+        "--strict-prod",
+        action="store_true",
+        help="Fail unless production is ready for the real WhatsApp cutover.",
+    )
     parser.add_argument("--json", action="store_true", help="Print full JSON output.")
     parser.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds.")
     args = parser.parse_args()
 
-    init_db()
+    seed_initial_data()
     settings = get_settings()
     readiness = get_integration_readiness()
     checks: list[dict[str, Any]] = []
@@ -64,8 +71,25 @@ def main() -> None:
         readiness_failures.append(
             f"{workflow['conversations_with_multiple_main_actions']} conversation(s) with conflicting active actions"
         )
+    if workflow.get("obsolete_sequence_reference_count"):
+        readiness_failures.append(
+            f"{workflow['obsolete_sequence_reference_count']} obsolete post_call_undecided reference(s)"
+        )
+    if workflow.get("active_followup_missing_step_count"):
+        readiness_failures.append(
+            f"{workflow['active_followup_missing_step_count']} active follow-up(s) with missing sequence step"
+        )
     if not readiness["backup"].get("exists"):
         readiness_failures.append("No backup found")
+    if args.strict_prod:
+        readiness_failures.extend(
+            _strict_prod_failures(
+                settings=settings,
+                readiness=readiness,
+                api_base=args.api_base,
+                ui_url=args.ui_url,
+            )
+        )
 
     checks.append(
         {
@@ -120,6 +144,111 @@ def _check_ui(ui_url: str, timeout: float) -> dict[str, Any]:
         "status_code": response.status_code,
         "content_type": response.headers.get("content-type", ""),
     }
+
+
+def _strict_prod_failures(
+    settings: Any,
+    readiness: dict[str, Any],
+    api_base: str,
+    ui_url: str,
+) -> list[str]:
+    failures: list[str] = []
+    environment = (settings.environment or "").lower()
+    if environment not in {"prod", "production"}:
+        failures.append("--strict-prod must run against SALES_COCKPIT_ENVIRONMENT=prod/production")
+    if settings.seed_demo_data:
+        failures.append("Production strict check requires SALES_COCKPIT_SEED_DEMO_DATA=false")
+
+    if not api_base or not _is_https_url(api_base):
+        failures.append("--api-base must be a public HTTPS URL in strict prod")
+    if not ui_url or not _is_https_url(ui_url):
+        failures.append("--ui-url must be a public HTTPS URL in strict prod")
+
+    for name, value in {
+        "SALES_COCKPIT_API_TOKEN": settings.api_token,
+        "SALES_COCKPIT_SCHOOLDRIVE_WEBHOOK_TOKEN": settings.schooldrive_webhook_token,
+        "SALES_COCKPIT_TWILIO_ACCOUNT_SID": settings.twilio_account_sid,
+        "SALES_COCKPIT_TWILIO_AUTH_TOKEN": settings.twilio_auth_token,
+    }.items():
+        if _bad_secret(value):
+            failures.append(f"{name} is missing or looks like a placeholder")
+
+    twilio = readiness["twilio"]
+    if (settings.twilio_mode or "").lower() != "live":
+        failures.append("Twilio mode must be live for strict prod")
+    if not (settings.twilio_whatsapp_sender or settings.twilio_messaging_service_sid):
+        failures.append("Twilio sender or messaging service SID is required")
+    if not settings.twilio_validate_signature:
+        failures.append("Twilio signature validation must be enabled")
+    if not _is_https_url(twilio.get("webhook_url")):
+        failures.append("Twilio inbound webhook URL must be HTTPS")
+    if not _is_https_url(twilio.get("status_callback_url")):
+        failures.append("Twilio status callback URL must be HTTPS")
+
+    backup = readiness["backup"]
+    if not backup.get("exists") or int(backup.get("size_bytes") or 0) <= 0:
+        failures.append("A non-empty backup is required")
+    elif _backup_age_hours(backup.get("updated_at") or "") > 24:
+        failures.append("Latest backup is older than 24 hours")
+
+    workflow = readiness["workflow"]
+    if workflow.get("blocked_action_count"):
+        failures.append(f"{workflow['blocked_action_count']} blocked action(s) remain")
+    if workflow.get("pending_template_request_count"):
+        failures.append(f"{workflow['pending_template_request_count']} pending template request(s) remain")
+
+    missing_mappings = _strict_missing_template_mapping_count()
+    if missing_mappings:
+        failures.append(f"{missing_mappings} active follow-up step/category combination(s) lack a real approved template mapping")
+
+    return failures
+
+
+def _bad_secret(value: str | None) -> bool:
+    normalized = (value or "").strip().lower()
+    return not normalized or normalized in {"change_me", "changeme", "todo", "placeholder", "secret"}
+
+
+def _is_https_url(value: str | None) -> bool:
+    parsed = urlparse((value or "").strip())
+    return parsed.scheme == "https" and bool(parsed.netloc)
+
+
+def _backup_age_hours(value: str) -> float:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return float("inf")
+    return (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds() / 3600
+
+
+def _strict_missing_template_mapping_count() -> int:
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM sequence_steps ss
+            JOIN sequences s ON s.code = ss.sequence_code AND s.active = 1
+            JOIN course_categories cc ON cc.active = 1
+            WHERE ss.active = 1
+              AND ss.action_type = 'follow_up'
+              AND ss.requires_template = 1
+              AND NOT EXISTS (
+                SELECT 1
+                FROM sequence_template_mappings stm
+                JOIN whatsapp_templates wt ON wt.id = stm.template_id
+                WHERE stm.active = 1
+                  AND stm.sequence_code = ss.sequence_code
+                  AND stm.sequence_step_index = ss.step_index
+                  AND stm.course_category IN ('all', cc.course_category)
+                  AND wt.status = 'approved'
+                  AND wt.twilio_content_sid IS NOT NULL
+                  AND wt.twilio_content_sid LIKE 'HX%'
+                  AND wt.twilio_content_sid NOT LIKE 'HX_MOCK_%'
+              )
+            """
+        ).fetchone()
+    return int(row["count"] if row else 0)
 
 
 def _summary(readiness: dict[str, Any]) -> dict[str, Any]:

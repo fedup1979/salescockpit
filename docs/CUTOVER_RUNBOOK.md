@@ -28,9 +28,11 @@ Production should use HTTPS before final cutover.
 - Staging has been cleaned after any historical event replay and rebuilt with records created on or after 2026-03-01.
 - Twilio WhatsApp sender for the production business is verified and approved.
 - Twilio templates from the real ESSR account are synchronized locally with `SALES_COCKPIT_TWILIO_CONTENT_READ_ONLY=true`.
+- Every mapped follow-up step has an approved real Twilio Content SID (`HX...`, not `HX_MOCK_*`).
 - `SALES_COCKPIT_API_TOKEN` is configured for staging/prod.
 - `SALES_COCKPIT_MOCK_WEBHOOK_TOKEN` is configured if JSON mock webhooks are used outside local tests.
 - Production runs with `SALES_COCKPIT_SEED_DEMO_DATA=false`.
+- Production Twilio mode remains `mock` until the final switch, then must be `live` with HTTPS inbound and status callback URLs.
 - Front API read-only token is valid.
 - Backup and restore scripts have been tested.
 - Laura validates the final operational workflow with real or near-real staging examples.
@@ -79,6 +81,21 @@ set +a
 ```
 
 The check must pass before a cutover rehearsal. For cold PROD preparation only, `--allow-cold-prod` can be used to avoid failing simply because SchoolDrive and Front have not been connected yet.
+
+Immediately before switching real WhatsApp routing, run the strict production check against public HTTPS endpoints:
+
+```bash
+cd /opt/sales-cockpit/prod/app
+set -a
+source /opt/sales-cockpit/prod/.env
+set +a
+.venv/bin/python scripts/pre_cutover_check.py \
+  --strict-prod \
+  --api-base https://<prod-api-domain> \
+  --ui-url https://<prod-ui-domain>
+```
+
+`--strict-prod` is intentionally unforgiving. It must fail if production is not in `prod/production`, if demo seed data is enabled, if API/SchoolDrive/Twilio secrets are missing or placeholder-like, if Twilio is not live, if callbacks are not HTTPS, if the latest backup is missing/stale, if blocked actions or pending template requests remain, or if required follow-up template mappings are missing.
 
 ## T-1: Front Buffer Import
 
@@ -155,12 +172,13 @@ They are historical context, not proof of a new Sales Cockpit action.
 
 Only after the above checks pass:
 
-0. Confirm HTTPS endpoints for production.
-1. Point Twilio WhatsApp inbound webhook to the production API endpoint.
-2. Point Twilio status callback to the production API endpoint.
-3. Send one inbound test message.
-4. Send one outbound approved template test if the WhatsApp window is closed.
-5. Verify delivery status checks appear in Sales Cockpit.
+0. Confirm `--strict-prod` passes.
+1. Confirm HTTPS endpoints for production.
+2. Point Twilio WhatsApp inbound webhook to the production API endpoint.
+3. Point Twilio status callback to the production API endpoint.
+4. Send one inbound test message.
+5. Send one outbound approved template test if the WhatsApp window is closed.
+6. Verify delivery status checks appear in Sales Cockpit.
 
 ## T+1: Monitor
 

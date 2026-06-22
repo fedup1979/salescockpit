@@ -4,6 +4,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from sales_cockpit.business_rules import (
     RESOLUTION_REASONS,
@@ -40,6 +42,27 @@ SCHOOLDRIVE_PENDING_AUTORESPONDER_STATUSES = {
     "queued",
     "sending",
     "moderation_pending",
+}
+VALID_ACTION_TYPES = {"reply", "follow_up", "setting_call", "closing_call", "contact_review", "other"}
+VALID_TASK_STATUSES = {"open", "in_progress", "planned", "blocked", "done", "cancelled"}
+VALID_CONTACT_STATUSES = {"contact_allowed", "do_not_contact"}
+VALID_LEAD_STATUSES = {"eligible", "not_relevant", "will_sign", "signed"}
+VALID_SEQUENCE_CODES = {
+    "lead_no_reply",
+    "setter_no_next_step",
+    "setting_call_not_reached",
+    "closing_call_not_reached",
+    "post_setting_undecided",
+    "post_closing_undecided",
+    "closer_will_sign",
+    "course_start",
+}
+ZURICH_TZ = ZoneInfo("Europe/Zurich")
+BUSINESS_HOURS_BY_ROLE = {
+    "company": (8, 20),
+    "setter1": (8, 17),
+    "setter2": (12, 16),
+    "closer": (11, 20),
 }
 
 
@@ -682,12 +705,57 @@ def get_integration_readiness() -> dict[str, Any]:
             conn,
             "SELECT COUNT(*) FROM template_requests WHERE status IN ('to_create', 'submitted')",
         )
+        obsolete_sequence_reference_count = sum(
+            [
+                _scalar_count(
+                    conn,
+                    """
+                    SELECT COUNT(*)
+                    FROM tasks
+                    WHERE sequence_code = 'post_call_undecided'
+                      AND status IN ('planned', 'open', 'in_progress', 'blocked')
+                    """,
+                ),
+                _scalar_count(
+                    conn,
+                    """
+                    SELECT COUNT(*)
+                    FROM template_requests
+                    WHERE sequence_code = 'post_call_undecided'
+                      AND status IN ('to_create', 'submitted')
+                    """,
+                ),
+                _scalar_count(
+                    conn,
+                    "SELECT COUNT(*) FROM sequence_steps WHERE sequence_code = 'post_call_undecided' AND active = 1",
+                ),
+                _scalar_count(
+                    conn,
+                    "SELECT COUNT(*) FROM sequence_template_mappings WHERE sequence_code = 'post_call_undecided' AND active = 1",
+                ),
+            ]
+        )
+        active_followup_missing_step_count = _scalar_count(
+            conn,
+            """
+            SELECT COUNT(*)
+            FROM tasks t
+            LEFT JOIN sequence_steps ss
+              ON ss.sequence_code = t.sequence_code
+             AND ss.step_index = t.sequence_step_index
+             AND ss.active = 1
+            WHERE t.type = 'follow_up'
+              AND t.status IN ('planned', 'open', 'in_progress', 'blocked')
+              AND t.sequence_code IS NOT NULL
+              AND ss.id IS NULL
+            """,
+        )
 
     twilio_mode = (settings.twilio_mode or "mock").lower()
     twilio_live_ready = bool(
         settings.twilio_account_sid
         and settings.twilio_auth_token
-        and settings.twilio_whatsapp_sender
+        and (settings.twilio_whatsapp_sender or settings.twilio_messaging_service_sid)
     )
     twilio_ready = twilio_mode == "mock" or twilio_live_ready
     if twilio_mode == "mock":
@@ -787,7 +855,11 @@ def get_integration_readiness() -> dict[str, Any]:
             "content_read_only": bool(settings.twilio_content_read_only),
             "account_configured": bool(settings.twilio_account_sid),
             "sender": settings.twilio_whatsapp_sender or "",
+            "messaging_service_sid": settings.twilio_messaging_service_sid or "",
+            "webhook_url": settings.twilio_webhook_url or "",
             "status_callback_configured": bool(settings.twilio_status_callback_url),
+            "status_callback_url": settings.twilio_status_callback_url or "",
+            "validate_signature": bool(settings.twilio_validate_signature),
             "status_counts": twilio_status_counts,
             "latest_messages": twilio_latest,
         },
@@ -797,6 +869,8 @@ def get_integration_readiness() -> dict[str, Any]:
             "blocked_action_count": blocked_action_count,
             "open_bug_count": open_bug_count,
             "pending_template_request_count": pending_template_request_count,
+            "obsolete_sequence_reference_count": obsolete_sequence_reference_count,
+            "active_followup_missing_step_count": active_followup_missing_step_count,
             "schooldrive_waiting_first_autoresponder_count": schooldrive_waiting_first_autoresponder_count,
             "open_conversations_without_action": conversations_without_action,
             "resolved_conversations_with_action_count": resolved_conversations_with_action_count,
@@ -1591,6 +1665,16 @@ def _ensure_course_start_followup(
         return
     step_and_due = _first_relevant_course_start_step(conn, anchor_iso, utc_now())
     if not step_and_due:
+        anchor_dt = parse_dt(anchor_iso)
+        if anchor_dt and anchor_dt < utc_now() and (anchor_label or "").startswith("Session de référence"):
+            _ensure_default_session_review(
+                conn,
+                lead_id=lead_id,
+                conversation_id=conversation_id,
+                course_category=lead.get("course_category_short_title"),
+                anchor_label=anchor_label,
+                anchor_iso=anchor_iso,
+            )
         return
     step, due_at = step_and_due
 
@@ -1649,6 +1733,41 @@ def _ensure_course_start_followup(
         },
         metadata={"conversation_id": conversation_id, "anchor_at": anchor_iso},
     )
+
+
+def _ensure_default_session_review(
+    conn: Any,
+    lead_id: int,
+    conversation_id: int,
+    course_category: str | None,
+    anchor_label: str | None,
+    anchor_iso: str,
+) -> None:
+    category = (course_category or "").strip().upper() or "catégorie inconnue"
+    admin_action_id = _ensure_admin_action(
+        conn,
+        "default_session_review",
+        f"Mettre à jour la session de référence {category}",
+        (
+            f"La session de référence utilisée pour {category} est dépassée "
+            f"({anchor_label or anchor_iso}). Sélectionner la prochaine session pertinente."
+        ),
+        lead_id=lead_id,
+        conversation_id=conversation_id,
+        metadata={
+            "course_category": category,
+            "anchor_label": anchor_label,
+            "anchor_iso": anchor_iso,
+        },
+    )
+    if admin_action_id:
+        insert_event(
+            conn,
+            lead_id,
+            "default_session_review_created",
+            new={"admin_action_id": admin_action_id, "course_category": category},
+            metadata={"conversation_id": conversation_id},
+        )
 
 
 def _course_category_is_supported(conn: Any, category: str | None) -> bool:
@@ -1827,12 +1946,54 @@ def _apply_schooldrive_business_signals(
             outcome="Relances annulées : cours complet dans SchoolDrive",
             included_types=("follow_up",),
         )
-        _ensure_course_full_review(
+        active_call = _first_active_action_for_lead(
             conn,
-            lead_id=lead_id,
-            conversation_id=conversation_id,
-            source=course_full_source,
+            lead_id,
+            action_types=("setting_call", "closing_call"),
         )
+        if active_call:
+            metadata = _task_metadata(active_call)
+            metadata["schooldrive_course_full"] = True
+            metadata["schooldrive_course_full_source"] = course_full_source
+            description = active_call.get("description") or ""
+            prefix = "SchoolDrive indique que la session est complète : proposer une autre session."
+            conn.execute(
+                """
+                UPDATE tasks
+                SET description = ?,
+                    metadata_json = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    f"{prefix}\n\n{description}".strip(),
+                    json.dumps(metadata, ensure_ascii=False),
+                    now,
+                    active_call["id"],
+                ),
+            )
+            _insert_internal_note_message(
+                conn,
+                lead_id,
+                conversation_id,
+                None,
+                f"SchoolDrive : cours complet ({course_full_source}). Relances annulées ; l'appel planifié reste prioritaire et doit servir à proposer une autre session.",
+                now,
+            )
+            insert_event(
+                conn,
+                lead_id,
+                "schooldrive_course_full_call_flagged",
+                new={"task_id": active_call["id"], "source": course_full_source},
+                metadata={"conversation_id": conversation_id},
+            )
+        else:
+            _ensure_course_full_review(
+                conn,
+                lead_id=lead_id,
+                conversation_id=conversation_id,
+                source=course_full_source,
+            )
         return True
 
     return False
@@ -2049,6 +2210,8 @@ def list_conversations(
     stage: str = "all",
     queue: str = "all",
     responsibility: str = "all",
+    limit: int | None = 300,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
     filters = []
     params: list[Any] = []
@@ -2072,6 +2235,13 @@ def list_conversations(
         filters.append("l.sales_stage = ?")
         params.append(stage)
     where = f"WHERE {' AND '.join(filters)}" if filters else ""
+
+    limit_clause = ""
+    if limit is not None:
+        safe_limit = max(1, min(int(limit), 1000))
+        safe_offset = max(0, int(offset))
+        limit_clause = "LIMIT ? OFFSET ?"
+        params.extend([safe_limit, safe_offset])
 
     query = f"""
         SELECT
@@ -2141,6 +2311,7 @@ def list_conversations(
         )
         {where}
         ORDER BY datetime(coalesce(last_msg.created_at, c.updated_at)) DESC, c.id DESC
+        {limit_clause}
     """
     with connect() as conn:
         rows = conn.execute(query, params).fetchall()
@@ -2545,6 +2716,8 @@ def assign_standard_next_action(
             due_at=due_at,
             description=note,
             trigger_reason=trigger_reasons[action_type],
+            call_cycle_id=str(uuid4()) if action_type in {"setting_call", "closing_call"} else None,
+            call_attempt_index=1 if action_type in {"setting_call", "closing_call"} else None,
         )
         _insert_internal_note_message(
             conn,
@@ -2974,7 +3147,15 @@ def _insert_next_action(
     status: str = "open",
     blocked_reason: str | None = None,
     metadata: dict[str, Any] | None = None,
+    call_cycle_id: str | None = None,
+    call_attempt_index: int | None = None,
 ) -> int:
+    if action_type not in VALID_ACTION_TYPES:
+        raise ValueError(f"Unsupported action type: {action_type}")
+    if status not in VALID_TASK_STATUSES:
+        raise ValueError(f"Unsupported task status: {status}")
+    if sequence_code and sequence_code not in VALID_SEQUENCE_CODES:
+        raise ValueError(f"Unsupported sequence code: {sequence_code}")
     metadata_payload = dict(metadata or {})
     if sequence_code and sequence_step_index and "sequence_anchor_at" not in metadata_payload and previous_action_id:
         previous = row_to_dict(
@@ -2997,8 +3178,9 @@ def _insert_next_action(
         INSERT INTO tasks (
             lead_id, conversation_id, type, title, description, assigned_to_user_id,
             created_by_user_id, due_at, urgency, status, trigger_reason, sequence_code,
-            sequence_step_index, previous_action_id, blocked_reason, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            sequence_step_index, previous_action_id, blocked_reason, call_cycle_id,
+            call_attempt_index, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             lead_id,
@@ -3016,6 +3198,8 @@ def _insert_next_action(
             sequence_step_index,
             previous_action_id,
             blocked_reason,
+            call_cycle_id,
+            call_attempt_index,
             json.dumps(metadata_payload, ensure_ascii=False),
         ),
     )
@@ -3162,6 +3346,52 @@ def _sequence_offset_delta(amount: int, unit: str) -> timedelta:
     return timedelta(days=amount) if unit == "days" else timedelta(hours=amount)
 
 
+def _business_window(role_key: str) -> tuple[int, int]:
+    return BUSINESS_HOURS_BY_ROLE.get(role_key) or BUSINESS_HOURS_BY_ROLE["company"]
+
+
+def _normalize_business_start(local_dt: datetime, role_key: str) -> datetime:
+    start_hour, end_hour = _business_window(role_key)
+    current = local_dt
+    while True:
+        if current.weekday() >= 5:
+            days_until_monday = 7 - current.weekday()
+            current = (current + timedelta(days=days_until_monday)).replace(
+                hour=start_hour, minute=0, second=0, microsecond=0
+            )
+            continue
+        day_start = current.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+        day_end = current.replace(hour=end_hour, minute=0, second=0, microsecond=0)
+        if current < day_start:
+            return day_start
+        if current >= day_end:
+            current = (current + timedelta(days=1)).replace(
+                hour=start_hour, minute=0, second=0, microsecond=0
+            )
+            continue
+        return current
+
+
+def _add_business_hours(anchor_iso: str, hours: int, role_key: str) -> str:
+    anchor = parse_dt(anchor_iso) or utc_now()
+    if anchor.tzinfo is None:
+        anchor = anchor.replace(tzinfo=timezone.utc)
+    current = _normalize_business_start(anchor.astimezone(ZURICH_TZ), role_key)
+    remaining = timedelta(hours=max(0, int(hours)))
+    while remaining > timedelta(0):
+        _start_hour, end_hour = _business_window(role_key)
+        day_end = current.replace(hour=end_hour, minute=0, second=0, microsecond=0)
+        available = day_end - current
+        if remaining <= available:
+            return iso_utc((current + remaining).astimezone(timezone.utc))
+        remaining -= max(available, timedelta(0))
+        current = _normalize_business_start(
+            (current + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0),
+            role_key,
+        )
+    return iso_utc(current.astimezone(timezone.utc))
+
+
 def _due_for_sequence_step(anchor_iso: str, step: dict[str, Any]) -> str:
     anchor = parse_dt(anchor_iso) or utc_now()
     amount = int(step.get("offset_amount") or 0)
@@ -3170,6 +3400,15 @@ def _due_for_sequence_step(anchor_iso: str, step: dict[str, Any]) -> str:
     if step.get("offset_direction") == "before":
         return iso_utc(anchor - delta)
     return iso_utc(anchor + delta)
+
+
+def _due_for_call_retry_step(anchor_iso: str, step: dict[str, Any], role_key: str) -> str:
+    if step.get("step_index") in {1, 2} and step.get("offset_direction") != "before":
+        amount = int(step.get("offset_amount") or 0)
+        if (step.get("offset_unit") or "hours") == "days":
+            amount *= 24
+        return _add_business_hours(anchor_iso, amount, role_key)
+    return _due_for_sequence_step(anchor_iso, step)
 
 
 def _get_sequence_step(
@@ -3196,11 +3435,16 @@ def _sequence_anchor_metadata(anchor_at: str, label: str | None = None) -> dict[
     return metadata
 
 
-def _sequence_anchor_from_action(action: dict[str, Any], fallback_iso: str) -> str:
+def _task_metadata(action: dict[str, Any]) -> dict[str, Any]:
     try:
         metadata = json.loads(action.get("metadata_json") or "{}")
     except json.JSONDecodeError:
         metadata = {}
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _sequence_anchor_from_action(action: dict[str, Any], fallback_iso: str) -> str:
+    metadata = _task_metadata(action)
     return metadata.get("sequence_anchor_at") or fallback_iso
 
 
@@ -3320,6 +3564,8 @@ def _close_outbound_action_and_chain(
                 description=note or None,
                 trigger_reason="setting_appointment_booked",
                 previous_action_id=action["id"],
+                call_cycle_id=str(uuid4()),
+                call_attempt_index=1,
             )
             conn.execute("UPDATE tasks SET next_action_id = ? WHERE id = ?", (next_action_id, action["id"]))
             return
@@ -3356,6 +3602,8 @@ def _close_outbound_action_and_chain(
                 description=note or None,
                 trigger_reason="closing_appointment_booked_from_reply",
                 previous_action_id=action["id"],
+                call_cycle_id=str(uuid4()),
+                call_attempt_index=1,
             )
             conn.execute("UPDATE tasks SET next_action_id = ? WHERE id = ?", (next_action_id, action["id"]))
             return
@@ -4047,6 +4295,7 @@ def sync_twilio_templates(user_id: int) -> tuple[bool, str]:
                 created += 1
             elif changed == "updated":
                 updated += 1
+        unblocked = _auto_approve_linked_template_requests(conn, user_id, now)
         conn.execute(
             """
             INSERT INTO user_activity_log (
@@ -4056,13 +4305,18 @@ def sync_twilio_templates(user_id: int) -> tuple[bool, str]:
             (
                 user_id,
                 json.dumps(
-                    {"created": created, "updated": updated, "total": len(remote_templates)},
+                    {
+                        "created": created,
+                        "updated": updated,
+                        "total": len(remote_templates),
+                        "unblocked_template_requests": unblocked,
+                    },
                     ensure_ascii=False,
                 ),
                 now,
             ),
         )
-    return True, f"Synchronisation Twilio terminée : {created} créé(s), {updated} mis à jour."
+    return True, f"Synchronisation Twilio terminée : {created} créé(s), {updated} mis à jour, {unblocked} demande(s) débloquée(s)."
 
 
 def create_and_submit_twilio_template(
@@ -4249,6 +4503,116 @@ def _upsert_twilio_template(
     template_id = int(cursor.lastrowid)
     _replace_template_placeholders(conn, template_id, remote.variables)
     return template_id if return_id else "created"
+
+
+def _auto_approve_linked_template_requests(conn: Any, user_id: int, now: str) -> int:
+    approved_request_ids: set[int] = set()
+    requests = rows_to_dicts(
+        conn.execute(
+            """
+            SELECT tr.*
+            FROM template_requests tr
+            JOIN whatsapp_templates wt ON wt.id = tr.template_id
+            WHERE tr.status IN ('to_create', 'submitted')
+              AND wt.status = 'approved'
+              AND wt.twilio_content_sid IS NOT NULL
+              AND wt.twilio_content_sid LIKE 'HX%'
+              AND wt.twilio_content_sid NOT LIKE 'HX_MOCK_%'
+            """
+        ).fetchall()
+    )
+    for request in requests:
+        _approve_template_request(conn, request, user_id, int(request["template_id"]), now)
+        approved_request_ids.add(int(request["id"]))
+
+    unlinked_requests = rows_to_dicts(
+        conn.execute(
+            """
+            SELECT *
+            FROM template_requests
+            WHERE status IN ('to_create', 'submitted')
+              AND template_id IS NULL
+            """
+        ).fetchall()
+    )
+    approved_templates = rows_to_dicts(
+        conn.execute(
+            """
+            SELECT id, name, twilio_content_sid
+            FROM whatsapp_templates
+            WHERE status = 'approved'
+              AND twilio_content_sid IS NOT NULL
+              AND twilio_content_sid LIKE 'HX%'
+              AND twilio_content_sid NOT LIKE 'HX_MOCK_%'
+            """
+        ).fetchall()
+    )
+    for request in unlinked_requests:
+        request_text = f"{request.get('reason') or ''} {request.get('context') or ''}".lower()
+        for template in approved_templates:
+            template_name = str(template.get("name") or "").strip().lower()
+            content_sid = str(template.get("twilio_content_sid") or "").strip().lower()
+            if not template_name:
+                continue
+            if template_name in request_text or (content_sid and content_sid in request_text):
+                _approve_template_request(conn, request, user_id, int(template["id"]), now)
+                approved_request_ids.add(int(request["id"]))
+                break
+    return len(approved_request_ids)
+
+
+def _approve_template_request(
+    conn: Any,
+    request: dict[str, Any],
+    user_id: int,
+    template_id: int,
+    now: str,
+) -> None:
+    conn.execute(
+        """
+        UPDATE template_requests
+        SET status = 'approved',
+            template_id = ?,
+            updated_at = ?,
+            resolved_at = coalesce(resolved_at, ?)
+        WHERE id = ?
+        """,
+        (template_id, now, now, request["id"]),
+    )
+    if request.get("task_id"):
+        conn.execute(
+            """
+            UPDATE tasks
+            SET status = 'open',
+                due_at = ?,
+                blocked_reason = NULL,
+                updated_at = ?
+            WHERE id = ?
+              AND status = 'blocked'
+            """,
+            (now, now, request["task_id"]),
+        )
+    conn.execute(
+        """
+        UPDATE admin_actions
+        SET status = 'done',
+            outcome = 'template_request_approved',
+            completed_by_user_id = ?,
+            completed_at = ?,
+            updated_at = ?
+        WHERE template_request_id = ?
+          AND status IN ('open', 'in_progress', 'blocked')
+        """,
+        (user_id, now, now, request["id"]),
+    )
+    insert_event(
+        conn,
+        request["lead_id"],
+        "template_request_approved",
+        user_id=user_id,
+        previous={"status": request.get("status"), "template_id": request.get("template_id")},
+        new={"status": "approved", "template_id": template_id, "task_id": request.get("task_id")},
+    )
 
 
 def _replace_template_placeholders(
@@ -5299,6 +5663,18 @@ def update_template_request_status(
         )
         if not request:
             return False, "Demande de modèle introuvable."
+        effective_template_id = template_id or request.get("template_id")
+        if status == "approved":
+            if not effective_template_id:
+                return False, "Associe d'abord un modèle Twilio approuvé à cette demande."
+            template = row_to_dict(
+                conn.execute(
+                    "SELECT * FROM whatsapp_templates WHERE id = ?",
+                    (effective_template_id,),
+                ).fetchone()
+            )
+            if not template or not _is_approved_real_twilio_template(template):
+                return False, "La demande ne peut être approuvée qu'avec un modèle WhatsApp Twilio approuvé."
         conn.execute(
             """
             UPDATE template_requests
@@ -5762,45 +6138,55 @@ def send_freeform_message(
     if conv.get("status") == "resolved":
         return False, "Conversation terminée : réactivez-la avant tout envoi."
     with connect() as conn:
-        if _has_blocked_followup(conn, conv["lead_id"]):
+        action_kind = _active_outbound_action_kind(conn, conv["lead_id"])
+        if action_kind == "follow_up" and _has_blocked_followup(conn, conv["lead_id"]):
             return False, "Relance bloquée : le nouveau modèle doit être approuvé avant l'envoi."
     state = calculate_window(conv["last_inbound_at"])
     if not state.is_open:
         return False, "Fenêtre WhatsApp fermée. Utilisez un modèle approuvé."
     with connect() as conn:
-        ok, guard_message = _check_outbound_safeguards(conn, conv)
+        ok, guard_message = _check_outbound_safeguards(conn, conv, action_kind=action_kind)
         if not ok:
             return False, guard_message
 
-    try:
-        result = get_whatsapp_client().send_freeform(conv["recipient_phone_e164"], body)
-    except TwilioConfigurationError as exc:
-        return False, str(exc)
-    except TwilioMessageError as exc:
-        return False, f"Twilio a refusé l'envoi : {exc}"
     now = iso_utc()
     with connect() as conn:
         cursor = conn.execute(
             """
             INSERT INTO messages (
                 conversation_id, lead_id, direction, channel, body, sender_user_id,
-                twilio_message_sid, twilio_status, whatsapp_window_state_at_send,
-                sent_at, created_at
-            ) VALUES (?, ?, 'outbound', 'whatsapp_twilio', ?, ?, ?, ?, ?, ?, ?)
+                twilio_status, whatsapp_window_state_at_send, created_at
+            ) VALUES (?, ?, 'outbound', 'whatsapp_twilio', ?, ?, 'pending_send', ?, ?)
             """,
-            (
-                conversation_id,
-                conv["lead_id"],
-                body,
-                user_id,
-                result.sid,
-                result.status,
-                state.state,
-                now,
-                now,
-            ),
+            (conversation_id, conv["lead_id"], body, user_id, state.state, now),
         )
         message_id = int(cursor.lastrowid)
+
+    try:
+        result = get_whatsapp_client().send_freeform(conv["recipient_phone_e164"], body)
+    except TwilioConfigurationError as exc:
+        _mark_outbound_message_send_error(message_id, None, str(exc))
+        return False, str(exc)
+    except TwilioMessageError as exc:
+        _mark_outbound_message_send_error(message_id, None, str(exc))
+        return False, f"Twilio a refusé l'envoi : {exc}"
+    now = iso_utc()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE messages
+            SET twilio_message_sid = ?,
+                twilio_status = ?,
+                sent_at = ?
+            WHERE id = ?
+            """,
+            (
+                result.sid,
+                result.status,
+                now,
+                message_id,
+            ),
+        )
         conn.execute(
             "UPDATE conversations SET last_outbound_at = ?, updated_at = ? WHERE id = ?",
             (now, now, conversation_id),
@@ -5849,12 +6235,15 @@ def send_template_message(
     if conv.get("status") == "resolved":
         return False, "Conversation terminée : réactivez-la avant tout envoi."
     with connect() as conn:
-        if _has_blocked_followup(conn, conv["lead_id"]):
+        action_kind = _active_outbound_action_kind(conn, conv["lead_id"])
+        if action_kind == "follow_up" and _has_blocked_followup(conn, conv["lead_id"]):
             return False, "Relance bloquée : le nouveau modèle doit être approuvé avant l'envoi."
     if template["status"] != "approved":
         return False, "Ce modèle n'est pas approuvé."
+    if get_settings().twilio_mode == "live" and not _is_approved_real_twilio_template(template):
+        return False, "Envoi live refusé : le modèle n'a pas de SID Twilio WhatsApp approuvé."
     with connect() as conn:
-        ok, guard_message = _check_outbound_safeguards(conn, conv)
+        ok, guard_message = _check_outbound_safeguards(conn, conv, action_kind=action_kind)
         if not ok:
             return False, guard_message
 
@@ -5871,39 +6260,50 @@ def send_template_message(
     for key, value in variables.items():
         body = body.replace("{{" + key + "}}", value)
 
-    try:
-        result = get_whatsapp_client().send_template(
-            conv["recipient_phone_e164"], template["twilio_content_sid"] or "HX_MOCK", variables
-        )
-    except TwilioConfigurationError as exc:
-        return False, str(exc)
-    except TwilioMessageError as exc:
-        return False, f"Twilio a refusé l'envoi : {exc}"
     now = iso_utc()
     with connect() as conn:
         cursor = conn.execute(
             """
             INSERT INTO messages (
                 conversation_id, lead_id, direction, channel, body, sender_user_id,
-                twilio_message_sid, twilio_status, template_id, template_variables_json,
-                whatsapp_window_state_at_send, sent_at, created_at
-            ) VALUES (?, ?, 'outbound', 'whatsapp_twilio', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                twilio_status, template_id, template_variables_json,
+                whatsapp_window_state_at_send, created_at
+            ) VALUES (?, ?, 'outbound', 'whatsapp_twilio', ?, ?, 'pending_send', ?, ?, ?, ?)
             """,
             (
                 conversation_id,
                 conv["lead_id"],
                 body,
                 user_id,
-                result.sid,
-                result.status,
                 template_id,
                 json.dumps(variables, ensure_ascii=False),
                 state.state,
                 now,
-                now,
             ),
         )
         message_id = int(cursor.lastrowid)
+
+    try:
+        result = get_whatsapp_client().send_template(
+            conv["recipient_phone_e164"], template["twilio_content_sid"] or "HX_MOCK", variables
+        )
+    except TwilioConfigurationError as exc:
+        _mark_outbound_message_send_error(message_id, None, str(exc))
+        return False, str(exc)
+    except TwilioMessageError as exc:
+        _mark_outbound_message_send_error(message_id, None, str(exc))
+        return False, f"Twilio a refusé l'envoi : {exc}"
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE messages
+            SET twilio_message_sid = ?,
+                twilio_status = ?,
+                sent_at = ?
+            WHERE id = ?
+            """,
+            (result.sid, result.status, now, message_id),
+        )
         conn.execute(
             "UPDATE conversations SET last_outbound_at = ?, updated_at = ? WHERE id = ?",
             (now, now, conversation_id),
@@ -5931,10 +6331,66 @@ def send_template_message(
     return True, "Modèle envoyé en mode mock."
 
 
-def _check_outbound_safeguards(conn: Any, conv: dict[str, Any]) -> tuple[bool, str]:
+def _mark_outbound_message_send_error(
+    message_id: int,
+    error_code: str | None,
+    error_message: str | None,
+) -> None:
+    now = iso_utc()
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE messages
+            SET twilio_status = 'send_error',
+                twilio_error_code = ?,
+                twilio_error_message = ?
+            WHERE id = ?
+              AND twilio_status = 'pending_send'
+            """,
+            (error_code, error_message, message_id),
+        )
+        row = row_to_dict(
+            conn.execute(
+                "SELECT lead_id FROM messages WHERE id = ?",
+                (message_id,),
+            ).fetchone()
+        )
+        if row:
+            insert_event(
+                conn,
+                row["lead_id"],
+                "whatsapp_send_failed",
+                new={
+                    "message_id": message_id,
+                    "error_code": error_code,
+                    "error_message": error_message,
+                },
+                metadata={"failed_at": now},
+            )
+
+
+def _active_outbound_action_kind(conn: Any, lead_id: int) -> str:
+    action = _first_active_action_for_lead(
+        conn,
+        lead_id,
+        action_types=("reply", "follow_up"),
+        include_blocked=True,
+    )
+    if action and action.get("type") == "follow_up":
+        return "follow_up"
+    return "reply"
+
+
+def _check_outbound_safeguards(
+    conn: Any,
+    conv: dict[str, Any],
+    action_kind: str = "follow_up",
+) -> tuple[bool, str]:
     settings = get_outbound_safeguards()
     if settings["outbound_global_block"]:
         return False, "Envois bloqués : kill switch WhatsApp activé dans Admin."
+    if action_kind != "follow_up":
+        return True, ""
 
     now = utc_now()
     day_start = iso_utc(now.replace(hour=0, minute=0, second=0, microsecond=0))
@@ -6653,6 +7109,8 @@ def complete_action_with_workflow(
                     description=note or None,
                     trigger_reason="setting_appointment_booked",
                     previous_action_id=task_id,
+                    call_cycle_id=str(uuid4()),
+                    call_attempt_index=1,
                 )
             elif outcome == "closing_booked":
                 closer_id = assigned_to_user_id or default_closer_user_id(conn)
@@ -6686,6 +7144,8 @@ def complete_action_with_workflow(
                     description=note or None,
                     trigger_reason="closing_appointment_booked_from_reply",
                     previous_action_id=task_id,
+                    call_cycle_id=str(uuid4()),
+                    call_attempt_index=1,
                 )
             elif outcome in {"not_relevant", "do_not_contact"}:
                 resolve(outcome)
@@ -6716,10 +7176,25 @@ def complete_action_with_workflow(
                     description=note,
                     trigger_reason="setting_call_to_closing",
                     previous_action_id=task_id,
+                    call_cycle_id=str(uuid4()),
+                    call_attempt_index=1,
                 )
             elif outcome == "not_reached":
-                anchor = _sequence_anchor_from_action(task, now)
-                count = _count_completed_outcomes(conn, task["lead_id"], "setting_call", "not_reached")
+                anchor = _sequence_anchor_from_action(task, task.get("due_at") or now)
+                cycle_id = task.get("call_cycle_id") or str(uuid4())
+                attempt_index = int(task.get("call_attempt_index") or 1)
+                conn.execute(
+                    """
+                    UPDATE tasks
+                    SET call_cycle_id = coalesce(call_cycle_id, ?),
+                        call_attempt_index = coalesce(call_attempt_index, ?)
+                    WHERE id = ?
+                    """,
+                    (cycle_id, attempt_index, task_id),
+                )
+                count = _count_completed_call_outcomes(
+                    conn, task["lead_id"], "setting_call", "not_reached", cycle_id
+                )
                 if count <= 1 and conversation_id:
                     step = _get_sequence_step(conn, "setting_call_not_reached", 1)
                     if not step:
@@ -6733,13 +7208,15 @@ def complete_action_with_workflow(
                         assigned_to_user_id=task["assigned_to_user_id"] or user_id,
                         created_by_user_id=user_id,
                         urgency="high",
-                        due_at=_due_for_sequence_step(anchor, step),
+                        due_at=_due_for_call_retry_step(anchor, step, "setter1"),
                         description=note,
                         trigger_reason="setting_call_not_reached",
                         sequence_code="setting_call_not_reached",
                         sequence_step_index=1,
                         previous_action_id=task_id,
                         metadata=_sequence_anchor_metadata(anchor, "Appel setting non joint"),
+                        call_cycle_id=cycle_id,
+                        call_attempt_index=2,
                     )
                 elif count <= 2 and conversation_id:
                     step = _get_sequence_step(conn, "setting_call_not_reached", 2)
@@ -6754,13 +7231,15 @@ def complete_action_with_workflow(
                         assigned_to_user_id=task["assigned_to_user_id"] or user_id,
                         created_by_user_id=user_id,
                         urgency="high",
-                        due_at=_due_for_sequence_step(anchor, step),
+                        due_at=_due_for_call_retry_step(anchor, step, "setter1"),
                         description=note,
                         trigger_reason="setting_call_not_reached",
                         sequence_code="setting_call_not_reached",
                         sequence_step_index=2,
                         previous_action_id=task_id,
                         metadata=_sequence_anchor_metadata(anchor, "Appel setting non joint"),
+                        call_cycle_id=cycle_id,
+                        call_attempt_index=3,
                     )
                 else:
                     step = _get_sequence_step(conn, "setting_call_not_reached", 3)
@@ -6807,8 +7286,21 @@ def complete_action_with_workflow(
                     sequence_anchor_label="Closing qualifié Va signer",
                 )
             elif outcome == "not_reached":
-                anchor = _sequence_anchor_from_action(task, now)
-                count = _count_completed_outcomes(conn, task["lead_id"], "closing_call", "not_reached")
+                anchor = _sequence_anchor_from_action(task, task.get("due_at") or now)
+                cycle_id = task.get("call_cycle_id") or str(uuid4())
+                attempt_index = int(task.get("call_attempt_index") or 1)
+                conn.execute(
+                    """
+                    UPDATE tasks
+                    SET call_cycle_id = coalesce(call_cycle_id, ?),
+                        call_attempt_index = coalesce(call_attempt_index, ?)
+                    WHERE id = ?
+                    """,
+                    (cycle_id, attempt_index, task_id),
+                )
+                count = _count_completed_call_outcomes(
+                    conn, task["lead_id"], "closing_call", "not_reached", cycle_id
+                )
                 if count <= 1 and conversation_id:
                     step = _get_sequence_step(conn, "closing_call_not_reached", 1)
                     if not step:
@@ -6822,13 +7314,15 @@ def complete_action_with_workflow(
                         assigned_to_user_id=task["assigned_to_user_id"] or user_id,
                         created_by_user_id=user_id,
                         urgency="high",
-                        due_at=_due_for_sequence_step(anchor, step),
+                        due_at=_due_for_call_retry_step(anchor, step, "closer"),
                         description=note,
                         trigger_reason="closing_call_not_reached",
                         sequence_code="closing_call_not_reached",
                         sequence_step_index=1,
                         previous_action_id=task_id,
                         metadata=_sequence_anchor_metadata(anchor, "Appel closing non joint"),
+                        call_cycle_id=cycle_id,
+                        call_attempt_index=2,
                     )
                 elif count <= 2 and conversation_id:
                     step = _get_sequence_step(conn, "closing_call_not_reached", 2)
@@ -6843,13 +7337,15 @@ def complete_action_with_workflow(
                         assigned_to_user_id=task["assigned_to_user_id"] or user_id,
                         created_by_user_id=user_id,
                         urgency="high",
-                        due_at=_due_for_sequence_step(anchor, step),
+                        due_at=_due_for_call_retry_step(anchor, step, "closer"),
                         description=note,
                         trigger_reason="closing_call_not_reached",
                         sequence_code="closing_call_not_reached",
                         sequence_step_index=2,
                         previous_action_id=task_id,
                         metadata=_sequence_anchor_metadata(anchor, "Appel closing non joint"),
+                        call_cycle_id=cycle_id,
+                        call_attempt_index=3,
                     )
                 else:
                     step = _get_sequence_step(conn, "closing_call_not_reached", 3)
@@ -6958,5 +7454,27 @@ def _count_completed_outcomes(
           AND status = 'done'
         """,
         (lead_id, action_type, outcome),
+    ).fetchone()
+    return int(row["count"] if row else 0)
+
+
+def _count_completed_call_outcomes(
+    conn: Any,
+    lead_id: int,
+    action_type: str,
+    outcome: str,
+    call_cycle_id: str,
+) -> int:
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM tasks
+        WHERE lead_id = ?
+          AND type = ?
+          AND outcome = ?
+          AND status = 'done'
+          AND call_cycle_id = ?
+        """,
+        (lead_id, action_type, outcome, call_cycle_id),
     ).fetchone()
     return int(row["count"] if row else 0)

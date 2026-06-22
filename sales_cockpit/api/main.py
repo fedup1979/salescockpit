@@ -167,9 +167,11 @@ def _validate_mock_json_webhook_access(request: Request) -> None:
 def leads(
     search: str = "",
     stage: str = "all",
+    limit: int = 200,
+    offset: int = 0,
     _api_access: None = Depends(require_api_access),
 ) -> list[dict]:
-    return list_conversations(search=search, stage=stage)
+    return list_conversations(search=search, stage=stage, limit=limit, offset=offset)
 
 
 @app.get("/conversations/{conversation_id}")

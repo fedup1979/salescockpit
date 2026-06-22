@@ -10,6 +10,24 @@ Avant une validation propre :
 
 Mot de passe local : `ChangeMe!2026`.
 
+## Validation Automatisée Courante
+
+Dernière validation locale : `133 passed`, `compileall` OK.
+
+La suite automatisée couvre notamment :
+
+- nouveau rendez-vous après ancien no-show, avec compteur remis à zéro par `call_cycle_id` ;
+- migration des anciennes règles de flux et désactivation de `post_call_undecided` ;
+- approbation/synchronisation Twilio qui débloque une demande de template liée ;
+- garde-fous WhatsApp qui bloquent les relances excessives sans bloquer une réponse humaine ;
+- cours complet avec appel déjà planifié ;
+- session de référence dépassée qui crée une action admin ;
+- inbound pendant relance bloquée par absence de template ;
+- outbox qui conserve un message en `send_error` si Twilio échoue après création locale ;
+- idempotence Twilio inbound et webhook SchoolDrive.
+
+Les tests manuels ci-dessous servent surtout à valider l'ergonomie et la compréhension utilisateur.
+
 ## Format de retour
 
 ```text

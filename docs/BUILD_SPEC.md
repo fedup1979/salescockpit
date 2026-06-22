@@ -103,7 +103,7 @@ Operational rules:
 - Manual resolution requires a controlled reason.
 - Manual reopening requires creating the next action.
 - Missing templates create `template_requests` linked to blocked follow-ups.
-- Lead-relative reminder sequence is `+72h, +72h, +72h, +7j, +7j, +30j, stop`.
+- Lead-relative reminder sequence is absolute from the flow trigger: `T+72h, T+144h, T+216h, T+16j, T+23j, T+53j, stop`.
 - Course-date reminders win over lead-relative reminders when they conflict within 24h; the losing lead-relative action is cancelled. They do not replace an already planned setting/closing call.
 - Minimum outbound WhatsApp follow-up delay is 24h.
 

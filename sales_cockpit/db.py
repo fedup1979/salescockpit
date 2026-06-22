@@ -13,6 +13,7 @@ from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
 
 
 DEMO_SEED_VERSION = "2026-06-22-workflow-v1"
+BUSINESS_RULES_VERSION = "2026-06-22-workflow-v1-hardening"
 
 
 SCHEMA = """
@@ -90,6 +91,15 @@ CREATE TABLE IF NOT EXISTS conversations (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX IF NOT EXISTS idx_leads_phone_e164
+ON leads(phone_e164);
+
+CREATE INDEX IF NOT EXISTS idx_leads_schooldrive_id
+ON leads(schooldrive_lead_id);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_status_updated
+ON conversations(status, updated_at);
+
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -116,8 +126,14 @@ ON messages(twilio_message_sid);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_channel
 ON messages(conversation_id, channel);
 
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_created
+ON messages(conversation_id, created_at);
+
 CREATE INDEX IF NOT EXISTS idx_messages_lead_channel
 ON messages(lead_id, channel);
+
+CREATE INDEX IF NOT EXISTS idx_messages_lead_sent_at
+ON messages(lead_id, sent_at);
 
 CREATE TABLE IF NOT EXISTS attachments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -176,6 +192,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     trigger_reason TEXT,
     sequence_code TEXT,
     sequence_step_index INTEGER,
+    call_cycle_id TEXT,
+    call_attempt_index INTEGER,
     expected_proof_type TEXT,
     proof_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
     proof_event_id INTEGER REFERENCES lead_events(id) ON DELETE SET NULL,
@@ -194,6 +212,12 @@ ON tasks(conversation_id, status);
 
 CREATE INDEX IF NOT EXISTS idx_tasks_lead_status
 ON tasks(lead_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status_due
+ON tasks(assigned_to_user_id, status, due_at);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_lead_type_status_due
+ON tasks(lead_id, type, status, due_at);
 
 CREATE INDEX IF NOT EXISTS idx_tasks_lead_trigger_reason
 ON tasks(lead_id, trigger_reason);
@@ -573,6 +597,8 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
             ("trigger_reason", "TEXT"),
             ("sequence_code", "TEXT"),
             ("sequence_step_index", "INTEGER"),
+            ("call_cycle_id", "TEXT"),
+            ("call_attempt_index", "INTEGER"),
             ("expected_proof_type", "TEXT"),
             ("proof_message_id", "INTEGER"),
             ("proof_event_id", "INTEGER"),
@@ -746,19 +772,15 @@ def _backfill_sequence_step_offsets(conn: sqlite3.Connection) -> None:
         ORDER BY sequence_code, step_index
         """
     ).fetchall()
-    cumulative: dict[str, int] = {}
     for row in rows:
         delay = (row["delay"] or "").strip()
         if row["offset_amount"] and row["offset_unit"] and row["offset_direction"]:
             continue
         direction, minutes = _sequence_delay_to_minutes(delay)
-        sequence_code = row["sequence_code"]
         if direction == "before":
             offset_minutes = abs(minutes)
-            cumulative[sequence_code] = 0
         else:
-            cumulative[sequence_code] = cumulative.get(sequence_code, 0) + abs(minutes)
-            offset_minutes = cumulative[sequence_code]
+            offset_minutes = abs(minutes)
         amount, unit = _minutes_to_sequence_offset(offset_minutes)
         conn.execute(
             """
@@ -1040,6 +1062,13 @@ def _ensure_demo_task_for_each_user(conn: sqlite3.Connection, now) -> None:
 
 def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
     current_time = iso_utc(now)
+    current_version_row = conn.execute(
+        "SELECT value FROM app_metadata WHERE key = 'business_rules_version'"
+    ).fetchone()
+    apply_canonical_steps = (
+        current_version_row is None
+        or current_version_row["value"] != BUSINESS_RULES_VERSION
+    )
     for sequence in SEQUENCES:
         conn.execute(
             """
@@ -1078,7 +1107,6 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
         row["code"]: row["id"]
         for row in conn.execute("SELECT id, code FROM sequences").fetchall()
     }
-    sequence_cumulative_minutes: dict[str, int] = {}
     for step in SEQUENCE_STEPS:
         sequence_id = sequence_ids.get(step["sequence_code"])
         if not sequence_id:
@@ -1086,25 +1114,38 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
         action_type = _sequence_step_action_type(step)
         requires_template = 1 if action_type == "follow_up" else 0
         direction, delta_minutes = _sequence_delay_to_minutes(step["delay"])
-        if direction == "before":
-            offset_minutes = abs(delta_minutes)
-        else:
-            sequence_cumulative_minutes[step["sequence_code"]] = (
-                sequence_cumulative_minutes.get(step["sequence_code"], 0) + abs(delta_minutes)
-            )
-            offset_minutes = sequence_cumulative_minutes[step["sequence_code"]]
+        offset_minutes = abs(delta_minutes)
         offset_amount, offset_unit = _minutes_to_sequence_offset(offset_minutes)
         delay = _format_sequence_delay(direction, offset_amount, offset_unit)
-        conn.execute(
+        conflict_update = (
             """
+                sequence_id = excluded.sequence_id,
+                delay = excluded.delay,
+                action_type = excluded.action_type,
+                offset_direction = excluded.offset_direction,
+                offset_amount = excluded.offset_amount,
+                offset_unit = excluded.offset_unit,
+                template_name = coalesce(sequence_steps.template_name, excluded.template_name),
+                requires_template = excluded.requires_template,
+                meaning = excluded.meaning,
+                active = 1,
+                updated_at = excluded.updated_at
+            """
+            if apply_canonical_steps
+            else """
+                sequence_id = excluded.sequence_id,
+                updated_at = excluded.updated_at
+            """
+        )
+        conn.execute(
+            f"""
             INSERT INTO sequence_steps (
                 sequence_id, sequence_code, step_index, delay, action_type,
                 offset_direction, offset_amount, offset_unit, template_name,
                 requires_template, meaning, active, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
             ON CONFLICT(sequence_code, step_index) DO UPDATE SET
-                sequence_id = excluded.sequence_id,
-                updated_at = excluded.updated_at
+                {conflict_update}
             """,
             (
                 sequence_id,
@@ -1120,6 +1161,25 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
                 step["meaning"],
                 current_time,
             ),
+        )
+    if apply_canonical_steps:
+        conn.execute(
+            """
+            UPDATE sequence_steps
+            SET active = 0, updated_at = ?
+            WHERE sequence_code = 'post_call_undecided'
+            """,
+            (current_time,),
+        )
+        conn.execute(
+            """
+            INSERT INTO app_metadata (key, value, updated_at)
+            VALUES ('business_rules_version', ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at
+            """,
+            (BUSINESS_RULES_VERSION, current_time),
         )
 
     for category in ("FSM", "APP", "AS"):

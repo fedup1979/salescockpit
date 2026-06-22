@@ -104,15 +104,15 @@ Si un prospect `do_not_contact` écrit à nouveau, le système doit créer une a
 
 Les flux de relance standard suivent ce calendrier :
 
-1. +72h
-2. +72h
-3. +72h
-4. +7j
-5. +7j
-6. +30j
+1. T+72h
+2. T+144h
+3. T+216h
+4. T+16j
+5. T+23j
+6. T+53j
 7. stop
 
-Le délai se calcule depuis le déclencheur du flux. Il ne se recalcule pas depuis l'étape précédente.
+`T` est le déclencheur du flux : premier WhatsApp automatique, dernier message sortant sans suite, appel documenté comme indécis, ou qualification `will_sign` selon le flux. Le délai ne se calcule jamais depuis l'étape précédente.
 
 Après la dernière relance, si le prospect ne répond pas, la conversation passe en `resolved` avec le motif `sequence_completed_no_reply`.
 
@@ -148,7 +148,9 @@ Si aucun template adapté n'existe :
 - l'action `follow_up` est mise en `blocked` ;
 - une `template_request` est créée ;
 - la demande est liée à l'action, à la conversation, au lead, au flux et à l'étape si ces informations existent ;
-- l'action redevient exécutable lorsque le template est approuvé.
+- l'action redevient exécutable lorsque le template est approuvé et lié à la demande.
+
+La synchronisation Twilio peut débloquer automatiquement une demande si elle trouve un template réel approuvé (`HX...`, non mock) déjà lié à la demande, ou si le nom exact du template approuvé apparaît dans la raison ou le contexte de la demande.
 
 Statuts de demande de template :
 
@@ -208,6 +210,8 @@ Lorsqu'une relance arrive à échéance, que la fenêtre WhatsApp est fermée et
 
 Lorsqu'un template demandé pour débloquer une relance est approuvé, alors la demande passe en `approved` et l'action `follow_up` bloquée redevient ouverte.
 
+L'action admin liée à la demande est clôturée au même moment. Setter II retrouve alors la relance dans sa file, avec le template approuvé disponible.
+
 ### Règle 12 : relance envoyée et flux non terminé
 
 Lorsque Setter II envoie une relance et que le flux prévoit encore une étape, alors le cockpit termine la relance actuelle et programme la prochaine selon le calendrier du flux.
@@ -216,6 +220,10 @@ Lorsque Setter II envoie une relance et que le flux prévoit encore une étape, 
 
 Lorsque Setter II envoie la dernière relance prévue par un flux et que le prospect ne répond toujours pas, alors le cockpit ne crée plus de prochaine action et marque la conversation comme résolue avec le motif `sequence_completed_no_reply`.
 
+### Règle 13 bis : garde-fous de volume WhatsApp
+
+Les limites configurées dans Admin s'appliquent aux relances `follow_up`, pas aux réponses humaines urgentes. Le kill switch global bloque tout envoi WhatsApp. Les quotas par prospect/jour, prospect/semaine, global/jour et délai minimum entre relances empêchent l'emballement des relances, mais ne doivent pas empêcher Setter I de répondre à un prospect qui vient d'écrire, sauf si le statut `do_not_contact` ou le kill switch global bloque l'envoi.
+
 ### Règle 14 : appel de setting vers closing
 
 Lorsque Setter I termine un appel de setting et estime que le prospect doit passer au closing, alors le cockpit crée une action `closing_call` pour le closer, avec mini note obligatoire et qualification setter.
@@ -223,6 +231,8 @@ Lorsque Setter I termine un appel de setting et estime que le prospect doit pass
 ### Règle 15 : appel de setting non joint
 
 Lorsque Setter I ne joint pas le prospect lors d'un appel de setting, alors le cockpit crée d'abord un rappel d'appel +2h ouvrées, puis +24h ouvrées, puis bascule ensuite vers le flux `setting_call_not_reached` si le prospect n'est toujours pas joint.
+
+Les rappels sont comptés par rendez-vous, pas globalement par prospect. Si le prospect reprend contact et qu'un nouveau rendez-vous est fixé, un nouveau cycle d'appel démarre avec un nouveau `call_cycle_id` et le compteur repart au rappel 1.
 
 ### Règle 16 : appel de setting sans suite claire
 
@@ -244,6 +254,8 @@ Lorsque le closer termine un appel de closing et qualifie le prospect comme `wil
 
 Lorsque le closer ne joint pas le prospect lors d'un appel de closing, alors le cockpit crée d'abord un rappel d'appel +2h ouvrées, puis +24h ouvrées, puis bascule ensuite vers le flux `closing_call_not_reached` si le prospect n'est toujours pas joint.
 
+Comme pour le setting, le compteur de rappels closing est scoped par rendez-vous. Un nouveau rendez-vous closing démarre un nouveau cycle.
+
 ### Règle 21 : closing indécis
 
 Lorsque le closer joint le prospect mais qu'aucune décision claire n'est prise, alors le cockpit crée une relance Setter II dans le flux `post_closing_undecided`.
@@ -257,6 +269,16 @@ Lorsque le closer qualifie le prospect comme `not_relevant`, alors le cockpit cl
 Lorsqu'une date de début de cours approche et que le prospect n'a pas signé, alors le cockpit crée une relance liée au cours. Cette relance est prioritaire sur toute relance relative au lead.
 
 Cette priorité ne remplace pas un appel setting ou closing déjà planifié. L'appel reste l'action principale ; la relance cours attendra un prochain déclencheur ou une décision humaine.
+
+Si la session de référence d'une catégorie est dépassée, le cockpit crée une action admin pour demander la mise à jour de cette session. Il ne lance pas une relance liée à une ancienne session.
+
+### Règle 23 bis : cours complet dans SchoolDrive
+
+Lorsque SchoolDrive indique que le cours ou la session est complet, Sales Cockpit annule les relances commerciales ouvertes et rend le cas très visible. Si aucun appel n'est planifié, Setter I reçoit une action pour proposer une autre session. Si un appel setting ou closing est déjà planifié, cet appel reste l'action principale et reçoit une note visible indiquant que la session est complète.
+
+### Règle 23 ter : signaux terminaux SchoolDrive
+
+Lorsque SchoolDrive indique qu'un prospect a signé, que le prospect ne doit plus être contacté, ou qu'un opt-out email/téléphone/WhatsApp existe, Sales Cockpit aligne son état sur SchoolDrive. Une signature clôt la conversation comme gagnée. Un signal `do_not_contact` ou opt-out clôt la conversation, bloque tous les canaux commerciaux et conserve une note de provenance.
 
 ### Règle 24 : qualification terminale à tout moment
 

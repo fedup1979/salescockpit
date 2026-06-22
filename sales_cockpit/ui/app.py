@@ -5,6 +5,7 @@ from datetime import datetime, time, timedelta, timezone
 from html import escape
 from pathlib import Path
 import sys
+from urllib.parse import urlparse
 
 import streamlit as st
 
@@ -3856,6 +3857,7 @@ def render_admin(user: dict) -> None:
     st.title("Admin")
     if user["role"] != "admin":
         st.warning("Accès lecture seul. Les réglages sont réservés aux admins.")
+        return
 
     tabs = st.tabs([
         "État",
@@ -4505,8 +4507,17 @@ def render_template_body(body: str, variables: dict[str, str]) -> str:
 
 def get_schooldrive_url(conv: dict) -> str | None:
     if conv.get("schooldrive_url"):
-        return conv.get("schooldrive_url")
-    return SchoolDriveConnector().get_lead_url(conv.get("schooldrive_lead_id"))
+        return whitelist_schooldrive_url(conv.get("schooldrive_url"))
+    return whitelist_schooldrive_url(SchoolDriveConnector().get_lead_url(conv.get("schooldrive_lead_id")))
+
+
+def whitelist_schooldrive_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.netloc != "schooldrive.essr.ch":
+        return None
+    return url
 
 
 def show_result(ok: bool, message: str) -> None:

@@ -14,7 +14,7 @@ Latest recorded staging deployment check:
 - Twilio mode on staging: `mock`.
 - Workflow consistency: no active conversation without action, no resolved conversation with active action, no conflicting main actions.
 - API security readiness checks app API tokens and mock webhook tokens outside local tests.
-- Latest local hardening validation: `116 passed`, `compileall` OK, `git diff --check` OK, BOM scan clean.
+- Latest local hardening validation: `133 passed`, `compileall` OK. On Windows, run pytest with `--basetemp=.pytest-tmp\run` if `%TEMP%\pytest-current` cleanup raises a permission error after successful execution.
 - Staging and cold production are both deployed on `db6f03b`; staging pre-cutover is OK, and production cold pre-cutover is OK with Twilio still in `mock` mode.
 
 The canonical workflow model is now:
@@ -163,6 +163,13 @@ The canonical workflow model is now:
 - Twilio message SIDs are normalized to uniqueness and protected by a partial unique index.
 - `SALES_COCKPIT_SEED_DEMO_DATA=false` keeps the core seed but removes `SD-DEMO-*` conversations for clean production databases.
 - The WhatsApp composer no longer shows a fake attachment uploader; attachments are explicitly out of V1.
+- No-show call retries are scoped by rendez-vous via `call_cycle_id` and `call_attempt_index`.
+- Business-rule seed data is versioned; legacy active `post_call_undecided` steps are deactivated by migration.
+- Twilio template sync can approve and unblock linked template requests when a real approved template is found.
+- SchoolDrive signed, do-not-contact/opt-out, course-full, and stale default-session signals are handled.
+- Follow-up quotas block relance overload but do not block a normal human reply; the global kill switch still blocks every WhatsApp send.
+- Outbound WhatsApp sends write a pending message before the Twilio call, then mark it `send_error` if Twilio fails.
+- `scripts/pre_cutover_check.py --strict-prod` is the mandatory final production gate before routing real WhatsApp to Sales Cockpit.
 
 ## Next Checkpoints
 
