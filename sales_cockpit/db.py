@@ -13,7 +13,7 @@ from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
 
 
 DEMO_SEED_VERSION = "2026-06-22-workflow-v1"
-BUSINESS_RULES_VERSION = "2026-06-22-workflow-v1-hardening"
+BUSINESS_RULES_VERSION = "2026-06-22-workflow-v1-hardening-2"
 
 
 SCHEMA = """
