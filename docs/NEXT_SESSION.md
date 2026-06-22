@@ -39,7 +39,7 @@ Website form
 -> AR reaches sent
 -> SchoolDrive emits a newer webhook snapshot
 -> Sales Cockpit updates the thread
--> Tanjona follow-up is created at sent_at + 72h
+-> Setter II follow-up is created at sent_at + 72h
 -> pre_cutover_check stays green
 ```
 
@@ -84,11 +84,11 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - `Température` is no longer shown in the UI. Keep the DB field for compatibility, but do not reintroduce it as a visible qualification field unless François explicitly asks.
 - `sales_stage` is displayed as `Parcours` only in compact status chips. It must not appear as an editable field in `Statuts`.
 - `Parcours` is operationally dangerous because it can force the next action. In V1 it is not user-editable; if a case is missing, add a real workflow path instead of restoring manual forçage.
-- Updating qualification/contact status without changing `Parcours` must not replace the current next action. If `Parcours` is forced to `appointment_booked`, it creates a `setting_call`. If qualification changes to `will_sign` without that force, it creates a Tanjona follow-up.
+- Updating qualification/contact status without changing `Parcours` must not replace the current next action. If `Parcours` is forced to `appointment_booked`, it creates a `setting_call`. If qualification changes to `will_sign` without that force, it creates a Setter II follow-up.
 - Private notes are always included in the future learning base; there is no checkbox in the UI.
 - The global `Tâches` view filters by individual responsible people, not only by role.
 - `Non pertinent` and `Ne plus contacter` are separate. `Non pertinent` is commercial qualification. `Ne plus contacter` is a separate contact status.
-- If a `Ne plus contacter` prospect writes again, create a `contact_review` action for Setter 1. Do not create automatic follow-ups.
+- If a `Ne plus contacter` prospect writes again, create a `contact_review` action for Setter I. Do not create automatic follow-ups.
 - While a prospect is `Ne plus contacter`, all WhatsApp sends are blocked, including free-form messages and templates. The user must complete the contact review and lift the status before replying.
 - Missing templates create `template_requests` linked to the blocked follow-up action.
 - Follow-up sequences and sequence steps are stored structurally in SQLite and displayed in Admin.
@@ -102,7 +102,7 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - Template mappings must only use real Twilio templates approved by WhatsApp. Draft, pending, rejected, local demo, and `HX_MOCK_*` templates are deliberately ignored/rejected for operational recommendations.
 - Initial template premapping exists in `scripts/premap_sequence_templates.py`. It maps the approved ESSR Twilio templates to every required `follow_up` step for `FSM`, `APP`, and `AS` using `lead_type = all`. It was applied to staging and prod on 2026-06-20 with 75 mappings total, 25 per category. Treat it as an AI-generated first pass to validate with Laura, not as final commercial truth.
 - `scripts/premap_sequence_templates.py --dry-run` is safe and should be used before reapplying. The script is idempotent and uses the existing `upsert_sequence_template_mapping` guardrails, so it only accepts active `follow_up` steps and approved real Twilio templates.
-- Structured course categories live in `course_categories`. V1 seeds `FSM`, `APP`, and `AS`. Unsupported SchoolDrive categories are stored, displayed, and routed to a Setter I review task instead of receiving an automated Tanjona relance flux.
+- Structured course categories live in `course_categories`. V1 seeds `FSM`, `APP`, and `AS`. Unsupported SchoolDrive categories are stored, displayed, and routed to a Setter I review task instead of receiving an automated Setter II relance flux.
 - V1 step/template changes affect only newly created future sequences. Existing open tasks are not recalculated.
 - Outbound WhatsApp messages close the active `reply` or `follow_up` action and create the next follow-up when applicable.
 - If a `reply` is sent while a setting/closing call is already planned and no new appointment outcome is chosen, the reply closes and the planned call remains the next action.
@@ -188,15 +188,15 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - Human and business hours have provisional V1 values in Admin > Règles métier > Horaires et bascules. They still need Laura validation.
 - The `Mode d'emploi` page is now prose, not expanders. Do not reintroduce accordion-heavy help unless François asks.
 - In `Mode d'emploi` and `Pilotage`, use function labels (`Setter I`, `Setter II`, `Closer`, `Admin`) rather than person names. Person names are still appropriate when showing the actual assignee on a task or in user management.
-- Template requests and bug reports are V1 admin queues, not standard prospect tasks. Do not create fake commercial tasks for them. V2 should add a proper `admin_actions` layer if admin workload needs to be managed like tasks.
+- Template requests and bug reports create `admin_actions`, not standard prospect tasks. Do not create fake commercial tasks for them. Keep admin support work in `Admin > Actions admin`.
 - Obsolete legacy demo blocks and the old `_render_next_action_box_legacy` function were removed.
 
 ## Current Validation
 
-Latest known local validation after the production-hardening audit:
+Latest known local validation after the V1 workflow update:
 
-- `pytest --basetemp=.pytest-tmp\full`: 116 tests passing.
-- `compileall`: passed for `sales_cockpit`, `scripts`, and `tests`.
+- `pytest` with local temp directory: 125 tests passing.
+- `compileall`: passed for `sales_cockpit`.
 - `git diff --check`: passed.
 - BOM scan: clean for tracked/project files.
 - Staging deploy source: `main` branch via `deploy/scripts/deploy_env.sh`.
@@ -302,7 +302,7 @@ Stop-Process -Id <PID> -Force
 ## Recommended Next Work
 
 1. Use the real SchoolDrive MCP replay results as the current staging baseline. Do not apply a timezone correction to those records.
-2. When Tiago's producer sends live webhook events, validate accepted/ignored/duplicate events, sent vs queued WhatsApp messages, Tanjona +72h creation, and archive resolution in staging.
+2. When Tiago's producer sends live webhook events, validate accepted/ignored/duplicate events, sent vs queued WhatsApp messages, Setter II +72h creation, and archive resolution in staging.
 3. If Tiago sends JSON files instead of POSTing directly, use `scripts/schooldrive_replay_payloads.py` with `--expected-environment staging`.
 4. If Tiago is still pending after a deployment, run `scripts/schooldrive_smoke.py` from the droplet with `--db-check` to validate the webhook with synthetic data.
 5. After Claude/MCP backfills more SchoolDrive leads, run `scripts/front_rematch_buffer.py --limit 500`, then review `scripts/front_convert_matched.py --limit 500` dry-run output. Do not execute conversion for rows with existing actions unless replacement is intentional.

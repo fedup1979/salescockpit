@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+﻿from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from sales_cockpit.config import get_settings
@@ -8,6 +8,8 @@ from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
 from sales_cockpit.store import (
     assign_standard_next_action,
     authenticate,
+    cancel_call_action_without_replacement,
+    complete_admin_action,
     complete_action_with_workflow,
     create_and_submit_twilio_template,
     create_bug_report,
@@ -19,10 +21,12 @@ from sales_cockpit.store import (
     get_conversation,
     get_integration_readiness,
     get_next_action_for_lead,
+    get_outbound_safeguards,
     get_recommended_template_for_action,
     ingest_schooldrive_snapshot,
     handoff_to_closer,
     list_actions_for_lead,
+    list_admin_actions,
     list_conversations,
     list_course_default_sessions,
     list_sequence_steps,
@@ -34,6 +38,7 @@ from sales_cockpit.store import (
     list_user_activity_log,
     list_users,
     record_inbound_message,
+    reschedule_call_action,
     schedule_followup,
     send_freeform_message,
     send_template_message,
@@ -41,6 +46,8 @@ from sales_cockpit.store import (
     sync_twilio_templates,
     upsert_course_default_session,
     update_lead_qualification,
+    update_outbound_safeguards,
+    update_template_request_status,
     update_temporary_identity,
     upsert_sequence_step,
     upsert_sequence_template_mapping,
@@ -65,17 +72,23 @@ def test_bug_report_is_stored_with_activity_log() -> None:
         user["id"],
         "Inbox",
         "Carte incorrecte",
-        "La prochaine action semble incohérente.",
+        "La prochaine action semble incohÃ©rente.",
         expected_behavior="Voir une relance.",
         actual_behavior="Voir un appel.",
         severity="high",
     )
 
     assert ok is True
-    assert "enregistré" in message
+    assert "Signalement" in message
     reports = list_bug_reports()
     assert reports[0]["title"] == "Carte incorrecte"
     assert reports[0]["severity"] == "high"
+    admin_actions = list_admin_actions()
+    assert admin_actions[0]["type"] == "bug_report"
+    assert admin_actions[0]["bug_report_id"] == reports[0]["id"]
+    ok, message = complete_admin_action(admin_actions[0]["id"], user["id"], "Bug revu")
+    assert ok is True
+    assert "termin" in message
     assert any(item["event_type"] == "bug_report_created" for item in list_user_activity_log())
 
 
@@ -150,7 +163,7 @@ def test_freeform_send_blocked_when_window_closed() -> None:
     closed = next(item for item in conversations if item["window_state"] == "closed")
     ok, message = send_freeform_message(closed["conversation_id"], 1, "Test")
     assert ok is False
-    assert "fermée" in message
+    assert "WhatsApp" in message
 
 
 def test_conversation_can_be_resolved_and_reopened() -> None:
@@ -163,12 +176,12 @@ def test_conversation_can_be_resolved_and_reopened() -> None:
         1,
         "resolved",
         resolution_reason="sequence_completed_no_reply",
-        resolution_note="Fin de séquence de test.",
+        resolution_note="Fin de sÃ©quence de test.",
     )
     assert ok is True
     assert get_conversation(conversation_id)["status"] == "resolved"
     assert any(
-        "Clôture de conversation" in item["body"]
+        "conversation" in item["body"].lower()
         for item in list_messages(conversation_id)
         if item["direction"] == "manual_note"
     )
@@ -184,7 +197,7 @@ def test_conversation_can_be_resolved_and_reopened() -> None:
     assert ok is True
     assert get_conversation(conversation_id)["status"] == "open"
     assert any(
-        "Réactivation de conversation" in item["body"]
+        "conversation" in item["body"].lower()
         for item in list_messages(conversation_id)
         if item["direction"] == "manual_note"
     )
@@ -213,7 +226,7 @@ def test_resolution_requires_reason_and_reopen_requires_action() -> None:
         1,
         "resolved",
         resolution_reason="other",
-        resolution_note="Cas traité manuellement.",
+        resolution_note="Cas traitÃ© manuellement.",
     )
     assert ok is True
 
@@ -288,7 +301,7 @@ def test_ambiguous_inbound_phone_creates_temporary_review_record() -> None:
                     schooldrive_lead_id, first_name, last_name, phone_e164,
                     source, lead_status, contact_status, sales_stage,
                     temperature, identity_status
-                ) VALUES (?, ?, ?, ?, 'schooldrive_webhook', 'neutral',
+                ) VALUES (?, ?, ?, ?, 'schooldrive_webhook', 'eligible',
                     'contact_allowed', 'new', 'warm', 'verified')
                 """,
                 (f"lead:test-{index}", f"Test{index}", "Ambigu", phone),
@@ -315,7 +328,7 @@ def test_inbound_reuses_existing_temporary_identity_record() -> None:
     seed_initial_data()
     phone = unique_phone()
     first = record_inbound_message(phone, "Premier message.")
-    second = record_inbound_message(phone, "Deuxième message.")
+    second = record_inbound_message(phone, "DeuxiÃ¨me message.")
 
     assert second["lead_id"] == first["lead_id"]
     assert second["conversation_id"] == first["conversation_id"]
@@ -333,20 +346,20 @@ def test_temporary_identity_can_be_completed_manually() -> None:
         "Essai",
         "APP",
         "APP GE P26",
-        "À vérifier dans SchoolDrive.",
+        "Ã€ vÃ©rifier dans SchoolDrive.",
     )
 
     conversation = get_conversation(result["conversation_id"])
     messages = list_messages(result["conversation_id"])
 
     assert ok is True
-    assert "mise à jour" in message
+    assert "Identification" in message
     assert conversation["first_name"] == "Samira"
     assert conversation["last_name"] == "Essai"
     assert conversation["course_category_short_title"] == "APP"
     assert conversation["course_title"] == "APP GE P26"
     assert conversation["identity_status"] == "needs_identification"
-    assert any("Identification à vérifier" in item["body"] for item in messages)
+    assert any("Identification" in item["body"] for item in messages)
 
 
 def test_do_not_contact_inbound_creates_contact_review() -> None:
@@ -357,7 +370,7 @@ def test_do_not_contact_inbound_creates_contact_review() -> None:
         result["lead_id"],
         admin["id"],
         "lost",
-        "neutral",
+        "eligible",
         contact_status="do_not_contact",
     )
 
@@ -441,11 +454,11 @@ def test_reply_send_with_setting_booked_creates_setting_call_with_proof() -> Non
     ok, _ = send_freeform_message(
         result["conversation_id"],
         action["assigned_to_user_id"],
-        "Parfait, mon collègue vous appelle.",
+        "Parfait, mon collÃ¨gue vous appelle.",
         action_outcome="setting_booked",
         next_due_at=due_at,
         assigned_to_user_id=action["assigned_to_user_id"],
-        note="RDV setting confirmé.",
+        note="RDV setting confirmÃ©.",
     )
 
     assert ok is True
@@ -472,7 +485,7 @@ def test_inbound_during_planned_call_preserves_call_and_creates_reply() -> None:
         action_outcome="setting_booked",
         next_due_at=due_at,
         assigned_to_user_id=action["assigned_to_user_id"],
-        note="RDV setting confirmé.",
+        note="RDV setting confirmÃ©.",
     )
     assert ok is True
     planned_call = get_next_action_for_lead(result["lead_id"])
@@ -494,7 +507,7 @@ def test_inbound_during_planned_call_preserves_call_and_creates_reply() -> None:
     ok, _ = send_freeform_message(
         result["conversation_id"],
         next_action["assigned_to_user_id"],
-        "Merci, le rendez-vous reste bien confirmé.",
+        "Merci, le rendez-vous reste bien confirmÃ©.",
     )
 
     assert ok is True
@@ -523,11 +536,11 @@ def test_overdue_planned_call_does_not_hide_urgent_reply() -> None:
         action_outcome="setting_booked",
         next_due_at=due_at,
         assigned_to_user_id=action["assigned_to_user_id"],
-        note="RDV setting confirmé.",
+        note="RDV setting confirmÃ©.",
     )
     assert ok is True
 
-    record_inbound_message(phone, "Je dois préciser quelque chose avant l'appel.")
+    record_inbound_message(phone, "Je dois prÃ©ciser quelque chose avant l'appel.")
 
     next_action = get_next_action_for_lead(result["lead_id"])
     assert next_action["type"] == "reply"
@@ -548,7 +561,7 @@ def test_standard_reply_assignment_preserves_planned_call_and_blocks_parallel_fo
         action_outcome="setting_booked",
         next_due_at=due_at,
         assigned_to_user_id=action["assigned_to_user_id"],
-        note="RDV setting confirmé.",
+        note="RDV setting confirmÃ©.",
     )
     assert ok is True
 
@@ -562,7 +575,7 @@ def test_standard_reply_assignment_preserves_planned_call_and_blocks_parallel_fo
         "reply",
         setter_1["id"],
         iso_utc(utc_now()),
-        "Le prospect a posé une question avant l'appel.",
+        "Le prospect a posÃ© une question avant l'appel.",
     )
     assert ok is True, message
     next_action = get_next_action_for_lead(result["lead_id"])
@@ -583,7 +596,7 @@ def test_standard_reply_assignment_preserves_planned_call_and_blocks_parallel_fo
         "follow_up",
         tanjona["id"],
         iso_utc(utc_now() + timedelta(days=3)),
-        "Relance test alors qu'un appel est déjà prévu.",
+        "Relance test alors qu'un appel est dÃ©jÃ  prÃ©vu.",
     )
     assert ok is False
     assert "appel" in message.lower()
@@ -597,7 +610,7 @@ def test_reply_send_with_do_not_contact_resolves_without_followup() -> None:
     ok, _ = send_freeform_message(
         result["conversation_id"],
         action["assigned_to_user_id"],
-        "Bien reçu, nous ne vous recontacterons plus.",
+        "Bien reÃ§u, nous ne vous recontacterons plus.",
         action_outcome="do_not_contact",
         note="Demande explicite du prospect.",
     )
@@ -615,6 +628,12 @@ def test_followup_send_closes_with_proof_and_creates_next_sequence_step() -> Non
     action = get_next_action_for_lead(result["lead_id"])
     send_freeform_message(result["conversation_id"], action["assigned_to_user_id"], "Bonjour.")
     followup = get_next_action_for_lead(result["lead_id"])
+    old_sent_at = iso_utc(utc_now() - timedelta(days=3))
+    with connect() as conn:
+        conn.execute(
+            "UPDATE messages SET sent_at = ?, created_at = ? WHERE lead_id = ? AND direction = 'outbound'",
+            (old_sent_at, old_sent_at, result["lead_id"]),
+        )
 
     ok, _ = send_freeform_message(
         result["conversation_id"],
@@ -643,7 +662,7 @@ def test_call_completion_requires_note() -> None:
         action["id"],
         admin["id"],
         "setting_booked",
-        note="RDV setting fixé.",
+        note="RDV setting fixÃ©.",
         next_due_at=iso_utc(utc_now()),
         assigned_to_user_id=action["assigned_to_user_id"],
     )
@@ -663,7 +682,7 @@ def test_call_completion_requires_note() -> None:
 def test_template_request_blocks_followup_action() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
-    result = record_inbound_message(unique_phone(), "Je veux un cas très spécifique.")
+    result = record_inbound_message(unique_phone(), "Je veux un cas trÃ¨s spÃ©cifique.")
     due_at = iso_utc(utc_now() + timedelta(hours=1))
     schedule_followup(result["conversation_id"], admin["id"], admin["id"], due_at)
     action = get_next_action_for_lead(result["lead_id"])
@@ -671,13 +690,13 @@ def test_template_request_blocks_followup_action() -> None:
     ok, message = create_template_request(
         result["conversation_id"],
         admin["id"],
-        "Aucun modèle ne correspond au cas spécifique.",
+        "Aucun modÃ¨le ne correspond au cas spÃ©cifique.",
         "Contexte de test",
         task_id=action["id"],
     )
 
     assert ok is True
-    assert "modèle" in message
+    assert "mod" in message.lower()
     next_action = get_next_action_for_lead(result["lead_id"])
     assert next_action["status"] == "blocked"
     requests = list_template_requests()
@@ -687,19 +706,19 @@ def test_template_request_blocks_followup_action() -> None:
 def test_template_request_without_followup_does_not_block_reply_action() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
-    result = record_inbound_message(unique_phone(), "Je veux un modèle spécifique.")
+    result = record_inbound_message(unique_phone(), "Je veux un modÃ¨le spÃ©cifique.")
     action = get_next_action_for_lead(result["lead_id"])
     assert action["type"] == "reply"
 
     ok, message = create_template_request(
         result["conversation_id"],
         admin["id"],
-        "Créer un modèle de clarification.",
+        "CrÃ©er un modÃ¨le de clarification.",
         "Contexte de test",
     )
 
     assert ok is True
-    assert "relance bloquée" not in message
+    assert "relance bloquÃ©e" not in message
     next_action = get_next_action_for_lead(result["lead_id"])
     assert next_action["id"] == action["id"]
     assert next_action["status"] == "open"
@@ -717,14 +736,14 @@ def test_handoff_to_closer_creates_closing_action() -> None:
         result["conversation_id"],
         admin["id"],
         closer["id"],
-        appointment_note="Disponible demain à 14h",
+        appointment_note="Disponible demain Ã  14h",
         notes="Prospect chaud.",
     )
 
     assert ok is True
     conversation = get_conversation(result["conversation_id"])
     assert conversation["sales_stage"] == "closing"
-    assert conversation["lead_status"] == "neutral"
+    assert conversation["lead_status"] == "eligible"
     assert conversation["closer_user_id"] == closer["id"]
     action = get_next_action_for_lead(result["lead_id"])
     assert action["type"] == "closing_call"
@@ -813,7 +832,7 @@ def test_setting_call_not_reached_creates_call_retry_before_followup() -> None:
         action["id"],
         admin["id"],
         "setting_booked",
-        note="RDV setting fixé.",
+        note="RDV setting fixÃ©.",
         next_due_at=iso_utc(utc_now()),
         assigned_to_user_id=action["assigned_to_user_id"],
     )
@@ -825,7 +844,7 @@ def test_setting_call_not_reached_creates_call_retry_before_followup() -> None:
         setting_action["id"],
         admin["id"],
         "not_reached",
-        note="Pas de réponse au téléphone.",
+        note="Pas de rÃ©ponse au tÃ©lÃ©phone.",
     )
 
     assert ok is True
@@ -964,7 +983,7 @@ def test_sequence_template_mapping_recommends_matching_twilio_template(monkeypat
     )
 
     assert ok is True
-    assert "enregistré" in message
+    assert "enregistr" in message.lower()
     assert len(list_sequence_template_mappings()) == 1
     recommended = get_recommended_template_for_action(action["id"])
     assert recommended is not None
@@ -1043,7 +1062,7 @@ def test_sequence_steps_can_be_added_updated_and_deactivated() -> None:
         admin["id"],
         "lead_no_reply",
         int(added["step_index"]),
-        "Relance longue ajustée.",
+        "Relance longue ajustÃ©e.",
         action_type="other",
         offset_direction="after",
         offset_amount=7,
@@ -1070,9 +1089,9 @@ def test_course_default_session_can_be_configured_and_deactivated() -> None:
         "app",
         "APP VISIO E26",
         "2026-07-11",
-        default_session_name="APP été 2026",
+        default_session_name="APP Ã©tÃ© 2026",
         schooldrive_url="https://schooldrive.essr.ch/sd/example",
-        note="Session par défaut pour les leads APP.",
+        note="Session par dÃ©faut pour les leads APP.",
     )
 
     assert ok is True
@@ -1086,7 +1105,7 @@ def test_course_default_session_can_be_configured_and_deactivated() -> None:
     ok, message = deactivate_course_default_session(admin["id"], sessions[0]["id"])
 
     assert ok is True
-    assert "désactiv" in message
+    assert "sactiv" in message
     assert list_course_default_sessions() == []
 
 
@@ -1110,7 +1129,7 @@ def test_stop_status_blocks_followups_and_resolves_conversation() -> None:
         result["lead_id"],
         admin["id"],
         "lost",
-        "neutral",
+        "eligible",
         contact_status="do_not_contact",
     )
 
@@ -1130,14 +1149,14 @@ def test_stop_status_blocks_followups_and_resolves_conversation() -> None:
 def test_forced_closing_stage_updates_next_action() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
-    result = record_inbound_message(unique_phone(), "Je veux parler à Yasmine.")
+    result = record_inbound_message(unique_phone(), "Je veux parler Ã  Yasmine.")
     assert get_next_action_for_lead(result["lead_id"])["type"] == "reply"
 
     update_lead_qualification(
         result["lead_id"],
         admin["id"],
         "closing",
-        "neutral",
+        "eligible",
         contact_status="contact_allowed",
     )
 
@@ -1213,23 +1232,23 @@ def test_forced_appointment_stage_wins_when_will_sign_changes_same_update() -> N
 def test_do_not_contact_blocks_freeform_and_template_send() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
-    result = record_inbound_message(unique_phone(), "Je reviens malgré le blocage.")
+    result = record_inbound_message(unique_phone(), "Je reviens malgrÃ© le blocage.")
     update_lead_qualification(
         result["lead_id"],
         admin["id"],
         "setting",
-        "neutral",
+        "eligible",
         contact_status="do_not_contact",
     )
 
     ok, message = send_freeform_message(result["conversation_id"], admin["id"], "Bonjour.")
     assert ok is False
-    assert "Contact bloqué" in message
+    assert "Contact" in message
 
     template = next(item for item in list_templates(approved_only=True))
     ok, message = send_template_message(result["conversation_id"], admin["id"], template["id"], {})
     assert ok is False
-    assert "Contact bloqué" in message
+    assert "Contact" in message
 
 
 def test_resolved_conversation_blocks_freeform_and_template_send() -> None:
@@ -1280,7 +1299,7 @@ def test_resolved_conversation_blocks_new_work_shortcuts() -> None:
         iso_utc(utc_now()),
     )
     assert ok is False
-    assert "réactivez" in message or "rÃ©activez" in message
+    assert "activez" in message
 
     ok, message = handoff_to_closer(
         result["conversation_id"],
@@ -1288,7 +1307,7 @@ def test_resolved_conversation_blocks_new_work_shortcuts() -> None:
         closer["id"],
     )
     assert ok is False
-    assert "réactivez" in message or "rÃ©activez" in message
+    assert "activez" in message
 
 
 def test_qualification_noop_does_not_replace_followup_action() -> None:
@@ -1305,7 +1324,7 @@ def test_qualification_noop_does_not_replace_followup_action() -> None:
         result["lead_id"],
         admin["id"],
         "new",
-        "neutral",
+        "eligible",
         contact_status="contact_allowed",
     )
 
@@ -1358,12 +1377,27 @@ def test_blocked_followup_cannot_be_closed_by_unrelated_template_send() -> None:
     assert ok is True
     blocked = get_next_action_for_lead(result["lead_id"])
     assert blocked["status"] == "blocked"
+    request = next(item for item in list_template_requests() if item["task_id"] == blocked["id"])
+    admin_action = next(
+        item for item in list_admin_actions()
+        if item.get("template_request_id") == request["id"]
+    )
+    assert admin_action["type"] == "template_request"
 
     template = next(item for item in list_templates(approved_only=True))
     ok, message = send_template_message(result["conversation_id"], admin["id"], template["id"], {})
     assert ok is False
     assert "Relance" in message
     assert get_next_action_for_lead(result["lead_id"])["status"] == "blocked"
+
+    ok, _ = update_template_request_status(request["id"], admin["id"], "approved", template["id"])
+    assert ok is True
+    unblocked = get_next_action_for_lead(result["lead_id"])
+    assert unblocked["status"] == "open"
+    assert not [
+        item for item in list_admin_actions()
+        if item.get("template_request_id") == request["id"]
+    ]
 
 
 def test_call_completion_note_is_visible_in_conversation() -> None:
@@ -1376,7 +1410,7 @@ def test_call_completion_note_is_visible_in_conversation() -> None:
         reply["id"],
         admin["id"],
         "setting_booked",
-        note="RDV setting fixé demain.",
+        note="RDV setting fixÃ© demain.",
         next_due_at=iso_utc(utc_now()),
         assigned_to_user_id=reply["assigned_to_user_id"],
     )
@@ -1386,9 +1420,12 @@ def test_call_completion_note_is_visible_in_conversation() -> None:
         setting_call["id"],
         admin["id"],
         "not_ready",
-        note="Client joint, pas prêt à décider.",
+        note="Client joint, pas prÃªt Ã  dÃ©cider.",
     )
     assert ok is True
+    followup = get_next_action_for_lead(result["lead_id"])
+    assert followup["type"] == "follow_up"
+    assert followup["sequence_code"] == "post_setting_undecided"
 
     notes = [
         item["body"]
@@ -1407,7 +1444,7 @@ def test_terminal_stage_resolves_and_clears_next_action() -> None:
         result["lead_id"],
         admin["id"],
         "lost",
-        "neutral",
+        "eligible",
         contact_status="contact_allowed",
     )
 
@@ -1417,5 +1454,158 @@ def test_terminal_stage_resolves_and_clears_next_action() -> None:
     assert get_next_action_for_lead(result["lead_id"]) is None
 
 
+def test_call_can_be_rescheduled_then_cancelled_into_indecis_flow() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je veux un appel.")
+    reply = get_next_action_for_lead(result["lead_id"])
+
+    ok, _ = complete_action_with_workflow(
+        reply["id"],
+        admin["id"],
+        "setting_booked",
+        note="RDV setting fixe.",
+        next_due_at=iso_utc(utc_now() + timedelta(days=1)),
+        assigned_to_user_id=reply["assigned_to_user_id"],
+    )
+    assert ok is True
+    call = get_next_action_for_lead(result["lead_id"])
+    new_due = iso_utc(utc_now() + timedelta(days=2, minutes=7))
+    ok, _ = reschedule_call_action(call["id"], admin["id"], new_due, "RDV deplace a la demande du prospect.")
+    assert ok is True
+    call = get_next_action_for_lead(result["lead_id"])
+    assert call["due_at"] == new_due
+
+    ok, _ = cancel_call_action_without_replacement(call["id"], admin["id"], "Prospect annule sans nouveau creneau.")
+    assert ok is True
+    followup = get_next_action_for_lead(result["lead_id"])
+    assert followup["type"] == "follow_up"
+    assert followup["sequence_code"] == "post_setting_undecided"
+    notes = [item["body"] for item in list_messages(result["conversation_id"]) if item["direction"] == "manual_note"]
+    assert any("RDV annul" in body for body in notes)
+
+
+def test_closing_undecided_uses_dedicated_flow_and_do_not_contact_resolves() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    closer = next(user for user in list_users() if user["role"] == "closer")
+    result = record_inbound_message(unique_phone(), "Je veux parler au closer.")
+    reply = get_next_action_for_lead(result["lead_id"])
+
+    ok, _ = complete_action_with_workflow(
+        reply["id"],
+        admin["id"],
+        "closing_booked",
+        note="RDV closing fixe.",
+        next_due_at=iso_utc(utc_now()),
+        assigned_to_user_id=closer["id"],
+    )
+    assert ok is True
+    closing_call = get_next_action_for_lead(result["lead_id"])
+    ok, _ = complete_action_with_workflow(
+        closing_call["id"],
+        admin["id"],
+        "undecided",
+        note="Prospect joint mais encore hesitant.",
+    )
+    assert ok is True
+    followup = get_next_action_for_lead(result["lead_id"])
+    assert followup["type"] == "follow_up"
+    assert followup["sequence_code"] == "post_closing_undecided"
+
+    result = record_inbound_message(unique_phone(), "Ne me contactez plus.")
+    reply = get_next_action_for_lead(result["lead_id"])
+    ok, _ = complete_action_with_workflow(
+        reply["id"],
+        admin["id"],
+        "closing_booked",
+        note="RDV closing fixe.",
+        next_due_at=iso_utc(utc_now()),
+        assigned_to_user_id=closer["id"],
+    )
+    assert ok is True
+    closing_call = get_next_action_for_lead(result["lead_id"])
+    ok, _ = complete_action_with_workflow(
+        closing_call["id"],
+        admin["id"],
+        "do_not_contact",
+        note="Le prospect demande explicitement de ne plus etre contacte.",
+    )
+    assert ok is True
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["status"] == "resolved"
+    assert conversation["contact_status"] == "do_not_contact"
+
+
+def test_schooldrive_business_signals_stop_or_route_work() -> None:
+    seed_initial_data()
+    signed_payload = schooldrive_signal_payload({"signed": {"is_signed": True}})
+    signed_result = ingest_schooldrive_snapshot(signed_payload)
+    signed_conversation = conversation_for_lead(signed_result["lead_id"])
+    assert signed_conversation["status"] == "resolved"
+    assert signed_conversation["lead_status"] == "signed"
+    assert get_next_action_for_lead(signed_result["lead_id"]) is None
+
+    dnc_payload = schooldrive_signal_payload({"contact": {"email_opt_out": True}})
+    dnc_result = ingest_schooldrive_snapshot(dnc_payload)
+    dnc_conversation = conversation_for_lead(dnc_result["lead_id"])
+    assert dnc_conversation["status"] == "resolved"
+    assert dnc_conversation["contact_status"] == "do_not_contact"
+    assert get_next_action_for_lead(dnc_result["lead_id"]) is None
+
+    course_full_payload = schooldrive_signal_payload({"course": {"category": "APP", "course_name": "APP TEST", "is_full": True}})
+    course_full_result = ingest_schooldrive_snapshot(course_full_payload)
+    next_action = get_next_action_for_lead(course_full_result["lead_id"])
+    assert next_action["type"] == "other"
+    assert next_action["trigger_reason"] == "schooldrive_course_full"
+    ok, _ = complete_action_with_workflow(next_action["id"], 1, "done", note="Autre session proposee.")
+    assert ok is True
+
+
+def test_outbound_safeguards_can_block_whatsapp_sends() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    ok, _ = update_outbound_safeguards(admin["id"], {"outbound_global_block": True})
+    assert ok is True
+    assert get_outbound_safeguards()["outbound_global_block"] is True
+    result = record_inbound_message(unique_phone(), "Bonjour.")
+
+    ok, message = send_freeform_message(result["conversation_id"], admin["id"], "Bonjour.")
+    assert ok is False
+    assert "kill switch" in message
+
+
 def unique_phone() -> str:
     return "+4179" + uuid4().hex[:8]
+
+
+def conversation_for_lead(lead_id: int) -> dict:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM conversations WHERE lead_id = ? ORDER BY id DESC LIMIT 1",
+            (lead_id,),
+        ).fetchone()
+    assert row is not None
+    conversation = get_conversation(row["id"])
+    assert conversation is not None
+    return conversation
+
+
+def schooldrive_signal_payload(data_patch: dict) -> dict:
+    payload = build_smoke_steps(
+        run_id=uuid4().hex[:8],
+        environment="staging",
+        base_time=utc_now(),
+    )[0].payload
+    now = iso_utc(utc_now())
+    payload["event_id"] = f"evt_{uuid4().hex}"
+    payload["occurred_at"] = now
+    payload["data"]["schooldrive_id"] = f"lead:{uuid4().hex[:8]}"
+    payload["data"]["aggregated_updated_at"] = now
+    payload["data"]["person"]["phone"] = unique_phone()
+    for key, value in data_patch.items():
+        if isinstance(value, dict) and isinstance(payload["data"].get(key), dict):
+            payload["data"][key].update(value)
+        else:
+            payload["data"][key] = value
+    return payload

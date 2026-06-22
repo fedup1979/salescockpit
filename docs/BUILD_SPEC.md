@@ -99,7 +99,7 @@ Operational rules:
 - Passing to closing through the normal workflow completes the relevant current action, moves the lead to `closing`, and creates a `closing_call` action for the closer.
 - `Non pertinent` and `A signé` are commercial qualifications that stop follow-ups and resolve open conversations.
 - `Ne plus contacter` is a separate contact status and strict do-not-contact policy.
-- If a `Ne plus contacter` prospect writes again, create a `contact_review` action for Setter 1.
+- If a `Ne plus contacter` prospect writes again, create a `contact_review` action for Setter I.
 - Manual resolution requires a controlled reason.
 - Manual reopening requires creating the next action.
 - Missing templates create `template_requests` linked to blocked follow-ups.
@@ -282,7 +282,7 @@ This build spec is now a reference snapshot, not the live operational runbook. C
 
 Current priority areas:
 
-1. Validate the fresh live SchoolDrive path in staging: website form, SchoolDrive snapshot, automatic WhatsApp, AR-sent snapshot, Tanjona follow-up.
+1. Validate the fresh live SchoolDrive path in staging: website form, SchoolDrive snapshot, automatic WhatsApp, AR-sent snapshot, Setter II follow-up.
 2. Keep Twilio production read-only/mock until explicit cutover.
 3. Clean or rebuild staging data if the historical SchoolDrive replay makes validation unreadable.
 4. Run focused scenario validation with Laura/François.

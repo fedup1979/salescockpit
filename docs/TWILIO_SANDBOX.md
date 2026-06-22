@@ -80,7 +80,7 @@ Inbound webhook:
 - strips the `whatsapp:` prefix from `From`;
 - stores the inbound message in `messages`;
 - deduplicates by `MessageSid`;
-- reopens the conversation and creates/updates a `reply` action for Setter 1;
+- reopens the conversation and creates/updates a `reply` action for Setter I;
 - keeps the legacy JSON mock shape for internal tests only.
 
 Status callback:

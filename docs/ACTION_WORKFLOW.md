@@ -5,7 +5,7 @@ Ce document formalise la logique métier validée avec François autour des acti
 Pour la logique exhaustive validée, lire aussi `docs/BUSINESS_LOGIC.md`.
 Pour l'état d'implémentation et les écarts restants, lire `docs/GAP_ANALYSIS.md`.
 
-Il doit devenir la référence de travail pour toute évolution de `Tâches`, Inbox, automatisation Tanjona, Twilio, SchoolDrive, Notion et futur setter IA.
+Il doit devenir la référence de travail pour toute évolution de `Tâches`, Inbox, automatisation Setter II, Twilio, SchoolDrive, Notion et futur setter IA.
 
 La version structurée de cette logique existe dans `sales_cockpit/business_rules.py` via `MAIN_ACTION_TYPES`, `SUPPORT_ACTIONS`, `ACTION_STATUSES` et `WORKFLOW_TRANSITIONS`. Elle est affichée dans l'onglet Admin > Workflow.
 
@@ -43,9 +43,9 @@ Actions principales V1 :
 
 | Type interne | Libellé UI | Sens métier | Responsable typique |
 |---|---|---|---|
-| `reply` | Répondre | Répondre à un message entrant WhatsApp | Setter 1 |
-| `follow_up` | Relancer | Relancer le prospect, souvent via template WhatsApp | Tanjona, puis IA |
-| `setting_call` | Appel de setting | Appeler pour qualifier et obtenir la suite commerciale | Setter 1 |
+| `reply` | Répondre | Répondre à un message entrant WhatsApp | Setter I |
+| `follow_up` | Relancer | Relancer le prospect, souvent via template WhatsApp | Setter II, puis IA |
+| `setting_call` | Appel de setting | Appeler pour qualifier et obtenir la suite commerciale | Setter I |
 | `closing_call` | Appel de closing | Appeler pour vendre, finaliser ou trancher | Closer |
 
 `setting_call` et `closing_call` représentent l'action à documenter au moment de l'appel : résultat d'appel, note obligatoire et suite métier. L'appel planifié doit rester visible dans la conversation avant son échéance.
@@ -158,7 +158,7 @@ Les champs actuels de `tasks` couvrent une partie du besoin. Le modèle cible de
 
 ## Règles Transversales
 
-- Un message entrant du prospect annule ou clôt les relances ouvertes et crée un `reply` immédiat pour Setter 1.
+- Un message entrant du prospect annule ou clôt les relances ouvertes et crée un `reply` immédiat pour Setter I.
 - Si un appel setting ou closing est déjà planifié, le message entrant ne l'annule pas. Le système crée une interruption `reply`; après réponse simple, l'appel planifié redevient la prochaine action.
 - Un message sortant envoyé en réponse clôt le `reply` actif.
 - Une relance envoyée clôt le `follow_up` actif.
@@ -176,32 +176,37 @@ Cette table décrit le chaînage cible. Elle doit rester lisible par l'équipe m
 
 | Situation actuelle | Déclencheur | Résultat / condition | Action à clôturer | Action suivante | Responsable | Échéance | Conversation | Supports obligatoires | Effets secondaires |
 |---|---|---|---|---|---|---|---|---|---|
-| Lead créé dans SchoolDrive | `lead_created` | Message initial automatique envoyé | Aucune | `follow_up` | Tanjona | +72h | Ouverte ou en attente | Aucun | Stocker l'événement initial |
-| Lead sans réponse | `no_reply_after_72h` | Prospect n'a pas répondu | `follow_up` précédent si existant | `follow_up` | Tanjona | Maintenant | Ouverte | Template approuvé | Respecter délai minimum 24h |
-| Prospect répond | `prospect_replied` | Dernier message entrant non répondu | `follow_up` ouvert | `reply` | Setter 1 | Maintenant | Ouverte | Aucun | Hot signal, file de Setter 1, annuler relances futures, garder tout appel déjà planifié |
-| Réponse envoyée | `outbound_message_sent` | Action active = `reply`, aucun appel déjà planifié | `reply` | `follow_up` de sécurité | Tanjona | +72h | Ouverte | Message sortant | Supprimer hot signal |
-| Réponse envoyée pendant appel planifié | `outbound_message_sent` | Action active = `reply`, appel setting/closing déjà planifié | `reply` | appel déjà planifié | Responsable de l'appel | Date/heure RDV | Ouverte | Message sortant | Ne pas créer de relance Tanjona parallèle |
-| Réponse envoyée avec RDV setting | `outbound_message_sent` | RDV setting fixé | `reply` | `setting_call` | Setter 1 | Date/heure RDV | Ouverte | Message sortant, RDV noté | Annuler relance de sécurité |
+| Lead créé dans SchoolDrive | `lead_created` | Message initial automatique envoyé | Aucune | `follow_up` | Setter II | +72h | Ouverte ou en attente | Aucun | Stocker l'événement initial |
+| Lead sans réponse | `no_reply_after_72h` | Prospect n'a pas répondu | `follow_up` précédent si existant | `follow_up` | Setter II | Maintenant | Ouverte | Template approuvé | Respecter délai minimum 24h |
+| Prospect répond | `prospect_replied` | Dernier message entrant non répondu | `follow_up` ouvert | `reply` | Setter I | Maintenant | Ouverte | Aucun | Hot signal, file de Setter I, annuler relances futures, garder tout appel déjà planifié |
+| Réponse envoyée | `outbound_message_sent` | Action active = `reply`, aucun appel déjà planifié | `reply` | `follow_up` de sécurité | Setter II | +72h | Ouverte | Message sortant | Supprimer hot signal |
+| Réponse envoyée pendant appel planifié | `outbound_message_sent` | Action active = `reply`, appel setting/closing déjà planifié | `reply` | appel déjà planifié | Responsable de l'appel | Date/heure RDV | Ouverte | Message sortant | Ne pas créer de relance Setter II parallèle |
+| Réponse envoyée avec RDV setting | `outbound_message_sent` | RDV setting fixé | `reply` | `setting_call` | Setter I | Date/heure RDV | Ouverte | Message sortant, RDV noté | Annuler relance de sécurité |
 | Réponse envoyée avec disqualification claire | `outbound_message_sent` | Prospect non pertinent ou stop | `reply` | Aucune | Personne | Aucun | Résolue | Qualification | Stopper relances |
-| Relance due | `follow_up_due` | Fenêtre WhatsApp ouverte | `follow_up` | À déterminer après envoi | Tanjona | Maintenant | Ouverte | Message libre ou template selon choix | Respecter délai minimum |
-| Relance due | `follow_up_due` | Fenêtre WhatsApp fermée + template disponible | `follow_up` | À déterminer après envoi | Tanjona | Maintenant | Ouverte | Template approuvé | Respecter délai minimum |
-| Relance due | `follow_up_due` | Aucun template adapté | `follow_up` | `follow_up` bloquée | Tanjona | Maintenant | Ouverte | `template_request` | Action principale passe `blocked` |
-| Template demandé | `template_request_created` | Template à créer ou soumettre | `template_request` support | `follow_up` reste bloquée | Tanjona | Dès approbation | Ouverte | Template demandé | Surveiller statut template |
-| Template approuvé | `template_approved` | Relance bloquée par ce template | `template_request` support | `follow_up` | Tanjona | Maintenant | Ouverte | Template approuvé | Débloquer action |
-| Relance envoyée | `outbound_template_sent` ou `outbound_message_sent` | Action active = `follow_up` | `follow_up` | `follow_up` suivant si flux non terminé | Tanjona | +72h, +7j ou +30j | Ouverte | Message sortant | Avancer dans le flux |
+| Relance due | `follow_up_due` | Fenêtre WhatsApp ouverte | `follow_up` | À déterminer après envoi | Setter II | Maintenant | Ouverte | Message libre ou template selon choix | Respecter délai minimum |
+| Relance due | `follow_up_due` | Fenêtre WhatsApp fermée + template disponible | `follow_up` | À déterminer après envoi | Setter II | Maintenant | Ouverte | Template approuvé | Respecter délai minimum |
+| Relance due | `follow_up_due` | Aucun template adapté | `follow_up` | `follow_up` bloquée | Setter II | Maintenant | Ouverte | `template_request` | Action principale passe `blocked`, action admin créée |
+| Template demandé | `template_request_created` | Template à créer ou soumettre | `template_request` support | `follow_up` reste bloquée | Admin | Dès approbation | Ouverte | Template demandé | Créer une action admin |
+| Template approuvé | `template_approved` | Relance bloquée par ce template | `template_request` support + action admin | `follow_up` | Setter II | Maintenant | Ouverte | Template approuvé | Débloquer action |
+| Relance envoyée | `outbound_template_sent` ou `outbound_message_sent` | Action active = `follow_up` | `follow_up` | `follow_up` suivant si flux non terminé | Setter II | +72h, +7j ou +30j | Ouverte | Message sortant | Avancer dans le flux |
 | Relance envoyée | `outbound_template_sent` | Dernière relance du flux | `follow_up` | Aucune | Personne | Aucun | Résolue | Message sortant | Motif `sequence_completed_no_reply` |
-| RDV setting arrive | `setting_call_due` | Appel à documenter | `setting_call` | Selon résultat appel | Setter 1 | Maintenant | Ouverte | Résultat + mini note | Option `in_progress` si pris en main |
+| RDV setting arrive | `setting_call_due` | Appel à documenter | `setting_call` | Selon résultat appel | Setter I | Maintenant | Ouverte | Résultat + mini note | Option `in_progress` si pris en main |
 | Appel setting terminé | `setting_call_completed` | À closer | `setting_call` | `closing_call` | Closer | Date RDV ou maintenant | Ouverte | Mini note + qualification setter | Lead passe en `closing` |
-| Appel setting terminé | `setting_call_completed` | Pas de réponse | `setting_call` | `follow_up` | Tanjona | +72h | Ouverte | Mini note | Flux setter no next step |
-| Appel setting terminé | `setting_call_completed` | Pas prêt / à relancer | `setting_call` | `follow_up` | Tanjona | +72h | Ouverte | Mini note + qualification setter | Flux setter no next step |
+| Appel setting terminé | `setting_call_completed` | Pas de réponse | `setting_call` | `follow_up` | Setter II | +2h puis +24h puis flux no-show setting | Ouverte | Mini note | Flux `setting_call_not_reached` |
+| Appel setting terminé | `setting_call_completed` | Joint mais indécis | `setting_call` | `follow_up` | Setter II | +72h | Ouverte | Mini note + qualification setter | Flux `post_setting_undecided` |
 | Appel setting terminé | `setting_call_completed` | Non pertinent | `setting_call` | Aucune | Personne | Aucun | Résolue | Mini note + qualification `not_relevant` | Stopper relances |
 | Appel setting terminé | `setting_call_completed` | Ne plus contacter | `setting_call` | Aucune | Personne | Aucun | Résolue | Mini note + qualification `do_not_contact` | Stop strict |
 | RDV closing arrive | `closing_call_due` | Appel à documenter | `closing_call` | Selon résultat appel | Closer | Maintenant | Ouverte | Résultat + mini note | Option `in_progress` si pris en main |
 | Appel closing terminé | `closing_call_completed` | Signé | `closing_call` | Aucune | Personne | Aucun | Résolue | Mini note + qualification closer `signed` | Vente gagnée, stopper relances |
-| Appel closing terminé | `closing_call_completed` | Va signer | `closing_call` | `follow_up` | Tanjona | +72h | Ouverte | Mini note + qualification closer `will_sign` | Flux closer will sign |
+| Appel closing terminé | `closing_call_completed` | Va signer | `closing_call` | `follow_up` | Setter II | +72h | Ouverte | Mini note + qualification closer `will_sign` | Flux closer will sign |
 | Appel closing terminé | `closing_call_completed` | Non pertinent | `closing_call` | Aucune | Personne | Aucun | Résolue | Mini note + qualification closer `not_relevant` | Stopper relances |
-| Appel closing terminé | `closing_call_completed` | Pas de réponse | `closing_call` | `follow_up` | Tanjona | +72h | Ouverte | Mini note | Relance post-closing |
-| Date de cours approche | `course_start_approaching` | Lead non signé, date pertinente connue, aucun appel planifié | `follow_up` lead-relative concurrente | `follow_up` cours | Tanjona ou IA | J-14/J-7/J-3/J-1 | Ouverte | Template cours | La relance cours gagne le conflit sauf si un appel est déjà planifié |
+| Appel closing terminé | `closing_call_completed` | Pas de réponse | `closing_call` | `follow_up` | Setter II | +2h puis +24h puis flux no-show closing | Ouverte | Mini note | Flux `closing_call_not_reached` |
+| Appel closing terminé | `closing_call_completed` | Joint mais indécis | `closing_call` | `follow_up` | Setter II | +72h | Ouverte | Mini note | Flux `post_closing_undecided` |
+| Date de cours approche | `course_start_approaching` | Lead non signé, date pertinente connue, aucun appel planifié | `follow_up` lead-relative concurrente | `follow_up` cours | Setter II ou IA | J-14/J-7/J-3/J-1 | Ouverte | Template cours | La relance cours gagne le conflit sauf si un appel est déjà planifié |
+| SchoolDrive indique signé | `schooldrive_signed` | Vente confirmée dans SchoolDrive | Toutes actions ouvertes | Aucune | Personne | Aucun | Résolue | Événement SchoolDrive | Qualification `signed`, stop relances |
+| SchoolDrive indique ne pas relancer / opt-out | `schooldrive_do_not_contact` | Flag ou opt-out externe | Toutes actions ouvertes | Aucune | Personne | Aucun | Résolue | Événement SchoolDrive | Statut `do_not_contact`, note de provenance |
+| SchoolDrive indique cours complet | `schooldrive_course_full` | Session/cours complet | Relances ouvertes | `other` revue | Setter I | Maintenant | Ouverte | Note SchoolDrive | Proposer une autre session |
+| Bug signalé | `bug_report_created` | Signalement utilisateur | Aucune | Action admin | Admin | Maintenant | Inchangée | Rapport de bug | À terminer par admin |
 | Qualification stop à tout moment | `qualification_updated` | `not_relevant`, `do_not_contact`, `signed` | Toutes actions ouvertes | Aucune | Personne | Aucun | Résolue | Qualification | Stopper relances |
 | Conversation résolue manuellement | `conversation_resolved` | Utilisateur clôture | Toutes actions ouvertes | Aucune | Personne | Aucun | Résolue | Option note | Historiser la résolution |
 | Conversation rouverte manuellement | `conversation_reopened` | Utilisateur rouvre | Aucune | Action à choisir | Utilisateur courant ou responsable choisi | Maintenant ou planifié | Ouverte | Raison de réouverture | Éviter conversation ouverte sans action |
@@ -216,19 +221,19 @@ Déclencheur : message automatique envoyé par SchoolDrive/Twilio, aucun message
 
 Chaîne :
 
-1. `follow_up` Tanjona à +72h.
-2. `follow_up` Tanjona à +72h.
-3. `follow_up` Tanjona à +72h.
-4. `follow_up` Tanjona à +7j.
-5. `follow_up` Tanjona à +7j.
-6. `follow_up` Tanjona à +30j.
+1. `follow_up` Setter II à +72h.
+2. `follow_up` Setter II à +72h.
+3. `follow_up` Setter II à +72h.
+4. `follow_up` Setter II à +7j.
+5. `follow_up` Setter II à +7j.
+6. `follow_up` Setter II à +30j.
 7. Stop.
 
 Stop si : réponse entrante, `not_relevant`, `do_not_contact`, `signed`.
 
 ### Conversation Setter Sans Suite
 
-Déclencheur : Setter 1 a échangé, aucun RDV posé, plus d'échange depuis 72h.
+Déclencheur : Setter I a échangé, aucun RDV posé, plus d'échange depuis 72h.
 
 Même cadence que ci-dessus.
 
@@ -238,7 +243,7 @@ Stop si : réponse entrante, RDV setting, handoff closer, `not_relevant`, `do_no
 
 Déclencheur : qualification closer = `will_sign`.
 
-Même cadence que ci-dessus, portée par Tanjona.
+Même cadence que ci-dessus, portée par Setter II.
 
 Stop si : `signed`, réponse entrante nécessitant humain, `do_not_contact`, `not_relevant`.
 

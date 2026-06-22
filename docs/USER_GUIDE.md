@@ -58,7 +58,7 @@ Les actions principales sont : répondre au message, envoyer une relance, docume
 
 Une action peut être planifiée, ouverte, en cours, terminée, annulée ou bloquée. Quand elle est terminée, elle doit laisser une preuve : message WhatsApp envoyé, résultat d'appel, mini-note, qualification ou demande de modèle.
 
-Quand un appel est fixé, le cockpit crée une action future à l'heure du rendez-vous. Cette action ne signifie pas seulement "appeler" : elle signifie surtout **documenter le résultat de l'appel**. La mini-note est obligatoire. Elle apparaît ensuite dans le fil de conversation comme note interne, afin que la prochaine personne comprenne rapidement ce qui s'est passé et pourquoi la suite a été créée.
+Quand un appel est fixé, le cockpit crée une action future à l'heure du rendez-vous. Cette action ne signifie pas seulement "appeler" : elle signifie surtout **documenter le résultat de l'appel**. La mini-note est obligatoire. Elle apparaît ensuite dans le fil de conversation comme note interne, afin que la prochaine personne comprenne rapidement ce qui s'est passé et pourquoi la suite a été créée. Tant que l'appel est planifié, il reste visible dans la fiche et peut être déplacé ou annulé depuis l'onglet **Actions**.
 
 Dans l'onglet **Actions**, utilisez **Programmer / attribuer une action** pour créer une prochaine action standard : répondre, relancer, planifier un appel setting ou planifier un appel closing. Le cockpit demande toujours l'action concernée, le responsable, la date et une note. Le parcours affiché en haut de la fiche est mis à jour par ces actions et ne se modifie pas manuellement.
 
@@ -80,6 +80,8 @@ Le flux **Début de cours** est transversal : il ne dépend pas du moment où le
 
 La page **Pilotage** sert à régler les flux commerciaux avec l'équipe commerciale. Elle permet de définir les cours traités, les sessions de référence, les étapes de chaque flux et le template recommandé pour chaque étape. Ces réglages affectent seulement les nouvelles actions créées après enregistrement. Les actions déjà ouvertes ne sont pas recalculées automatiquement en V1.
 
+La page **Admin** contient aussi les actions admin et les garde-fous d'envoi. Les actions admin servent à traiter les bugs et les demandes de modèles. Les garde-fous limitent les envois WhatsApp pour éviter les envois trop rapprochés ou trop nombreux.
+
 ## Signaler un problème
 
-Le bouton **Bug** se trouve dans la barre latérale. Utilisez-le quand une action, une conversation, un statut, une relance ou un affichage vous semble incorrect. Décrivez ce que vous voyez et ce que vous attendiez. Le cockpit enregistre le signalement avec le contexte courant pour faciliter la vérification. Les signalements et les demandes de modèle sont traités par les admins dans les files dédiées **Modèles** et **Admin > Bugs & logs**.
+Le bouton **Bug** se trouve dans la barre latérale. Utilisez-le quand une action, une conversation, un statut, une relance ou un affichage vous semble incorrect. Décrivez ce que vous voyez et ce que vous attendiez. Le cockpit enregistre le signalement avec le contexte courant pour faciliter la vérification. Les signalements et les demandes de modèle créent une action admin, puis sont traités dans **Admin > Actions admin**, **Modèles** et **Admin > Bugs & logs**.

@@ -214,7 +214,7 @@ h1, h2, h3 {
   background: oklch(0.94 0.035 29);
 }
 
-.sc-badge-neutral {
+.sc-badge-muted {
   color: var(--sc-muted);
   background: oklch(0.97 0.006 250);
 }

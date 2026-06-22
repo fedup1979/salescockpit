@@ -43,8 +43,9 @@ PREMAPPING: dict[str, dict[str, list[str | None]]] = {
             "relance_abandon_projet",
         ],
         "setting_call_not_reached": [None, None, "relance_all_aide"],
+        "post_setting_undecided": ["relance_all_aide"],
         "closing_call_not_reached": [None, None, "all_2_closing_sans_etiquette"],
-        "post_call_undecided": ["all_2_closing_sans_etiquette"],
+        "post_closing_undecided": ["all_2_closing_sans_etiquette"],
         "closer_will_sign": [
             "tous_1_closing_va_signer",
             "mkt_fsm_ln_ac_02",
@@ -78,8 +79,9 @@ PREMAPPING: dict[str, dict[str, list[str | None]]] = {
             "relance_abandon_projet",
         ],
         "setting_call_not_reached": [None, None, "relance_all_aide"],
+        "post_setting_undecided": ["relance_all_aide"],
         "closing_call_not_reached": [None, None, "all_2_closing_sans_etiquette"],
-        "post_call_undecided": ["all_2_closing_sans_etiquette"],
+        "post_closing_undecided": ["all_2_closing_sans_etiquette"],
         "closer_will_sign": [
             "tous_1_closing_va_signer",
             "mkt_app_ln_ac_02",
@@ -113,8 +115,9 @@ PREMAPPING: dict[str, dict[str, list[str | None]]] = {
             "relance_abandon_projet",
         ],
         "setting_call_not_reached": [None, None, "relance_all_aide"],
+        "post_setting_undecided": ["relance_all_aide"],
         "closing_call_not_reached": [None, None, "all_2_closing_sans_etiquette"],
-        "post_call_undecided": ["all_2_closing_sans_etiquette"],
+        "post_closing_undecided": ["all_2_closing_sans_etiquette"],
         "closer_will_sign": [
             "tous_1_closing_va_signer",
             "mkt_as_ln_ac_02",

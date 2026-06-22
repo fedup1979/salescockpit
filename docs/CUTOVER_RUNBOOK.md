@@ -61,9 +61,9 @@ python scripts/schooldrive_replay_payloads.py payloads/schooldrive \
    - SchoolDrive links open correctly;
    - sent autoresponders appear in the thread;
    - queued autoresponders do not create follow-ups;
-   - a real AR changing to `sent` produces a new webhook and creates the Tanjona +72h follow-up;
+   - a real AR changing to `sent` produces a new webhook and creates the Setter II +72h follow-up;
    - archived SchoolDrive records are terminated;
-   - Tanjona +72h follow-ups exist only when expected.
+   - Setter II +72h follow-ups exist only when expected.
    - Admin > Flux can map a real Twilio template to each follow-up step and the Conversation tab shows the recommended template for a matching relance.
 
 6. Run the automated pre-cutover check on the droplet:

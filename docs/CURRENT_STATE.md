@@ -1,6 +1,6 @@
 # Current Project State
 
-Last updated: 2026-06-20 20:09 Europe/Zurich.
+Last updated: 2026-06-22 13:27 Europe/Zurich.
 
 This is the first document to read when resuming Sales Cockpit.
 
@@ -13,15 +13,16 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 - Latest checkpoint before hardening audit: `a02f10c`.
 - Latest deployed staging UI/API check: OK on commit `db6f03b`.
 - Latest deployed production cold check: OK on commit `db6f03b`, Twilio `mock`, no SchoolDrive/Front production traffic connected.
-- Latest local automated validation after this audit: `116 passed`, `compileall` OK, `git diff --check` OK, BOM scan clean.
+- Latest local automated validation after the V1 workflow update: `125 passed`, `compileall` OK.
 - Latest staging pre-cutover check before this audit: OK.
 - Staging Twilio mode: `mock`, no real WhatsApp send from Sales Cockpit.
 - Production Twilio mode: `mock`, prepared cold only.
 - SchoolDrive webhook ingestion: implemented and passing synthetic/replay checks.
-- Current SchoolDrive live gate: validate one fresh website form through AR `sent` snapshot and Tanjona +72h follow-up.
+- Current SchoolDrive live gate: validate one fresh website form through AR `sent` snapshot and Setter II +72h follow-up.
 - Front: read-only buffer foundation exists; Front is not a blocker for the Laura workflow review.
 - Go/no-go: good for Laura business review in staging; not yet GO for operational WhatsApp cutover.
 - Hardening completed locally after the checkpoint: app API token guard, mock webhook token guard, Twilio status regression guard, Twilio SID uniqueness, production seed without demo conversations, fake attachment uploader removed, documentation aligned.
+- Latest local V1 workflow update: `eligible` is now the default qualification; setting/closing indécis and no-show flows are distinct; call appointments can be rescheduled or cancelled; bug reports and template requests create admin actions; outbound WhatsApp safeguards are configurable in Admin.
 - Staging pre-cutover after deployment: OK, including API security and seed checks.
 - Production cold pre-cutover after deployment with `--allow-cold-prod`: OK, including API security, seed checks, and zero active workflow anomalies.
 
@@ -37,7 +38,9 @@ Sales Cockpit has now encoded the canonical workflow model:
 - `Flux`: configurable follow-up scenario and templates.
 - `Action`: concrete operational work item in the queue.
 
-Important new runtime rule: a prospect message during an already planned setting/closing call creates an urgent `reply` action for Mihary but does not cancel the planned call. Course-start relances do not interrupt planned calls.
+Important runtime rule: a prospect message during an already planned setting/closing call creates an urgent `reply` action for Setter I but does not cancel the planned call. Course-start relances do not interrupt planned calls.
+
+Latest local implementation status: code and documentation have been updated locally for the refined V1 model, but these changes must still be deployed to staging/prod before they are assumed live on DigitalOcean.
 
 ## Repositories And Environments
 
@@ -214,6 +217,13 @@ Validated:
 - Queued autoresponder snapshots do not create a follow-up.
 - Archived records resolve the conversation and close actions.
 - Duplicate and stale event handling works.
+
+Implemented locally for the refined V1:
+
+- SchoolDrive signed signal stops follow-ups and marks the lead `signed`.
+- SchoolDrive do-not-contact / opt-out signal sets contact status `do_not_contact`, closes follow-ups, and stores the source note.
+- SchoolDrive course/session-full signal stops follow-ups and creates a Setter I review action to propose another session.
+- These fields still need payload confirmation from SchoolDrive before production reliance.
 
 Important timestamp decision:
 

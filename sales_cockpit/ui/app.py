@@ -38,6 +38,8 @@ from sales_cockpit.store import (
     add_manual_note,
     assign_standard_next_action,
     authenticate,
+    cancel_call_action_without_replacement,
+    complete_admin_action,
     complete_action_with_workflow,
     create_and_submit_twilio_template,
     create_bug_report,
@@ -51,10 +53,12 @@ from sales_cockpit.store import (
     get_conversation,
     get_integration_readiness,
     get_next_action_for_lead,
+    get_outbound_safeguards,
     build_front_cutover_plan,
     get_recommended_template_for_action,
     get_template,
     list_actions_for_lead,
+    list_admin_actions,
     list_conversations,
     list_course_categories,
     list_course_default_sessions,
@@ -70,6 +74,7 @@ from sales_cockpit.store import (
     list_user_activity_log,
     list_users,
     reactivate_sequence_step,
+    reschedule_call_action,
     send_freeform_message,
     send_template_message,
     set_conversation_status,
@@ -79,6 +84,7 @@ from sales_cockpit.store import (
     upsert_sequence_step,
     upsert_sequence_template_mapping,
     update_template_request_status,
+    update_outbound_safeguards,
     update_lead_qualification,
     update_temporary_identity,
 )
@@ -98,7 +104,7 @@ ACTION_OUTCOMES = {
     "reply": ["reply_no_appointment", "setting_booked", "closing_booked", "not_relevant", "do_not_contact"],
     "follow_up": ["follow_up_sent", "template_missing", "sequence_completed_no_reply"],
     "setting_call": ["to_closing", "not_reached", "not_ready", "not_relevant", "do_not_contact"],
-    "closing_call": ["signed", "will_sign", "not_reached", "undecided", "not_relevant"],
+    "closing_call": ["signed", "will_sign", "not_reached", "undecided", "not_relevant", "do_not_contact"],
     "contact_review": ["maintain_do_not_contact", "lift_do_not_contact"],
     "other": ["done"],
 }
@@ -132,17 +138,19 @@ SEQUENCE_STEP_OFFSET_DIRECTION_LABELS = {
 PILOTAGE_SEQUENCE_ORDER = {
     "lead_no_reply": 10,
     "setter_no_next_step": 20,
-    "setting_call_not_reached": 30,
-    "post_call_undecided": 40,
-    "closing_call_not_reached": 50,
-    "closer_will_sign": 60,
-    "course_start": 70,
+    "post_setting_undecided": 30,
+    "setting_call_not_reached": 40,
+    "post_closing_undecided": 50,
+    "closing_call_not_reached": 60,
+    "closer_will_sign": 70,
+    "course_start": 80,
 }
 PILOTAGE_SEQUENCE_OWNER_LABELS = {
     "lead_no_reply": "Setter II",
     "setter_no_next_step": "Setter II",
+    "post_setting_undecided": "Setter II",
     "setting_call_not_reached": "Setter I, puis Setter II",
-    "post_call_undecided": "Setter II",
+    "post_closing_undecided": "Setter II",
     "closing_call_not_reached": "Closer, puis Setter II",
     "closer_will_sign": "Setter II",
     "course_start": "Setter II",
@@ -173,6 +181,22 @@ PILOTAGE_CONFLICT_RULES = [
         "Règle": "Toutes les actions ouvertes ou futures liées à la conversation sont arrêtées.",
     },
     {
+        "Situation": "Signature confirmée par SchoolDrive",
+        "Règle": "La donnée SchoolDrive gagne : le prospect passe en A signé, les relances sont arrêtées et la conversation est clôturée.",
+    },
+    {
+        "Situation": "Opt-out ou Ne pas relancer transmis par SchoolDrive",
+        "Règle": "Sales Cockpit applique Ne plus contacter, bloque les envois et clôt les relances, avec une note indiquant la provenance du signal.",
+    },
+    {
+        "Situation": "Cours ou session complète",
+        "Règle": "Les relances automatiques s'arrêtent. Setter I reçoit une action pour proposer une autre session au prospect.",
+    },
+    {
+        "Situation": "Garde-fous d'envoi",
+        "Règle": "Le kill switch WhatsApp et les plafonds par prospect/jour, prospect/semaine, global/jour et délai minimal entre relances bloquent l'envoi avant Twilio.",
+    },
+    {
         "Situation": "Conversation active ou clôturée",
         "Règle": "Une conversation reste active tant qu'il existe une action à traiter maintenant ou une action en suspens prévue plus tard. Elle est clôturée quand il n'y a plus rien à faire : signature, non pertinent, ne plus contacter ou fin de tous les flux de relance.",
     },
@@ -195,16 +219,28 @@ PILOTAGE_STATE_ROWS = [
         "Suite normale": "Fixer un appel setting, fixer directement un appel closing, ou relancer si l'échange s'arrête.",
     },
     {
-        "État": "Appel setting prévu",
+        "État": "RDV setting agendé",
         "Code": "appointment_booked",
-        "Sens": "Un rendez-vous de setting est prévu.",
+        "Sens": "Un rendez-vous de setting est prévu à une date et une minute précises.",
         "Suite normale": "Documenter l'appel setting quand le moment de l'appel arrive.",
     },
     {
-        "État": "Appel closing",
+        "État": "RDV closing agendé",
         "Code": "closing",
-        "Sens": "Le prospect est passé au closer ou un appel closing est prévu.",
+        "Sens": "Un rendez-vous de closing est prévu pour le closer.",
         "Suite normale": "Documenter l'appel closing puis décider : signé, va signer, indécis, non joint ou non pertinent.",
+    },
+    {
+        "État": "Appel setting à documenter",
+        "Code": "setting_call_due",
+        "Sens": "Le moment prévu de l'appel setting est arrivé.",
+        "Suite normale": "Setter I appelle, indique si le prospect a été joint, ajoute une note, puis choisit la suite.",
+    },
+    {
+        "État": "Appel closing à documenter",
+        "Code": "closing_call_due",
+        "Sens": "Le moment prévu de l'appel closing est arrivé.",
+        "Suite normale": "Closer appelle, indique si le prospect a été joint, ajoute une note, puis choisit la suite.",
     },
     {
         "État": "Va signer",
@@ -262,7 +298,7 @@ DISPLAY_LABELS = {
     "lead": "Lead",
     "presubscription": "Préinscription",
     "prospect": "Prospect",
-    "neutral": "Neutre",
+    "neutral": "Éligible",
     "eligible": "Éligible",
     "not_relevant": "Non pertinent",
     "will_sign": "Va signer",
@@ -294,6 +330,10 @@ DISPLAY_LABELS = {
     "call": "Appeler",
     "closing_call": "Documenter appel closing",
     "setting_call": "Documenter appel setting",
+    "to_closing": "Passer au closing",
+    "not_reached": "Non joint",
+    "not_ready": "Indécis après setting",
+    "undecided": "Indécis",
     "contact_review": "Revue contact",
     "other": "Autre",
     "assignee_name": "Responsable",
@@ -753,7 +793,12 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
                 key=f"reopen_assignee_{conv['id']}",
             )
             reopen_date = st.date_input("Date", value=datetime.now().date(), key=f"reopen_date_{conv['id']}")
-            reopen_time = st.time_input("Heure", value=time(9, 0), key=f"reopen_time_{conv['id']}")
+            reopen_time = st.time_input(
+                "Heure",
+                value=time(9, 0),
+                step=timedelta(minutes=1),
+                key=f"reopen_time_{conv['id']}",
+            )
             reason = st.text_area("Raison de réactivation", height=80, key=f"reopen_reason_{conv['id']}")
             submitted = st.button(
                 "Réactiver",
@@ -1040,6 +1085,7 @@ def render_reply_send_plan_controls(
         appointment_time = st.time_input(
             "Heure",
             value=time(9, 0),
+            step=timedelta(minutes=1),
             key=f"{key_prefix}_reply_time",
         )
         call_label = "setting" if outcome == "setting_booked" else "closing"
@@ -1339,7 +1385,7 @@ def render_next_action_summary(conv: dict) -> None:
             <div class="sc-row-meta">{escape_html(due)}</div>
           </div>
           <div class="sc-action-badges">
-            <span class="sc-badge sc-badge-neutral">{escape_html(assignee)}</span>
+            <span class="sc-badge sc-badge-muted">{escape_html(assignee)}</span>
           </div>
         </div>
         """,
@@ -1380,7 +1426,7 @@ def action_consequence(action_type: str, outcome: str) -> str:
         ("closing_call", "undecided"): "Le système crée une relance Setter II à +72h.",
         ("closing_call", "not_relevant"): "Clôture la conversation et annule les relances futures.",
         ("contact_review", "maintain_do_not_contact"): "Maintient le blocage Ne plus contacter et clôture la conversation.",
-        ("contact_review", "lift_do_not_contact"): "Le système lève le blocage et crée une action Répondre pour Setter 1.",
+        ("contact_review", "lift_do_not_contact"): "Le système lève le blocage et crée une action Répondre pour Setter I.",
     }
     return consequences.get((action_type, outcome), "Le système appliquera la suite prévue par la règle métier.")
 
@@ -1440,14 +1486,31 @@ def render_whatsapp_action_guidance(user: dict, conv: dict, action: dict) -> Non
 
 def render_call_action_form(user: dict, action: dict) -> None:
     users = list_users()
-    outcomes = ACTION_OUTCOMES[action["type"]]
+    current_dt = parse_dt(action.get("due_at")) or utc_now()
+    current_date = current_dt.date()
+    current_time = current_dt.time().replace(second=0, microsecond=0)
+    reached_outcomes = [
+        value for value in ACTION_OUTCOMES[action["type"]]
+        if value != "not_reached"
+    ]
     with st.form(f"call_action_form_{action['id']}"):
-        outcome = st.selectbox(
-            "Résultat de l'appel",
-            outcomes,
-            format_func=labelize,
-            key=f"call_outcome_{action['id']}",
+        reached = st.radio(
+            "Avez-vous pu joindre le prospect ?",
+            ["yes", "no"],
+            horizontal=True,
+            format_func=lambda value: "Oui" if value == "yes" else "Non",
+            key=f"call_reached_{action['id']}",
         )
+        if reached == "no":
+            outcome = "not_reached"
+            st.info("Le système créera le rappel d'appel prévu, puis une relance Setter II si les rappels sont épuisés.")
+        else:
+            outcome = st.selectbox(
+                "Résultat de l'appel",
+                reached_outcomes,
+                format_func=labelize,
+                key=f"call_outcome_{action['id']}",
+            )
         st.caption(action_consequence(action["type"], outcome))
         note = st.text_area("Note d'appel obligatoire", height=100, key=f"call_note_{action['id']}")
         assigned_to_user_id = None
@@ -1463,10 +1526,18 @@ def render_call_action_form(user: dict, action: dict) -> None:
                 )
                 assigned_to_user_id = closer["id"]
             next_date = st.date_input("Date du rendez-vous", value=datetime.now().date(), key=f"call_date_{action['id']}")
-            next_time = st.time_input("Heure", value=time(9, 0), key=f"call_time_{action['id']}")
+            next_time = st.time_input(
+                "Heure",
+                value=time(9, 0),
+                step=timedelta(minutes=1),
+                key=f"call_time_{action['id']}",
+            )
             next_due_at = local_due_at(next_date, next_time)
-        submitted = st.form_submit_button("Enregistrer le résultat")
+        submitted = st.form_submit_button("Enregistrer le résultat", disabled=not note.strip())
     if submitted:
+        if not note.strip():
+            st.error("Une note d'appel est obligatoire.")
+            return
         ok, message = complete_action_with_workflow(
             action["id"],
             user["id"],
@@ -1478,6 +1549,53 @@ def render_call_action_form(user: dict, action: dict) -> None:
         show_result(ok, message)
         if ok:
             st.rerun()
+
+    with st.expander("Déplacer ou annuler le RDV", expanded=False):
+        with st.form(f"reschedule_call_form_{action['id']}"):
+            next_date = st.date_input(
+                "Nouvelle date",
+                value=current_date,
+                key=f"reschedule_date_{action['id']}",
+            )
+            next_time = st.time_input(
+                "Nouvelle heure",
+                value=current_time,
+                step=timedelta(minutes=1),
+                key=f"reschedule_time_{action['id']}",
+            )
+            note = st.text_area(
+                "Note de déplacement obligatoire",
+                height=80,
+                key=f"reschedule_note_{action['id']}",
+            )
+            submitted = st.form_submit_button("Déplacer le RDV", disabled=not note.strip())
+        if submitted:
+            ok, message = reschedule_call_action(
+                action["id"],
+                user["id"],
+                local_due_at(next_date, next_time),
+                note,
+            )
+            show_result(ok, message)
+            if ok:
+                st.rerun()
+
+        with st.form(f"cancel_call_form_{action['id']}"):
+            note = st.text_area(
+                "Note d'annulation obligatoire",
+                height=80,
+                key=f"cancel_call_note_{action['id']}",
+            )
+            submitted = st.form_submit_button("Annuler sans nouveau RDV", disabled=not note.strip())
+        if submitted:
+            ok, message = cancel_call_action_without_replacement(
+                action["id"],
+                user["id"],
+                note,
+            )
+            show_result(ok, message)
+            if ok:
+                st.rerun()
 
 
 def render_contact_review_action(user: dict, action: dict) -> None:
@@ -1506,6 +1624,26 @@ def render_contact_review_action(user: dict, action: dict) -> None:
             st.rerun()
 
 
+def render_other_action_form(user: dict, action: dict) -> None:
+    st.info("Action de revue humaine. Ajoutez une note indiquant ce qui a été fait, puis marquez l'action terminée.")
+    with st.form(f"other_action_form_{action['id']}"):
+        note = st.text_area("Note obligatoire", height=90, key=f"other_action_note_{action['id']}")
+        submitted = st.form_submit_button("Marquer l'action terminée", disabled=not note.strip())
+    if submitted:
+        if not note.strip():
+            st.error("Ajoutez une note pour terminer cette action.")
+            return
+        ok, message = complete_action_with_workflow(
+            action["id"],
+            user["id"],
+            "done",
+            note=note,
+        )
+        show_result(ok, message)
+        if ok:
+            st.rerun()
+
+
 def render_manual_completion_advanced(user: dict, action: dict | None) -> None:
     if not action or action.get("type") not in {"reply", "follow_up"}:
         return
@@ -1526,7 +1664,12 @@ def render_manual_completion_advanced(user: dict, action: dict | None) -> None:
             assignee_options = reply_call_assignee_options(users, outcome)
             assignee = st.selectbox("Responsable de l'appel", assignee_options, format_func=format_user, key=f"manual_complete_assignee_{action['id']}")
             next_date = st.date_input("Date du rendez-vous", value=datetime.now().date(), key=f"manual_complete_date_{action['id']}")
-            next_time = st.time_input("Heure", value=time(9, 0), key=f"manual_complete_time_{action['id']}")
+            next_time = st.time_input(
+                "Heure",
+                value=time(9, 0),
+                step=timedelta(minutes=1),
+                key=f"manual_complete_time_{action['id']}",
+            )
             next_due_at = local_due_at(next_date, next_time)
             assigned_to_user_id = assignee["id"]
         submitted = st.form_submit_button("Enregistrer hors cockpit")
@@ -1589,6 +1732,7 @@ def render_standard_action_planner(user: dict, conv: dict, users: list[dict], ac
     action_time = st.time_input(
         "Heure",
         value=time(9, 0),
+        step=timedelta(minutes=1),
         key=f"standard_action_time_{conv['id']}",
     )
     note = st.text_area(
@@ -1644,7 +1788,7 @@ def render_next_action_box(user: dict, conv: dict) -> None:
         elif action["type"] == "contact_review":
             render_contact_review_action(user, action)
         else:
-            st.info("Action personnalisée. Utilisez les actions avancées pour la documenter ou créer la suite.")
+            render_other_action_form(user, action)
     elif conv["status"] == "open":
         st.warning("Anomalie : cette conversation est ouverte sans prochaine action.")
         st.caption("Programmez immédiatement une action principale avec le bloc ci-dessous.")
@@ -3468,7 +3612,16 @@ def render_pilotage_simulator() -> None:
             "Cette date de début est déjà passée. Le flux lié au début du cours ne devrait pas être lancé sur cette session ; configure plutôt la prochaine session de référence."
         )
 
-    selected_sequences = ["lead_no_reply", "setter_no_next_step", "post_call_undecided", "closer_will_sign", "course_start"]
+    selected_sequences = [
+        "lead_no_reply",
+        "setter_no_next_step",
+        "post_setting_undecided",
+        "setting_call_not_reached",
+        "post_closing_undecided",
+        "closing_call_not_reached",
+        "closer_will_sign",
+        "course_start",
+    ]
     for code in selected_sequences:
         st.markdown(f"#### {label_sequence_code(code)}")
         rows = build_simulated_timeline(code, start_date)
@@ -3704,7 +3857,18 @@ def render_admin(user: dict) -> None:
     if user["role"] != "admin":
         st.warning("Accès lecture seul. Les réglages sont réservés aux admins.")
 
-    tabs = st.tabs(["État", "Utilisateurs", "Règles métier", "Workflow", "Flux", "Templates", "Bugs & logs", "Intégrations"])
+    tabs = st.tabs([
+        "État",
+        "Utilisateurs",
+        "Règles métier",
+        "Workflow",
+        "Flux",
+        "Templates",
+        "Actions admin",
+        "Garde-fous",
+        "Bugs & logs",
+        "Intégrations",
+    ])
     with tabs[0]:
         render_admin_status_tab()
 
@@ -3859,7 +4023,7 @@ def render_admin(user: dict) -> None:
         st.subheader("Statuts de demande de modèle")
         st.dataframe(TEMPLATE_REQUEST_STATUSES, hide_index=True, use_container_width=True)
         st.subheader("Demandes de modèles")
-        st.caption("File admin dédiée : ces demandes remplacent une action Admin séparée en V1.")
+        st.caption("Chaque demande crée aussi une action Admin dans l'onglet Actions admin.")
         requests = list_template_requests()
         if requests:
             st.dataframe(requests, hide_index=True, use_container_width=True, height=320)
@@ -3885,8 +4049,14 @@ def render_admin(user: dict) -> None:
             st.info("Aucune demande de modèle.")
 
     with tabs[6]:
+        render_admin_actions_tab(user)
+
+    with tabs[7]:
+        render_admin_safeguards_tab(user)
+
+    with tabs[8]:
         st.subheader("Signalements Bug")
-        st.caption("File admin dédiée : chaque signalement conserve le contexte pour analyse avec les logs.")
+        st.caption("Chaque signalement conserve le contexte et crée aussi une action Admin terminable.")
         bug_reports = list_bug_reports()
         if bug_reports:
             st.dataframe(bug_reports, hide_index=True, use_container_width=True, height=320)
@@ -3896,7 +4066,7 @@ def render_admin(user: dict) -> None:
         st.caption("Derniers événements métier, connexions et signalements. Les événements lead détaillés restent dans `lead_events`.")
         st.dataframe(list_user_activity_log(200), hide_index=True, use_container_width=True, height=420)
 
-    with tabs[7]:
+    with tabs[9]:
         st.subheader("Intégrations")
         st.markdown(
             """
@@ -3990,6 +4160,108 @@ def render_admin(user: dict) -> None:
             st.dataframe(plan_rows, hide_index=True, use_container_width=True, height=260)
         else:
             st.info("Aucune ligne à planifier.")
+
+
+def render_admin_actions_tab(user: dict) -> None:
+    st.subheader("Actions admin")
+    st.caption("File de travail pour bugs, demandes de modèles et revues techniques. Une action terminée reste historisée.")
+    open_actions = list_admin_actions("open")
+    if open_actions:
+        rows = [
+            {
+                "ID": item["id"],
+                "Type": labelize(item["type"]),
+                "Titre": item["title"],
+                "Prospect": lead_display_name(item),
+                "Statut": labelize(item["status"]),
+                "Assignée à": item.get("assigned_to_name") or "Admin",
+                "Échéance": format_due(item.get("due_at")),
+                "Créée": format_dt(item.get("created_at")),
+            }
+            for item in open_actions
+        ]
+        st.dataframe(rows, hide_index=True, use_container_width=True, height=260)
+        with st.form("complete_admin_action_form"):
+            action = st.selectbox(
+                "Action à terminer",
+                open_actions,
+                format_func=lambda item: f"#{item['id']} · {item['title']}",
+            )
+            outcome = st.text_input("Résolution", value="Traité")
+            submitted = st.form_submit_button("Marquer terminée", disabled=not outcome.strip())
+        if submitted:
+            ok, message = complete_admin_action(action["id"], user["id"], outcome.strip())
+            show_result(ok, message)
+            if ok:
+                st.rerun()
+    else:
+        st.info("Aucune action admin ouverte.")
+
+    with st.expander("Historique des actions admin", expanded=False):
+        history = list_admin_actions("all")
+        if history:
+            st.dataframe(history, hide_index=True, use_container_width=True, height=320)
+        else:
+            st.caption("Aucune action admin historisée.")
+
+
+def render_admin_safeguards_tab(user: dict) -> None:
+    st.subheader("Garde-fous WhatsApp")
+    st.caption("Ces valeurs bloquent l'envoi avant Twilio. Elles protègent contre un emballement de relances ou une erreur de configuration.")
+    safeguards = get_outbound_safeguards()
+    with st.form("outbound_safeguards_form"):
+        global_block = st.checkbox(
+            "Bloquer tous les envois WhatsApp depuis Sales Cockpit",
+            value=bool(safeguards["outbound_global_block"]),
+        )
+        cols = st.columns(4)
+        with cols[0]:
+            per_lead_day = st.number_input(
+                "Max / prospect / jour",
+                min_value=1,
+                max_value=50,
+                value=int(safeguards["outbound_max_per_lead_day"]),
+                step=1,
+            )
+        with cols[1]:
+            per_lead_week = st.number_input(
+                "Max / prospect / semaine",
+                min_value=1,
+                max_value=100,
+                value=int(safeguards["outbound_max_per_lead_week"]),
+                step=1,
+            )
+        with cols[2]:
+            global_day = st.number_input(
+                "Max global / jour",
+                min_value=1,
+                max_value=5000,
+                value=int(safeguards["outbound_max_global_day"]),
+                step=10,
+            )
+        with cols[3]:
+            min_hours = st.number_input(
+                "Délai min relances (h)",
+                min_value=1,
+                max_value=168,
+                value=int(safeguards["outbound_min_followup_hours"]),
+                step=1,
+            )
+        submitted = st.form_submit_button("Enregistrer les garde-fous")
+    if submitted:
+        ok, message = update_outbound_safeguards(
+            user["id"],
+            {
+                "outbound_global_block": global_block,
+                "outbound_max_per_lead_day": per_lead_day,
+                "outbound_max_per_lead_week": per_lead_week,
+                "outbound_max_global_day": global_day,
+                "outbound_min_followup_hours": min_hours,
+            },
+        )
+        show_result(ok, message)
+        if ok:
+            st.rerun()
 
 
 def render_admin_status_tab() -> None:

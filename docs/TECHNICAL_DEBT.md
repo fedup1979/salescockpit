@@ -99,20 +99,43 @@ Add a global scheduling/recalculation workflow:
 
 ### V1 Implemented Guardrail
 
-Template requests and bug reports are handled as dedicated admin queues:
+Template requests and bug reports now create explicit rows in `admin_actions`:
 
-- template requests appear in `Modèles` and `Admin > Templates`;
-- bug reports appear in `Admin > Bugs & logs`;
-- both keep the source context needed for review.
+- template requests appear in `Modèles` and `Admin > Templates`, and create an admin action that can be completed;
+- bug reports appear in `Admin > Bugs & logs`, and create an admin action that can be completed;
+- both keep the source context needed for review and are visible in `Admin > Actions admin`.
 
-They do not create a standard `tasks` row in V1. This is deliberate: commercial tasks are lead/conversation-based, while a bug report can be global and a template request can be a support item rather than the prospect's next commercial action. Creating fake prospect tasks for admins would make reporting look consistent but would blur the workflow model.
+They deliberately do not create a standard commercial `tasks` row. Commercial tasks are lead/conversation-based, while a bug report can be global and a template request can be a support item rather than the prospect's next commercial action. The dedicated `admin_actions` table keeps admin workload visible without blurring the workflow model.
 
 ### V2 Debt
 
-If admin workload needs to be managed like operational work, add a proper admin-action layer instead of overloading commercial tasks:
+Extend the existing admin-action layer if admin workload needs richer operations:
 
-- either add an `admin_actions` table for global support work;
-- or generalize `tasks.lead_id` to be nullable and add a clear `scope` field (`commercial`, `admin`, `system`);
-- expose admin actions in a dedicated queue;
-- link template requests, bug reports, Twilio approval checks, and integration incidents to those admin actions;
-- preserve the current distinction between prospect next actions and internal support work.
+- assignment to a specific admin;
+- due dates and priorities;
+- filters by kind, status, and source page;
+- Twilio approval polling incidents;
+- integration incidents;
+- richer audit trail for reopen/reassign/close.
+
+Keep the current distinction between prospect next actions and internal support work.
+
+## Appointment Reminders
+
+### V1 Implemented Guardrail
+
+Setting and closing appointments are visible as future call-documentation actions. When the due time arrives, the task becomes actionable and the user documents whether the prospect was reached.
+
+If the prospect is not reached, V1 creates call retry actions at roughly +2h and +24h before switching to the appropriate no-show flux.
+
+### V2 Debt
+
+Add optional WhatsApp reminders before planned appointments:
+
+- J-1 reminder when the appointment is more than 24h away;
+- H-1 reminder when the appointment is more than 1h away;
+- no reminder if the appointment is too soon;
+- cancellation when the appointment is moved, cancelled, or replaced;
+- template mapping by course, role, and appointment type.
+
+These reminders must never override the appointment itself.

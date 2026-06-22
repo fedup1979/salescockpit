@@ -199,6 +199,34 @@ def create_bug_report(
                 now,
             ),
         )
+        admin_action_id = _ensure_admin_action(
+            conn,
+            "bug_report",
+            f"Traiter le bug : {title}",
+            description,
+            conversation_id=conversation_id,
+            task_id=action_id,
+            bug_report_id=int(cursor.lastrowid),
+            created_by_user_id=user_id,
+            metadata={"page": page, "severity": severity},
+        )
+        if admin_action_id:
+            conn.execute(
+                """
+                INSERT INTO user_activity_log (
+                    user_id, event_type, entity_type, entity_id,
+                    conversation_id, action_id, metadata_json, created_at
+                ) VALUES (?, 'admin_action_created', 'admin_action', ?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    admin_action_id,
+                    conversation_id,
+                    action_id,
+                    json.dumps({"source": "bug_report", "bug_report_id": int(cursor.lastrowid)}, ensure_ascii=False),
+                    now,
+                ),
+            )
     return True, "Signalement enregistré."
 
 
@@ -249,6 +277,238 @@ def list_user_activity_log(limit: int = 200) -> list[dict[str, Any]]:
             (limit,),
         ).fetchall()
     return rows_to_dicts(rows)
+
+
+ADMIN_ACTION_OPEN_STATUSES = {"open", "in_progress", "blocked"}
+SAFEGUARD_DEFAULTS = {
+    "outbound_global_block": "false",
+    "outbound_max_per_lead_day": "3",
+    "outbound_max_per_lead_week": "8",
+    "outbound_max_global_day": "200",
+    "outbound_min_followup_hours": "24",
+}
+
+
+def _admin_user_id(conn: Any) -> int | None:
+    row = conn.execute(
+        """
+        SELECT id
+        FROM users
+        WHERE role = 'admin' AND active = 1
+        ORDER BY id
+        LIMIT 1
+        """
+    ).fetchone()
+    return int(row["id"]) if row else None
+
+
+def _ensure_admin_action(
+    conn: Any,
+    action_type: str,
+    title: str,
+    description: str | None = None,
+    lead_id: int | None = None,
+    conversation_id: int | None = None,
+    task_id: int | None = None,
+    template_request_id: int | None = None,
+    bug_report_id: int | None = None,
+    created_by_user_id: int | None = None,
+    assigned_to_user_id: int | None = None,
+    due_at: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> int | None:
+    filters = ["type = ?", "status IN ('open', 'in_progress', 'blocked')"]
+    params: list[Any] = [action_type]
+    unique_fields = {
+        "template_request_id": template_request_id,
+        "bug_report_id": bug_report_id,
+        "task_id": task_id if action_type not in {"template_request", "bug_report"} else None,
+        "lead_id": lead_id if action_type in {"course_full_review", "default_session_review"} else None,
+    }
+    for field, value in unique_fields.items():
+        if value is not None:
+            filters.append(f"{field} = ?")
+            params.append(value)
+    if len(filters) > 2:
+        existing = conn.execute(
+            f"SELECT id FROM admin_actions WHERE {' AND '.join(filters)} LIMIT 1",
+            params,
+        ).fetchone()
+        if existing:
+            return int(existing["id"])
+
+    now = iso_utc()
+    assignee_id = assigned_to_user_id or _admin_user_id(conn)
+    if not assignee_id:
+        return None
+    cursor = conn.execute(
+        """
+        INSERT INTO admin_actions (
+            type, title, description, status, lead_id, conversation_id, task_id,
+            template_request_id, bug_report_id, assigned_to_user_id,
+            created_by_user_id, due_at, metadata_json, created_at, updated_at
+        ) VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            action_type,
+            title,
+            description,
+            lead_id,
+            conversation_id,
+            task_id,
+            template_request_id,
+            bug_report_id,
+            assignee_id,
+            created_by_user_id,
+            due_at or now,
+            json.dumps(metadata or {}, ensure_ascii=False),
+            now,
+            now,
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
+def list_admin_actions(status: str = "open") -> list[dict[str, Any]]:
+    filters: list[str] = []
+    params: list[Any] = []
+    if status == "open":
+        filters.append("aa.status IN ('open', 'in_progress', 'blocked')")
+    elif status != "all":
+        filters.append("aa.status = ?")
+        params.append(status)
+    where = f"WHERE {' AND '.join(filters)}" if filters else ""
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT
+                aa.*,
+                assignee.full_name AS assigned_to_name,
+                creator.full_name AS created_by_name,
+                l.first_name,
+                l.last_name,
+                tr.status AS template_request_status,
+                br.status AS bug_report_status
+            FROM admin_actions aa
+            LEFT JOIN users assignee ON assignee.id = aa.assigned_to_user_id
+            LEFT JOIN users creator ON creator.id = aa.created_by_user_id
+            LEFT JOIN leads l ON l.id = aa.lead_id
+            LEFT JOIN template_requests tr ON tr.id = aa.template_request_id
+            LEFT JOIN bug_reports br ON br.id = aa.bug_report_id
+            {where}
+            ORDER BY
+                CASE aa.status
+                    WHEN 'open' THEN 0
+                    WHEN 'in_progress' THEN 1
+                    WHEN 'blocked' THEN 2
+                    WHEN 'done' THEN 3
+                    ELSE 4
+                END,
+                datetime(coalesce(aa.due_at, aa.created_at)) ASC,
+                aa.id DESC
+            """,
+            params,
+        ).fetchall()
+    return rows_to_dicts(rows)
+
+
+def complete_admin_action(action_id: int, user_id: int, outcome: str = "done") -> tuple[bool, str]:
+    now = iso_utc()
+    with connect() as conn:
+        ok, message = _require_admin_user(conn, user_id)
+        if not ok:
+            return False, message
+        action = row_to_dict(
+            conn.execute("SELECT * FROM admin_actions WHERE id = ?", (action_id,)).fetchone()
+        )
+        if not action:
+            return False, "Action admin introuvable."
+        if action.get("status") == "done":
+            return True, "Action admin déjà terminée."
+        conn.execute(
+            """
+            UPDATE admin_actions
+            SET status = 'done', outcome = ?, completed_by_user_id = ?,
+                completed_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (outcome, user_id, now, now, action_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO user_activity_log (
+                user_id, event_type, entity_type, entity_id,
+                lead_id, conversation_id, action_id, metadata_json, created_at
+            ) VALUES (?, 'admin_action_completed', 'admin_action', ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                action_id,
+                action.get("lead_id"),
+                action.get("conversation_id"),
+                action.get("task_id"),
+                json.dumps({"type": action.get("type"), "outcome": outcome}, ensure_ascii=False),
+                now,
+            ),
+        )
+    return True, "Action admin terminée."
+
+
+def get_outbound_safeguards() -> dict[str, Any]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT key, value
+            FROM app_metadata
+            WHERE key LIKE 'safeguard_%'
+            """
+        ).fetchall()
+    values = dict(SAFEGUARD_DEFAULTS)
+    for row in rows:
+        key = str(row["key"]).replace("safeguard_", "", 1)
+        values[key] = row["value"]
+    return {
+        "outbound_global_block": str(values["outbound_global_block"]).lower() == "true",
+        "outbound_max_per_lead_day": int(values["outbound_max_per_lead_day"]),
+        "outbound_max_per_lead_week": int(values["outbound_max_per_lead_week"]),
+        "outbound_max_global_day": int(values["outbound_max_global_day"]),
+        "outbound_min_followup_hours": int(values["outbound_min_followup_hours"]),
+    }
+
+
+def update_outbound_safeguards(user_id: int, values: dict[str, Any]) -> tuple[bool, str]:
+    parsed = {
+        "outbound_global_block": "true" if bool(values.get("outbound_global_block")) else "false",
+        "outbound_max_per_lead_day": str(max(1, int(values.get("outbound_max_per_lead_day") or 3))),
+        "outbound_max_per_lead_week": str(max(1, int(values.get("outbound_max_per_lead_week") or 8))),
+        "outbound_max_global_day": str(max(1, int(values.get("outbound_max_global_day") or 200))),
+        "outbound_min_followup_hours": str(max(1, int(values.get("outbound_min_followup_hours") or 24))),
+    }
+    now = iso_utc()
+    with connect() as conn:
+        ok, message = _require_admin_user(conn, user_id)
+        if not ok:
+            return False, message
+        for key, value in parsed.items():
+            conn.execute(
+                """
+                INSERT INTO app_metadata (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                (f"safeguard_{key}", value, now),
+            )
+        conn.execute(
+            """
+            INSERT INTO user_activity_log (
+                user_id, event_type, entity_type, metadata_json, created_at
+            ) VALUES (?, 'outbound_safeguards_updated', 'settings', ?, ?)
+            """,
+            (user_id, json.dumps(parsed, ensure_ascii=False), now),
+        )
+    return True, "Garde-fous enregistrés."
 
 
 def get_integration_readiness() -> dict[str, Any]:
@@ -750,17 +1010,24 @@ def ingest_schooldrive_snapshot(envelope: dict[str, Any]) -> dict[str, Any]:
                 archive_reason=data.get("archive_reason"),
             )
         else:
-            _ensure_initial_schooldrive_followup(
+            skip_automatic_followups = _apply_schooldrive_business_signals(
                 conn,
                 lead_id=lead_id,
                 conversation_id=conversation_id,
+                data=data,
             )
-            if _latest_sent_schooldrive_autoresponder_at(conn, lead_id):
-                _ensure_course_start_followup(
+            if not skip_automatic_followups:
+                _ensure_initial_schooldrive_followup(
                     conn,
                     lead_id=lead_id,
                     conversation_id=conversation_id,
                 )
+                if _latest_sent_schooldrive_autoresponder_at(conn, lead_id):
+                    _ensure_course_start_followup(
+                        conn,
+                        lead_id=lead_id,
+                        conversation_id=conversation_id,
+                    )
 
         conn.execute(
             """
@@ -935,7 +1202,7 @@ def _upsert_schooldrive_lead(
                 identity_status, identity_review_note, identity_candidates_json,
                 last_schooldrive_sync_at, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'schooldrive_webhook', ?,
-                'neutral', 'contact_allowed', 'new', 'warm',
+                'eligible', 'contact_allowed', 'new', 'warm',
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -1479,6 +1746,225 @@ def _apply_schooldrive_archive(
         None,
         f"Archivé dans SchoolDrive : {reason}",
         now,
+    )
+
+
+def _apply_schooldrive_business_signals(
+    conn: Any,
+    lead_id: int,
+    conversation_id: int,
+    data: dict[str, Any],
+) -> bool:
+    now = iso_utc()
+    signed, signed_source = _schooldrive_signed_signal(data)
+    if signed:
+        _complete_open_actions_for_lead(
+            conn,
+            lead_id,
+            user_id=None,
+            outcome=f"Signature confirmée par SchoolDrive ({signed_source})",
+        )
+        conn.execute(
+            "UPDATE leads SET lead_status = 'signed', updated_at = ? WHERE id = ?",
+            (now, lead_id),
+        )
+        conn.execute(
+            """
+            UPDATE conversations
+            SET status = 'resolved', resolution_reason = 'signed',
+                resolution_note = ?, resolved_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (f"Signature confirmée par SchoolDrive ({signed_source}).", now, now, conversation_id),
+        )
+        _insert_internal_note_message(
+            conn,
+            lead_id,
+            conversation_id,
+            None,
+            f"SchoolDrive : signature confirmée ({signed_source}). Relances arrêtées.",
+            now,
+        )
+        return True
+
+    do_not_contact, dnc_source = _schooldrive_do_not_contact_signal(data)
+    if do_not_contact:
+        _complete_open_actions_for_lead(
+            conn,
+            lead_id,
+            user_id=None,
+            outcome=f"Ne plus contacter confirmé par SchoolDrive ({dnc_source})",
+        )
+        conn.execute(
+            "UPDATE leads SET contact_status = 'do_not_contact', lead_status = 'eligible', updated_at = ? WHERE id = ?",
+            (now, lead_id),
+        )
+        conn.execute(
+            """
+            UPDATE conversations
+            SET status = 'resolved', resolution_reason = 'do_not_contact',
+                resolution_note = ?, resolved_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (f"Blocage importé depuis SchoolDrive : {dnc_source}.", now, now, conversation_id),
+        )
+        _insert_internal_note_message(
+            conn,
+            lead_id,
+            conversation_id,
+            None,
+            f"SchoolDrive : Ne plus contacter ({dnc_source}). Tous les canaux commerciaux sont bloqués.",
+            now,
+        )
+        return True
+
+    course_full, course_full_source = _schooldrive_course_full_signal(data)
+    if course_full:
+        _complete_open_actions_for_lead(
+            conn,
+            lead_id,
+            user_id=None,
+            outcome="Relances annulées : cours complet dans SchoolDrive",
+            included_types=("follow_up",),
+        )
+        _ensure_course_full_review(
+            conn,
+            lead_id=lead_id,
+            conversation_id=conversation_id,
+            source=course_full_source,
+        )
+        return True
+
+    return False
+
+
+def _schooldrive_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "oui", "y"}
+    return False
+
+
+def _schooldrive_signed_signal(data: dict[str, Any]) -> tuple[bool, str]:
+    signed = data.get("signed")
+    if isinstance(signed, dict):
+        for key in ("is_signed", "signed", "value"):
+            if _schooldrive_bool(signed.get(key)):
+                return True, f"signed.{key}"
+    for key in ("is_signed", "signed"):
+        if _schooldrive_bool(data.get(key)):
+            return True, key
+    commercial = data.get("commercial") or {}
+    if isinstance(commercial, dict) and _schooldrive_bool(commercial.get("is_signed")):
+        return True, "commercial.is_signed"
+    return False, ""
+
+
+def _schooldrive_do_not_contact_signal(data: dict[str, Any]) -> tuple[bool, str]:
+    contact = data.get("contact") or {}
+    candidates: list[tuple[str, Any]] = [
+        ("data.do_not_contact", data.get("do_not_contact")),
+        ("data.do_not_relaunch", data.get("do_not_relaunch")),
+        ("data.email_opt_out", data.get("email_opt_out")),
+        ("data.whatsapp_opt_out", data.get("whatsapp_opt_out")),
+        ("data.phone_opt_out", data.get("phone_opt_out")),
+        ("data.blacklisted", data.get("blacklisted")),
+    ]
+    if isinstance(contact, dict):
+        candidates.extend(
+            [
+                ("contact.do_not_contact", contact.get("do_not_contact")),
+                ("contact.do_not_relaunch", contact.get("do_not_relaunch")),
+                ("contact.email_opt_out", contact.get("email_opt_out")),
+                ("contact.whatsapp_opt_out", contact.get("whatsapp_opt_out")),
+                ("contact.phone_opt_out", contact.get("phone_opt_out")),
+                ("contact.blacklisted", contact.get("blacklisted")),
+            ]
+        )
+    for source, value in candidates:
+        if _schooldrive_bool(value):
+            return True, source
+    return False, ""
+
+
+def _schooldrive_course_full_signal(data: dict[str, Any]) -> tuple[bool, str]:
+    course = data.get("course") or {}
+    if not isinstance(course, dict):
+        return False, ""
+    for key in ("is_full", "course_full", "session_full"):
+        if _schooldrive_bool(course.get(key)):
+            return True, f"course.{key}"
+    for key in ("capacity_status", "session_status", "status"):
+        if str(course.get(key) or "").strip().lower() in {"full", "complete", "complet", "sold_out"}:
+            return True, f"course.{key}"
+    seats = course.get("available_seats")
+    if seats is not None:
+        try:
+            if int(seats) <= 0:
+                return True, "course.available_seats"
+        except (TypeError, ValueError):
+            pass
+    return False, ""
+
+
+def _ensure_course_full_review(
+    conn: Any,
+    lead_id: int,
+    conversation_id: int,
+    source: str,
+) -> None:
+    existing = conn.execute(
+        """
+        SELECT id
+        FROM tasks
+        WHERE lead_id = ?
+          AND status IN ('open', 'planned', 'in_progress', 'blocked')
+          AND trigger_reason = 'schooldrive_course_full'
+        LIMIT 1
+        """,
+        (lead_id,),
+    ).fetchone()
+    if existing:
+        return
+    lead = row_to_dict(conn.execute("SELECT * FROM leads WHERE id = ?", (lead_id,)).fetchone())
+    if not lead:
+        return
+    assignee_id = setter1_user_id(conn) or _default_active_user_id(conn, "setter")
+    if not assignee_id:
+        return
+    now = iso_utc()
+    action_id = _insert_next_action(
+        conn,
+        lead_id=lead_id,
+        conversation_id=conversation_id,
+        action_type="other",
+        title=f"Proposer une autre session à {lead_full_name(lead)}",
+        assigned_to_user_id=assignee_id,
+        created_by_user_id=None,
+        urgency="high",
+        due_at=now,
+        status="open",
+        trigger_reason="schooldrive_course_full",
+        description="SchoolDrive indique que la session est complète. Lire le dossier et proposer une autre session.",
+        metadata={"schooldrive_source": source},
+    )
+    _insert_internal_note_message(
+        conn,
+        lead_id,
+        conversation_id,
+        None,
+        f"SchoolDrive : cours complet ({source}). Relances annulées, proposer une autre session.",
+        now,
+    )
+    insert_event(
+        conn,
+        lead_id,
+        "schooldrive_course_full_review_created",
+        new={"task_id": action_id, "source": source},
+        metadata={"conversation_id": conversation_id},
     )
 
 
@@ -2040,7 +2526,7 @@ def assign_standard_next_action(
                 UPDATE leads
                 SET closer_user_id = ?,
                     sales_stage = 'closing',
-                    lead_status = 'neutral',
+                    lead_status = 'eligible',
                     updated_at = ?
                 WHERE id = ?
                 """,
@@ -2084,6 +2570,154 @@ def assign_standard_next_action(
     return True, "Action programmée."
 
 
+def reschedule_call_action(
+    task_id: int,
+    user_id: int,
+    due_at: str,
+    note: str,
+) -> tuple[bool, str]:
+    note = note.strip()
+    if not note:
+        return False, "Ajoutez une note pour expliquer le déplacement du RDV."
+    now = iso_utc()
+    with connect() as conn:
+        task = row_to_dict(
+            conn.execute(
+                """
+                SELECT t.*, l.first_name, l.last_name
+                FROM tasks t
+                JOIN leads l ON l.id = t.lead_id
+                WHERE t.id = ?
+                  AND t.type IN ('setting_call', 'closing_call')
+                  AND t.status IN ('open', 'planned', 'in_progress')
+                """,
+                (task_id,),
+            ).fetchone()
+        )
+        if not task:
+            return False, "Appel planifié introuvable."
+        previous_due_at = task.get("due_at")
+        conn.execute(
+            """
+            UPDATE tasks
+            SET due_at = ?, status = 'planned', updated_at = ?,
+                metadata_json = ?
+            WHERE id = ?
+            """,
+            (
+                due_at,
+                now,
+                json.dumps(
+                    {
+                        "rescheduled_from": previous_due_at,
+                        "rescheduled_note": note,
+                    },
+                    ensure_ascii=False,
+                ),
+                task_id,
+            ),
+        )
+        if task.get("conversation_id"):
+            _insert_internal_note_message(
+                conn,
+                task["lead_id"],
+                task["conversation_id"],
+                user_id,
+                f"RDV déplacé au {due_at} : {note}",
+                now,
+            )
+        insert_event(
+            conn,
+            task["lead_id"],
+            "call_rescheduled",
+            user_id=user_id,
+            previous={"task_id": task_id, "due_at": previous_due_at},
+            new={"task_id": task_id, "due_at": due_at, "note": note},
+            metadata={"conversation_id": task.get("conversation_id")},
+        )
+    return True, "RDV déplacé."
+
+
+def cancel_call_action_without_replacement(
+    task_id: int,
+    user_id: int,
+    note: str,
+) -> tuple[bool, str]:
+    note = note.strip()
+    if not note:
+        return False, "Ajoutez une note pour expliquer l'annulation du RDV."
+    now = iso_utc()
+    with connect() as conn:
+        task = row_to_dict(
+            conn.execute(
+                """
+                SELECT t.*, l.first_name, l.last_name
+                FROM tasks t
+                JOIN leads l ON l.id = t.lead_id
+                WHERE t.id = ?
+                  AND t.type IN ('setting_call', 'closing_call')
+                  AND t.status IN ('open', 'planned', 'in_progress')
+                """,
+                (task_id,),
+            ).fetchone()
+        )
+        if not task:
+            return False, "Appel planifié introuvable."
+        conn.execute(
+            """
+            UPDATE tasks
+            SET status = 'cancelled', cancelled_reason = 'appointment_cancelled_without_replacement',
+                outcome = 'cancelled_without_replacement', completed_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (now, now, task_id),
+        )
+        sequence_code = (
+            "post_setting_undecided"
+            if task["type"] == "setting_call"
+            else "post_closing_undecided"
+        )
+        first_step = _get_sequence_step(conn, sequence_code, 1)
+        next_action_id = None
+        if first_step and task.get("conversation_id"):
+            next_action_id = _insert_next_action(
+                conn,
+                lead_id=task["lead_id"],
+                conversation_id=task["conversation_id"],
+                action_type="follow_up",
+                title=f"Relancer {lead_full_name(task)}",
+                assigned_to_user_id=setter2_user_id(conn) or task.get("assigned_to_user_id") or user_id,
+                created_by_user_id=user_id,
+                urgency="normal",
+                due_at=_due_for_sequence_step(now, first_step),
+                description=note,
+                trigger_reason="appointment_cancelled_without_replacement",
+                sequence_code=sequence_code,
+                sequence_step_index=1,
+                previous_action_id=task_id,
+                metadata=_sequence_anchor_metadata(now, "RDV annulé sans remplacement"),
+            )
+        if task.get("conversation_id"):
+            _insert_internal_note_message(
+                conn,
+                task["lead_id"],
+                task["conversation_id"],
+                user_id,
+                f"RDV annulé sans nouveau RDV : {note}",
+                now,
+            )
+        insert_event(
+            conn,
+            task["lead_id"],
+            "call_cancelled_without_replacement",
+            user_id=user_id,
+            previous={"task_id": task_id, "type": task["type"]},
+            new={"sequence_code": sequence_code, "next_action_id": next_action_id},
+            metadata={"conversation_id": task.get("conversation_id"), "note": note},
+        )
+    return True, "RDV annulé. Le flux indécis correspondant a été lancé."
+
+
 def handoff_to_closer(
     conversation_id: int,
     user_id: int,
@@ -2125,7 +2759,7 @@ def handoff_to_closer(
         conn.execute(
             """
             UPDATE leads
-            SET closer_user_id = ?, sales_stage = 'closing', lead_status = 'neutral', updated_at = ?
+            SET closer_user_id = ?, sales_stage = 'closing', lead_status = 'eligible', updated_at = ?
             WHERE id = ?
             """,
             (closer_user_id, now, conv["lead_id"]),
@@ -2159,7 +2793,7 @@ def handoff_to_closer(
             },
             new={
                 "sales_stage": "closing",
-                "lead_status": "neutral",
+                "lead_status": "eligible",
                 "closer_user_id": closer_user_id,
                 "task_id": action_id,
                 "appointment_note": appointment_note,
@@ -2704,7 +3338,7 @@ def _close_outbound_action_and_chain(
             conn.execute(
                 """
                 UPDATE leads
-                SET closer_user_id = ?, sales_stage = 'closing', lead_status = 'neutral', updated_at = ?
+                SET closer_user_id = ?, sales_stage = 'closing', lead_status = 'eligible', updated_at = ?
                 WHERE id = ?
                 """,
                 (closer_id, sent_at, conv["lead_id"]),
@@ -3083,6 +3717,12 @@ def _new_schooldrive_snapshot_ignore_reason(
 ) -> str | None:
     if data.get("is_archived"):
         return "archived_without_existing_record"
+    if (
+        _schooldrive_signed_signal(data)[0]
+        or _schooldrive_do_not_contact_signal(data)[0]
+        or _schooldrive_course_full_signal(data)[0]
+    ):
+        return None
 
     person = data.get("person") or {}
     has_identity = any(
@@ -3198,7 +3838,7 @@ def _create_temporary_identity_lead(
             acquisition_type, lead_status, contact_status, sales_stage,
             temperature, setter_user_id, identity_status, identity_candidates_json,
             created_at, updated_at
-        ) VALUES ('Inconnu(e)', '', ?, ?, ?, 'unknown', 'neutral',
+        ) VALUES ('Inconnu(e)', '', ?, ?, ?, 'unknown', 'eligible',
             'contact_allowed', 'new', 'warm', ?, ?, ?, ?, ?)
         """,
         (
@@ -4604,6 +5244,40 @@ def create_template_request(
                 "reason": reason,
             },
         )
+        admin_action_id = _ensure_admin_action(
+            conn,
+            "template_request",
+            f"Créer / lier modèle WhatsApp pour {lead_full_name(conv)}",
+            description=(context.strip() or reason.strip()),
+            lead_id=conv["lead_id"],
+            conversation_id=conversation_id,
+            task_id=task_id,
+            template_request_id=request_id,
+            created_by_user_id=user_id,
+            metadata={
+                "sequence_code": sequence_code or (action or {}).get("sequence_code"),
+                "sequence_step_index": sequence_step_index or (action or {}).get("sequence_step_index"),
+                "reason": reason.strip(),
+            },
+        )
+        if admin_action_id:
+            conn.execute(
+                """
+                INSERT INTO user_activity_log (
+                    user_id, event_type, entity_type, entity_id,
+                    lead_id, conversation_id, action_id, metadata_json, created_at
+                ) VALUES (?, 'admin_action_created', 'admin_action', ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    admin_action_id,
+                    conv["lead_id"],
+                    conversation_id,
+                    task_id,
+                    json.dumps({"source": "template_request", "template_request_id": request_id}, ensure_ascii=False),
+                    now,
+                ),
+            )
     if task_id:
         return True, "Demande de modèle créée et relance bloquée."
     return True, "Demande de modèle créée."
@@ -4639,11 +5313,26 @@ def update_template_request_status(
                 """
                 UPDATE tasks
                 SET status = 'open',
+                    due_at = ?,
                     blocked_reason = NULL,
                     updated_at = ?
                 WHERE id = ? AND status = 'blocked'
                 """,
-                (now, request["task_id"]),
+                (now, now, request["task_id"]),
+            )
+        if status in {"approved", "rejected", "cancelled"}:
+            conn.execute(
+                """
+                UPDATE admin_actions
+                SET status = 'done',
+                    outcome = ?,
+                    completed_by_user_id = ?,
+                    completed_at = ?,
+                    updated_at = ?
+                WHERE template_request_id = ?
+                  AND status IN ('open', 'in_progress', 'blocked')
+                """,
+                (f"template_request_{status}", user_id, now, now, request_id),
             )
         insert_event(
             conn,
@@ -4778,10 +5467,10 @@ def update_lead_qualification(
         lead_status = "not_relevant"
     elif sales_stage == "blacklist":
         contact_status = "do_not_contact"
-        lead_status = "neutral"
+        lead_status = "eligible"
     if lead_status == "do_not_contact":
         contact_status = "do_not_contact"
-        lead_status = "neutral"
+        lead_status = "eligible"
     with connect() as conn:
         previous = row_to_dict(
             conn.execute(
@@ -5078,6 +5767,10 @@ def send_freeform_message(
     state = calculate_window(conv["last_inbound_at"])
     if not state.is_open:
         return False, "Fenêtre WhatsApp fermée. Utilisez un modèle approuvé."
+    with connect() as conn:
+        ok, guard_message = _check_outbound_safeguards(conn, conv)
+        if not ok:
+            return False, guard_message
 
     try:
         result = get_whatsapp_client().send_freeform(conv["recipient_phone_e164"], body)
@@ -5160,6 +5853,10 @@ def send_template_message(
             return False, "Relance bloquée : le nouveau modèle doit être approuvé avant l'envoi."
     if template["status"] != "approved":
         return False, "Ce modèle n'est pas approuvé."
+    with connect() as conn:
+        ok, guard_message = _check_outbound_safeguards(conn, conv)
+        if not ok:
+            return False, guard_message
 
     missing = [
         item["placeholder_key"]
@@ -5232,6 +5929,83 @@ def send_template_message(
     if result.provider == "twilio":
         return True, "Modèle envoyé."
     return True, "Modèle envoyé en mode mock."
+
+
+def _check_outbound_safeguards(conn: Any, conv: dict[str, Any]) -> tuple[bool, str]:
+    settings = get_outbound_safeguards()
+    if settings["outbound_global_block"]:
+        return False, "Envois bloqués : kill switch WhatsApp activé dans Admin."
+
+    now = utc_now()
+    day_start = iso_utc(now.replace(hour=0, minute=0, second=0, microsecond=0))
+    week_start = iso_utc(now - timedelta(days=7))
+    lead_id = conv["lead_id"]
+
+    lead_day = conn.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM messages
+        WHERE lead_id = ?
+          AND direction = 'outbound'
+          AND channel = 'whatsapp_twilio'
+          AND sent_at >= ?
+        """,
+        (lead_id, day_start),
+    ).fetchone()["count"]
+    if int(lead_day) >= settings["outbound_max_per_lead_day"]:
+        return False, "Envoi bloqué : limite quotidienne de messages atteinte pour ce prospect."
+
+    lead_week = conn.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM messages
+        WHERE lead_id = ?
+          AND direction = 'outbound'
+          AND channel = 'whatsapp_twilio'
+          AND sent_at >= ?
+        """,
+        (lead_id, week_start),
+    ).fetchone()["count"]
+    if int(lead_week) >= settings["outbound_max_per_lead_week"]:
+        return False, "Envoi bloqué : limite hebdomadaire de messages atteinte pour ce prospect."
+
+    global_day = conn.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM messages
+        WHERE direction = 'outbound'
+          AND channel = 'whatsapp_twilio'
+          AND sent_at >= ?
+        """,
+        (day_start,),
+    ).fetchone()["count"]
+    if int(global_day) >= settings["outbound_max_global_day"]:
+        return False, "Envoi bloqué : limite quotidienne globale atteinte."
+
+    active_followup = _first_active_action_for_lead(
+        conn,
+        lead_id,
+        action_types=("follow_up",),
+        include_blocked=False,
+    )
+    if active_followup:
+        last_row = conn.execute(
+            """
+            SELECT MAX(sent_at) AS last_sent_at
+            FROM messages
+            WHERE lead_id = ?
+              AND direction = 'outbound'
+              AND channel = 'whatsapp_twilio'
+              AND sent_at IS NOT NULL
+            """,
+            (lead_id,),
+        ).fetchone()
+        last_sent_at = last_row["last_sent_at"] if last_row else None
+        last_dt = parse_dt(last_sent_at) if last_sent_at else None
+        if last_dt and now - last_dt < timedelta(hours=settings["outbound_min_followup_hours"]):
+            return False, "Envoi bloqué : délai minimum entre deux relances WhatsApp non respecté."
+
+    return True, ""
 
 
 def add_manual_note(
@@ -5689,6 +6463,22 @@ def complete_action_with_workflow(
                 user_id=user_id,
                 new={"template_request_id": int(cursor.lastrowid), "task_id": task_id},
             )
+            _ensure_admin_action(
+                conn,
+                "template_request",
+                f"Créer / lier modèle WhatsApp pour {lead_full_name(task)}",
+                note,
+                lead_id=task["lead_id"],
+                conversation_id=task.get("conversation_id"),
+                task_id=task_id,
+                template_request_id=int(cursor.lastrowid),
+                created_by_user_id=user_id,
+                metadata={
+                    "sequence_code": task.get("sequence_code"),
+                    "sequence_step_index": task.get("sequence_step_index"),
+                    "reason": "Modèle manquant pour l'action",
+                },
+            )
             return True, "Action bloquée en attente d'un nouveau modèle."
 
         conn.execute(
@@ -5878,7 +6668,7 @@ def complete_action_with_workflow(
                 conn.execute(
                     """
                     UPDATE leads
-                    SET closer_user_id = ?, sales_stage = 'closing', lead_status = 'neutral', updated_at = ?
+                    SET closer_user_id = ?, sales_stage = 'closing', lead_status = 'eligible', updated_at = ?
                     WHERE id = ?
                     """,
                     (closer_id, now, task["lead_id"]),
@@ -5985,15 +6775,15 @@ def complete_action_with_workflow(
                         sequence_anchor_label="Appel setting non joint",
                     )
             elif outcome == "not_ready":
-                first_step = _get_sequence_step(conn, "setter_no_next_step", 1)
+                first_step = _get_sequence_step(conn, "post_setting_undecided", 1)
                 if not first_step:
-                    return False, "Étape de relance introuvable."
+                    return False, "Étape de relance post-setting introuvable."
                 next_action_id = create_followup(
-                    "setter_no_next_step",
+                    "post_setting_undecided",
                     _due_for_sequence_step(now, first_step),
-                    trigger_reason="setting_call_no_next_step",
+                    trigger_reason="setting_call_undecided",
                     sequence_anchor_at=now,
-                    sequence_anchor_label="Appel setting sans suite claire",
+                    sequence_anchor_label="Appel setting indécis",
                 )
             elif outcome in {"not_relevant", "do_not_contact"}:
                 resolve(outcome)
@@ -6074,18 +6864,18 @@ def complete_action_with_workflow(
                         sequence_anchor_label="Appel closing non joint",
                     )
             elif outcome == "undecided":
-                first_step = _get_sequence_step(conn, "post_call_undecided", 1)
+                first_step = _get_sequence_step(conn, "post_closing_undecided", 1)
                 if not first_step:
                     return False, "Étape de relance post-appel introuvable."
                 next_action_id = create_followup(
-                    "post_call_undecided",
+                    "post_closing_undecided",
                     _due_for_sequence_step(now, first_step),
                     trigger_reason="closing_call_undecided",
                     sequence_anchor_at=now,
-                    sequence_anchor_label="Closing sans décision claire",
+                    sequence_anchor_label="Closing indécis",
                 )
-            elif outcome == "not_relevant":
-                resolve("not_relevant")
+            elif outcome in {"not_relevant", "do_not_contact"}:
+                resolve(outcome)
 
         elif task["type"] == "follow_up":
             if outcome == "sequence_completed_no_reply":

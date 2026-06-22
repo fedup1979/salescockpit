@@ -12,7 +12,7 @@ from sales_cockpit.security import hash_password
 from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
 
 
-DEMO_SEED_VERSION = "2026-06-18-action-scenarios-v1"
+DEMO_SEED_VERSION = "2026-06-22-workflow-v1"
 
 
 SCHEMA = """
@@ -290,6 +290,31 @@ CREATE TABLE IF NOT EXISTS template_requests (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     resolved_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS admin_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    lead_id INTEGER REFERENCES leads(id) ON DELETE SET NULL,
+    conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+    task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
+    template_request_id INTEGER REFERENCES template_requests(id) ON DELETE SET NULL,
+    bug_report_id INTEGER REFERENCES bug_reports(id) ON DELETE SET NULL,
+    assigned_to_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    due_at TEXT,
+    outcome TEXT,
+    metadata_json TEXT,
+    completed_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    completed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_actions_status
+ON admin_actions(status);
 
 CREATE TABLE IF NOT EXISTS lead_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -598,7 +623,7 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
         """
         UPDATE leads
         SET contact_status = 'do_not_contact',
-            lead_status = 'neutral'
+            lead_status = 'eligible'
         WHERE lead_status = 'do_not_contact'
         """
     )
@@ -623,10 +648,10 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
         UPDATE leads
-        SET lead_status = 'neutral'
+        SET lead_status = 'eligible'
         WHERE lead_status IS NULL
            OR trim(lead_status) = ''
-           OR lead_status IN ('new', 'lead', 'prospect')
+           OR lead_status IN ('new', 'lead', 'prospect', 'neutral')
         """
     )
     conn.execute(
@@ -641,6 +666,20 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
         UPDATE tasks
         SET type = 'setting_call'
         WHERE type = 'call'
+        """
+    )
+    conn.execute(
+        """
+        UPDATE tasks
+        SET sequence_code = 'post_closing_undecided'
+        WHERE sequence_code = 'post_call_undecided'
+        """
+    )
+    conn.execute(
+        """
+        UPDATE template_requests
+        SET sequence_code = 'post_closing_undecided'
+        WHERE sequence_code = 'post_call_undecided'
         """
     )
     _ensure_twilio_message_sid_unique(conn)
@@ -1026,6 +1065,14 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
                 current_time,
             ),
         )
+    conn.execute(
+        """
+        UPDATE sequences
+        SET active = 0, updated_at = ?
+        WHERE code = 'post_call_undecided'
+        """,
+        (current_time,),
+    )
 
     sequence_ids = {
         row["code"]: row["id"]
@@ -1115,7 +1162,7 @@ def _normalize_lead_business_fields(conn: sqlite3.Connection) -> None:
                 WHEN lead_status IN ('new', 'lead', 'prospect', 'do_not_contact')
                     OR lead_status IS NULL
                     OR trim(lead_status) = ''
-                THEN 'neutral'
+                THEN 'eligible'
                 ELSE lead_status
             END,
             acquisition_type = CASE
@@ -1306,7 +1353,7 @@ def _build_demo_scenarios(
             "APP",
             "Anatomie, Physiologie, Pathologie",
             "lead",
-            "neutral",
+            "eligible",
             "contact_allowed",
             "setting",
             mihary_id,
@@ -1335,7 +1382,7 @@ def _build_demo_scenarios(
             "FSM",
             "Formation en santé naturelle",
             "lead",
-            "neutral",
+            "eligible",
             "contact_allowed",
             "setting",
             mihary_id,
@@ -1376,7 +1423,7 @@ def _build_demo_scenarios(
             "APP",
             "Anatomie, Physiologie, Pathologie",
             "lead",
-            "neutral",
+            "eligible",
             "contact_allowed",
             "new",
             mihary_id,
@@ -1406,7 +1453,7 @@ def _build_demo_scenarios(
             "AS",
             "AS GE E26 PM",
             "presubscription",
-            "neutral",
+            "eligible",
             "contact_allowed",
             "setting",
             mihary_id,
@@ -1437,7 +1484,7 @@ def _build_demo_scenarios(
             "FSM",
             "Formation en santé naturelle",
             "lead",
-            "neutral",
+            "eligible",
             "contact_allowed",
             "setting",
             mihary_id,
@@ -1504,7 +1551,7 @@ def _build_demo_scenarios(
             "APP",
             "Anatomie, Physiologie, Pathologie",
             "lead",
-            "neutral",
+            "eligible",
             "contact_allowed",
             "setting",
             mihary_id,
@@ -1545,7 +1592,7 @@ def _build_demo_scenarios(
             "FSM",
             "FSM GE P26",
             "presubscription",
-            "neutral",
+            "eligible",
             "contact_allowed",
             "closing",
             mihary_id,
@@ -1574,7 +1621,7 @@ def _build_demo_scenarios(
             "APP",
             "Anatomie, Physiologie, Pathologie",
             "lead",
-            "neutral",
+            "eligible",
             "contact_allowed",
             "closing",
             mihary_id,
@@ -1656,7 +1703,7 @@ def _build_demo_scenarios(
             "APP",
             "APP GE P26",
             "presubscription",
-            "neutral",
+            "eligible",
             "contact_allowed",
             "setting",
             mihary_id,
@@ -1687,7 +1734,7 @@ def _build_demo_scenarios(
             "FSM",
             "Formation en santé naturelle",
             "lead",
-            "neutral",
+            "eligible",
             "do_not_contact",
             "setting",
             mihary_id,
@@ -1751,7 +1798,7 @@ def _build_demo_scenarios(
             "FSM",
             "Formation en santé naturelle",
             "lead",
-            "neutral",
+            "eligible",
             "contact_allowed",
             "lost",
             mihary_id,
@@ -1796,7 +1843,7 @@ def _build_demo_scenarios(
             "APP",
             "Anatomie, Physiologie, Pathologie",
             "lead",
-            "neutral",
+            "eligible",
             "contact_allowed",
             "new",
             mihary_id,
@@ -1824,7 +1871,7 @@ def _build_demo_scenarios(
             "FSM",
             "Formation en santé naturelle",
             "lead",
-            "neutral",
+            "eligible",
             "contact_allowed",
             "setting",
             mihary_id,
@@ -1852,7 +1899,7 @@ def _build_demo_scenarios(
             "APP",
             "Anatomie, Physiologie, Pathologie",
             "lead",
-            "neutral",
+            "eligible",
             "contact_allowed",
             "setting",
             mihary_id,
@@ -1880,7 +1927,7 @@ def _build_demo_scenarios(
             "AS",
             "AS GE E26 PM",
             "presubscription",
-            "neutral",
+            "eligible",
             "contact_allowed",
             "setting",
             mihary_id,

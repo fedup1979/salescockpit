@@ -2,7 +2,7 @@
 
 Ce document est la référence métier de Sales Cockpit.
 
-Il formalise les règles validées avec François pour que l'interface, les tests, les connecteurs Twilio/SchoolDrive et la future automatisation Tanjona/IA puissent être construits sans interprétation implicite.
+Il formalise les règles validées avec François pour que l'interface, les tests, les connecteurs Twilio/SchoolDrive et la future automatisation Setter II/IA puissent être construits sans interprétation implicite.
 
 ## Principes
 
@@ -57,7 +57,7 @@ Actions principales V1 :
 
 - `reply` : répondre à un message entrant.
 - `follow_up` : relancer, généralement via template WhatsApp.
-- `setting_call` : appel de setting par Setter 1.
+- `setting_call` : appel de setting par Setter I.
 - `closing_call` : appel de closing par le closer.
 
 ### Action Support
@@ -78,8 +78,7 @@ La qualification commerciale est séparée du statut de contact.
 
 Valeurs V1 :
 
-- `neutral` : valeur par défaut.
-- `eligible` : le prospect peut continuer.
+- `eligible` : valeur par défaut ; le prospect peut continuer.
 - `not_relevant` : le prospect n'est pas une opportunité utile.
 - `will_sign` : le closer estime que le prospect va signer.
 - `signed` : la vente est gagnée.
@@ -97,7 +96,7 @@ Valeurs V1 :
 
 `do_not_contact` bloque les relances automatiques.
 
-Si un prospect `do_not_contact` écrit à nouveau, le système doit créer une action `contact_review` pour Setter 1. L'utilisateur lit le message et décide soit de maintenir le blocage, soit de lever le blocage et répondre.
+Si un prospect `do_not_contact` écrit à nouveau, le système doit créer une action `contact_review` pour Setter I. L'utilisateur lit le message et décide soit de maintenir le blocage, soit de lever le blocage et répondre.
 
 ## Calendriers
 
@@ -123,7 +122,7 @@ Si un prospect n'est pas joint lors d'un appel de setting ou closing :
 
 1. rappel téléphonique +2h ouvrées ;
 2. rappel téléphonique +24h ouvrées ;
-3. si toujours non joint, passage à Tanjona pour relance WhatsApp +72h.
+3. si toujours non joint, passage vers le flux no-show correspondant, porté par Setter II.
 
 ### Relances Liées Au Cours
 
@@ -140,7 +139,7 @@ Une relance liée au cours ne remplace pas un appel setting ou closing déjà pl
 
 ## Templates
 
-Tanjona doit relire la conversation avant d'envoyer une relance et sélectionner le template approprié.
+Setter II doit relire la conversation avant d'envoyer une relance et sélectionner le template approprié.
 
 Si la fenêtre WhatsApp est fermée, le système doit empêcher tout message libre et imposer un template approuvé.
 
@@ -163,43 +162,43 @@ Statuts de demande de template :
 
 ### Règle 1 : création du lead
 
-Lorsque le prospect remplit un formulaire web et que SchoolDrive crée un Lead ou une Préinscription puis envoie le premier WhatsApp automatique, alors le cockpit ouvre une conversation et programme une relance pour Tanjona 72h après cet envoi, sauf si le prospect répond avant.
+Lorsque le prospect remplit un formulaire web et que SchoolDrive crée un Lead ou une Préinscription puis envoie le premier WhatsApp automatique, alors le cockpit ouvre une conversation et programme une relance pour Setter II 72h après cet envoi, sauf si le prospect répond avant.
 
 ### Règle 2 : absence de réponse au message automatique
 
-Lorsque les 72h suivant le premier WhatsApp automatique sont écoulées et que le prospect n'a pas répondu, alors Tanjona doit relire la conversation et relancer immédiatement avec le template approprié. Si aucun template n'existe, Tanjona doit créer une demande de template et la relance devient bloquée.
+Lorsque les 72h suivant le premier WhatsApp automatique sont écoulées et que le prospect n'a pas répondu, alors Setter II doit relire la conversation et relancer immédiatement avec le template approprié. Si aucun template n'existe, Setter II doit créer une demande de template et la relance devient bloquée.
 
 ### Règle 3 : réponse entrante standard
 
-Lorsque le prospect envoie un message WhatsApp entrant et que le contact est autorisé, alors la conversation passe immédiatement dans la file de Setter 1 avec une action `reply` due maintenant.
+Lorsque le prospect envoie un message WhatsApp entrant et que le contact est autorisé, alors la conversation passe immédiatement dans la file de Setter I avec une action `reply` due maintenant.
 
 Si un appel setting ou closing est déjà planifié, cet appel reste actif. L'action `reply` est une interruption urgente pour traiter le message entrant, pas un remplacement automatique de l'appel.
 
 ### Règle 4 : réponse entrante d'un prospect Ne plus contacter
 
-Lorsque le prospect est marqué `do_not_contact` mais envoie un nouveau message entrant, alors le cockpit crée une action `contact_review` pour Setter 1. Aucune relance automatique ne doit être créée tant que Setter 1 n'a pas décidé de maintenir ou lever le blocage.
+Lorsque le prospect est marqué `do_not_contact` mais envoie un nouveau message entrant, alors le cockpit crée une action `contact_review` pour Setter I. Aucune relance automatique ne doit être créée tant que Setter I n'a pas décidé de maintenir ou lever le blocage.
 
 ### Règle 5 : réponse sans rendez-vous
 
-Lorsque Setter 1 répond au prospect mais ne fixe pas de rendez-vous de setting, alors l'action `reply` est terminée et une action `follow_up` est créée pour Tanjona 72h après le message sortant.
+Lorsque Setter I répond au prospect mais ne fixe pas de rendez-vous de setting, alors l'action `reply` est terminée et une action `follow_up` est créée pour Setter II 72h après le message sortant.
 
-Exception : si cette action `reply` était une interruption pendant qu'un appel setting ou closing était déjà planifié, aucune relance Tanjona n'est créée. L'appel planifié redevient la prochaine action.
+Exception : si cette action `reply` était une interruption pendant qu'un appel setting ou closing était déjà planifié, aucune relance Setter II n'est créée. L'appel planifié redevient la prochaine action.
 
 ### Règle 6 : rendez-vous de setting fixé
 
-Lorsque Setter 1 fixe un rendez-vous de setting avec le prospect, alors le cockpit termine l'action `reply` et crée une action `setting_call` pour Setter 1 à la date et l'heure du rendez-vous.
+Lorsque Setter I fixe un rendez-vous de setting avec le prospect, alors le cockpit termine l'action `reply` et crée une action `setting_call` pour Setter I à la date et l'heure du rendez-vous.
 
 ### Règle 7 : prospect non pertinent ou Ne plus contacter après échange écrit
 
-Lorsque Setter 1 conclut après échange écrit que le prospect est `not_relevant` ou `do_not_contact`, alors le cockpit clôt la conversation, annule les actions ouvertes et arrête les relances futures.
+Lorsque Setter I conclut après échange écrit que le prospect est `not_relevant` ou `do_not_contact`, alors le cockpit clôt la conversation, annule les actions ouvertes et arrête les relances futures.
 
 ### Règle 8 : relance due avec fenêtre ouverte
 
-Lorsqu'une relance arrive à échéance et que la fenêtre WhatsApp est ouverte, alors Tanjona peut envoyer un message libre ou un template.
+Lorsqu'une relance arrive à échéance et que la fenêtre WhatsApp est ouverte, alors Setter II peut envoyer un message libre ou un template.
 
 ### Règle 9 : relance due avec fenêtre fermée
 
-Lorsqu'une relance arrive à échéance et que la fenêtre WhatsApp est fermée, alors Tanjona ne peut envoyer qu'un template approuvé.
+Lorsqu'une relance arrive à échéance et que la fenêtre WhatsApp est fermée, alors Setter II ne peut envoyer qu'un template approuvé.
 
 ### Règle 10 : relance due sans template adapté
 
@@ -211,27 +210,27 @@ Lorsqu'un template demandé pour débloquer une relance est approuvé, alors la 
 
 ### Règle 12 : relance envoyée et flux non terminé
 
-Lorsque Tanjona envoie une relance et que le flux prévoit encore une étape, alors le cockpit termine la relance actuelle et programme la prochaine selon le calendrier du flux.
+Lorsque Setter II envoie une relance et que le flux prévoit encore une étape, alors le cockpit termine la relance actuelle et programme la prochaine selon le calendrier du flux.
 
 ### Règle 13 : dernière relance envoyée
 
-Lorsque Tanjona envoie la dernière relance prévue par un flux et que le prospect ne répond toujours pas, alors le cockpit ne crée plus de prochaine action et marque la conversation comme résolue avec le motif `sequence_completed_no_reply`.
+Lorsque Setter II envoie la dernière relance prévue par un flux et que le prospect ne répond toujours pas, alors le cockpit ne crée plus de prochaine action et marque la conversation comme résolue avec le motif `sequence_completed_no_reply`.
 
 ### Règle 14 : appel de setting vers closing
 
-Lorsque Setter 1 termine un appel de setting et estime que le prospect doit passer au closing, alors le cockpit crée une action `closing_call` pour le closer, avec mini note obligatoire et qualification setter.
+Lorsque Setter I termine un appel de setting et estime que le prospect doit passer au closing, alors le cockpit crée une action `closing_call` pour le closer, avec mini note obligatoire et qualification setter.
 
 ### Règle 15 : appel de setting non joint
 
-Lorsque Setter 1 ne joint pas le prospect lors d'un appel de setting, alors le cockpit crée d'abord un rappel d'appel +2h ouvrées, puis +24h ouvrées, puis une relance WhatsApp Tanjona +72h si le prospect n'est toujours pas joint.
+Lorsque Setter I ne joint pas le prospect lors d'un appel de setting, alors le cockpit crée d'abord un rappel d'appel +2h ouvrées, puis +24h ouvrées, puis bascule ensuite vers le flux `setting_call_not_reached` si le prospect n'est toujours pas joint.
 
 ### Règle 16 : appel de setting sans suite claire
 
-Lorsque Setter 1 joint le prospect mais qu'aucun rendez-vous de closing n'est fixé et que le prospect n'est pas disqualifié, alors le cockpit crée une relance Tanjona 72h après l'appel.
+Lorsque Setter I joint le prospect mais qu'aucun rendez-vous de closing n'est fixé et que le prospect n'est pas disqualifié, alors le cockpit crée une relance Setter II dans le flux `post_setting_undecided`.
 
 ### Règle 17 : appel de setting terminal
 
-Lorsque Setter 1 termine un appel de setting et qualifie le prospect comme `not_relevant` ou `do_not_contact`, alors le cockpit clôt la conversation et annule les relances futures.
+Lorsque Setter I termine un appel de setting et qualifie le prospect comme `not_relevant` ou `do_not_contact`, alors le cockpit clôt la conversation et annule les relances futures.
 
 ### Règle 18 : closing signé
 
@@ -239,15 +238,15 @@ Lorsque le closer termine un appel de closing et que le prospect signe, alors le
 
 ### Règle 19 : closing Va signer
 
-Lorsque le closer termine un appel de closing et qualifie le prospect comme `will_sign`, alors le cockpit crée une relance post-closing pour Tanjona 72h après l'appel, puis suit le flux `closer_will_sign`.
+Lorsque le closer termine un appel de closing et qualifie le prospect comme `will_sign`, alors le cockpit crée une relance post-closing pour Setter II 72h après l'appel, puis suit le flux `closer_will_sign`.
 
 ### Règle 20 : closing non joint
 
-Lorsque le closer ne joint pas le prospect lors d'un appel de closing, alors le cockpit crée d'abord un rappel d'appel +2h ouvrées, puis +24h ouvrées, puis une relance WhatsApp Tanjona +72h si le prospect n'est toujours pas joint.
+Lorsque le closer ne joint pas le prospect lors d'un appel de closing, alors le cockpit crée d'abord un rappel d'appel +2h ouvrées, puis +24h ouvrées, puis bascule ensuite vers le flux `closing_call_not_reached` si le prospect n'est toujours pas joint.
 
-### Règle 21 : closing sans décision claire
+### Règle 21 : closing indécis
 
-Lorsque le closer joint le prospect mais qu'aucune décision claire n'est prise, alors le cockpit crée une relance Tanjona 72h après l'appel.
+Lorsque le closer joint le prospect mais qu'aucune décision claire n'est prise, alors le cockpit crée une relance Setter II dans le flux `post_closing_undecided`.
 
 ### Règle 22 : closing non pertinent
 
@@ -296,5 +295,5 @@ V2 :
 - backups configurables ;
 - synchronisation Twilio templates ;
 - synchronisation SchoolDrive et Notion ;
-- automatisation Tanjona ;
+- automatisation Setter II ;
 - apprentissage IA sur transcripts, actions, outcomes et notes.
