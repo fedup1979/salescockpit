@@ -1163,6 +1163,36 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
             ),
         )
     if apply_canonical_steps:
+        for target_sequence_code in ("post_setting_undecided", "post_closing_undecided"):
+            conn.execute(
+                """
+                INSERT INTO sequence_template_mappings (
+                    sequence_code, sequence_step_index, lead_type, course_category,
+                    template_id, note, active, created_by_user_id, updated_by_user_id,
+                    created_at, updated_at
+                )
+                SELECT
+                    ?, sequence_step_index, lead_type, course_category,
+                    template_id,
+                    coalesce(note, '') || ' Migré automatiquement depuis post_call_undecided.',
+                    1, created_by_user_id, updated_by_user_id,
+                    created_at, ?
+                FROM sequence_template_mappings
+                WHERE sequence_code = 'post_call_undecided'
+                  AND active = 1
+                ON CONFLICT(sequence_code, sequence_step_index, lead_type, course_category)
+                DO NOTHING
+                """,
+                (target_sequence_code, current_time),
+            )
+        conn.execute(
+            """
+            UPDATE sequence_template_mappings
+            SET active = 0, updated_at = ?
+            WHERE sequence_code = 'post_call_undecided'
+            """,
+            (current_time,),
+        )
         conn.execute(
             """
             UPDATE sequence_steps

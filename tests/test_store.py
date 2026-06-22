@@ -999,6 +999,20 @@ def test_business_rule_seed_migrates_existing_sequence_rows() -> None:
             """,
             (sequence_id,),
         )
+        template_id = conn.execute(
+            "SELECT id FROM whatsapp_templates WHERE status = 'approved' ORDER BY id LIMIT 1"
+        ).fetchone()["id"]
+        conn.execute(
+            """
+            INSERT INTO sequence_template_mappings (
+                sequence_code, sequence_step_index, lead_type, course_category,
+                template_id, note, active
+            ) VALUES ('post_call_undecided', 1, 'all', 'APP', ?, 'Legacy mapping', 1)
+            ON CONFLICT(sequence_code, sequence_step_index, lead_type, course_category)
+            DO UPDATE SET active = 1
+            """,
+            (template_id,),
+        )
         conn.execute(
             "UPDATE app_metadata SET value = 'old-version' WHERE key = 'business_rules_version'"
         )
@@ -1013,6 +1027,22 @@ def test_business_rule_seed_migrates_existing_sequence_rows() -> None:
     old_steps = list_sequence_steps("post_call_undecided", active_only=False)
     assert old_steps
     assert all(step["active"] == 0 for step in old_steps)
+    with connect() as conn:
+        old_mapping_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM sequence_template_mappings WHERE sequence_code = 'post_call_undecided' AND active = 1"
+        ).fetchone()["count"]
+        migrated_mapping_count = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM sequence_template_mappings
+            WHERE sequence_code IN ('post_setting_undecided', 'post_closing_undecided')
+              AND sequence_step_index = 1
+              AND course_category = 'APP'
+              AND active = 1
+            """
+        ).fetchone()["count"]
+    assert old_mapping_count == 0
+    assert migrated_mapping_count == 2
 
 
 def test_sync_twilio_templates_auto_unblocks_linked_template_request(monkeypatch) -> None:
