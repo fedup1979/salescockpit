@@ -98,6 +98,119 @@ def test_schooldrive_snapshot_creates_lead_conversation_messages_and_followup() 
     assert action["due_at"].startswith("2026-06-21T09:34:20")
 
 
+def test_schooldrive_new_snapshot_without_autoresponder_is_ignored() -> None:
+    seed_initial_data()
+
+    result = ingest_schooldrive_snapshot(
+        schooldrive_payload(
+            event_id="evt_sd_no_ar",
+            schooldrive_id="lead:no-ar-yet",
+            autoresponders=[],
+        )
+    )
+
+    assert result["status"] == "ignored"
+    assert result["ignored_reason"] == "waiting_for_first_autoresponder"
+    with connect() as conn:
+        lead = conn.execute(
+            "SELECT id FROM leads WHERE schooldrive_lead_id = 'lead:no-ar-yet'"
+        ).fetchone()
+        event = conn.execute(
+            "SELECT status, ignored_reason FROM schooldrive_webhook_events WHERE event_id = ?",
+            ("evt_sd_no_ar",),
+        ).fetchone()
+    assert lead is None
+    assert event["status"] == "ignored"
+    assert event["ignored_reason"] == "waiting_for_first_autoresponder"
+
+
+def test_schooldrive_sent_autoresponder_can_create_after_initial_ignored_snapshot() -> None:
+    seed_initial_data()
+    initial = schooldrive_payload(
+        event_id="evt_sd_initial_ignored",
+        schooldrive_id="lead:initial-then-sent",
+        autoresponders=[],
+    )
+    sent = schooldrive_payload(
+        event_id="evt_sd_later_sent",
+        occurred_at="2026-06-18T10:00:00Z",
+        aggregated_updated_at="2026-06-18T10:00:00Z",
+        schooldrive_id="lead:initial-then-sent",
+    )
+
+    assert ingest_schooldrive_snapshot(initial)["status"] == "ignored"
+    result = ingest_schooldrive_snapshot(sent)
+
+    assert result["status"] == "created"
+    assert get_next_action_for_lead(result["lead_id"])["type"] == "follow_up"
+
+
+def test_schooldrive_new_snapshot_with_missing_identity_is_ignored() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload(
+        event_id="evt_sd_missing_identity",
+        schooldrive_id="lead:missing-identity",
+        first_name="",
+        last_name="",
+    )
+    payload["data"]["person"]["phone"] = None
+    payload["data"]["person"]["email"] = None
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    assert result["status"] == "ignored"
+    assert result["ignored_reason"] == "missing_identity"
+    with connect() as conn:
+        lead = conn.execute(
+            "SELECT id FROM leads WHERE schooldrive_lead_id = 'lead:missing-identity'"
+        ).fetchone()
+    assert lead is None
+
+
+def test_schooldrive_min_sent_at_ignores_historical_new_sent_autoresponder(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "SALES_COCKPIT_SCHOOLDRIVE_INGEST_MIN_SENT_AT",
+        "2026-06-19T00:00:00Z",
+    )
+    get_settings.cache_clear()
+    seed_initial_data()
+
+    result = ingest_schooldrive_snapshot(
+        schooldrive_payload(
+            event_id="evt_sd_old_sent",
+            schooldrive_id="lead:old-sent",
+            aggregated_updated_at="2026-06-18T09:34:20Z",
+        )
+    )
+
+    assert result["status"] == "ignored"
+    assert result["ignored_reason"] == "sent_autoresponder_before_ingest_window"
+    get_settings.cache_clear()
+
+
+def test_schooldrive_queued_autoresponder_is_kept_as_waiting_record() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload(
+        event_id="evt_sd_queued",
+        schooldrive_id="subscription:queued",
+        lead_type="presubscription",
+        autoresponders=[
+            {
+                "message_id": "armsg:queued",
+                "autoresponder_id": 2063,
+                "short_name": "mkt_app_ln_subs_01",
+                "status": "queued",
+                "sent_at": None,
+            }
+        ],
+    )
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    assert result["status"] == "created"
+    assert get_next_action_for_lead(result["lead_id"]) is None
+
+
 def test_course_start_followup_replaces_nearby_lead_followup() -> None:
     seed_initial_data()
     now = utc_now()

@@ -113,6 +113,12 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_twilio_message_sid
 ON messages(twilio_message_sid);
 
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_channel
+ON messages(conversation_id, channel);
+
+CREATE INDEX IF NOT EXISTS idx_messages_lead_channel
+ON messages(lead_id, channel);
+
 CREATE TABLE IF NOT EXISTS attachments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -182,6 +188,15 @@ CREATE TABLE IF NOT EXISTS tasks (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_tasks_conversation_status
+ON tasks(conversation_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_lead_status
+ON tasks(lead_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_lead_trigger_reason
+ON tasks(lead_id, trigger_reason);
 
 CREATE TABLE IF NOT EXISTS sequences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -314,6 +329,15 @@ CREATE TABLE IF NOT EXISTS schooldrive_webhook_events (
     received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE INDEX IF NOT EXISTS idx_schooldrive_events_status
+ON schooldrive_webhook_events(status);
+
+CREATE INDEX IF NOT EXISTS idx_schooldrive_events_received_at
+ON schooldrive_webhook_events(received_at);
+
+CREATE INDEX IF NOT EXISTS idx_schooldrive_events_schooldrive_id
+ON schooldrive_webhook_events(schooldrive_id);
+
 CREATE TABLE IF NOT EXISTS schooldrive_whatsapp_autoresponders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     lead_id INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
@@ -328,6 +352,9 @@ CREATE TABLE IF NOT EXISTS schooldrive_whatsapp_autoresponders (
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(lead_id, message_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_schooldrive_ar_lead_status_sent_at
+ON schooldrive_whatsapp_autoresponders(lead_id, status, sent_at);
 
 CREATE TABLE IF NOT EXISTS bug_reports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

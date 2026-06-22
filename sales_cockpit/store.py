@@ -36,6 +36,11 @@ IDENTITY_REVIEW_STATUSES = {
     IDENTITY_STATUS_NEEDS_IDENTIFICATION,
     IDENTITY_STATUS_AMBIGUOUS,
 }
+SCHOOLDRIVE_PENDING_AUTORESPONDER_STATUSES = {
+    "queued",
+    "sending",
+    "moderation_pending",
+}
 
 
 def bootstrap() -> None:
@@ -637,6 +642,7 @@ def ingest_schooldrive_snapshot(envelope: dict[str, Any]) -> dict[str, Any]:
 
     now = iso_utc()
     payload_json = json.dumps(envelope, ensure_ascii=False, sort_keys=True)
+    settings = get_settings()
     with connect() as conn:
         duplicate = conn.execute(
             "SELECT lead_id, status FROM schooldrive_webhook_events WHERE event_id = ?",
@@ -695,6 +701,29 @@ def ingest_schooldrive_snapshot(envelope: dict[str, Any]) -> dict[str, Any]:
                 "lead_id": existing["id"],
                 "schooldrive_id": schooldrive_id,
             }
+
+        if not existing:
+            ignored_reason = _new_schooldrive_snapshot_ignore_reason(data, settings)
+            if ignored_reason:
+                _insert_schooldrive_ignored_event(
+                    conn,
+                    event_id=event_id,
+                    environment=environment,
+                    schooldrive_id=schooldrive_id,
+                    lead_id=None,
+                    occurred_at=occurred_at,
+                    aggregated_updated_at=aggregated_updated_at,
+                    ignored_reason=ignored_reason,
+                    payload_json=payload_json,
+                    received_at=now,
+                )
+                return {
+                    "status": "ignored",
+                    "accepted": False,
+                    "ignored_reason": ignored_reason,
+                    "lead_id": None,
+                    "schooldrive_id": schooldrive_id,
+                }
 
         lead_id, conversation_id, created = _upsert_schooldrive_lead(
             conn,
@@ -3012,6 +3041,92 @@ def _candidate_summary(candidate: dict[str, Any]) -> dict[str, Any]:
         or None,
         "identity_status": candidate.get("identity_status") or IDENTITY_STATUS_VERIFIED,
     }
+
+
+def _insert_schooldrive_ignored_event(
+    conn: Any,
+    *,
+    event_id: str,
+    environment: str,
+    schooldrive_id: str,
+    lead_id: int | None,
+    occurred_at: str,
+    aggregated_updated_at: str,
+    ignored_reason: str,
+    payload_json: str,
+    received_at: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO schooldrive_webhook_events (
+            event_id, environment, schooldrive_id, lead_id, occurred_at,
+            aggregated_updated_at, status, ignored_reason, payload_json, received_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'ignored', ?, ?, ?)
+        """,
+        (
+            event_id,
+            environment,
+            schooldrive_id,
+            lead_id,
+            occurred_at,
+            aggregated_updated_at,
+            ignored_reason,
+            payload_json,
+            received_at,
+        ),
+    )
+
+
+def _new_schooldrive_snapshot_ignore_reason(
+    data: dict[str, Any],
+    settings: Any,
+) -> str | None:
+    if data.get("is_archived"):
+        return "archived_without_existing_record"
+
+    person = data.get("person") or {}
+    has_identity = any(
+        str(person.get(key) or "").strip()
+        for key in ("first_name", "last_name", "phone", "email")
+    )
+    if not has_identity:
+        return "missing_identity"
+
+    autoresponders = data.get("whatsapp_autoresponders") or []
+    if not autoresponders:
+        return "waiting_for_first_autoresponder"
+
+    sent_at_values: list[datetime] = []
+    has_pending = False
+    for item in autoresponders:
+        status = str(item.get("status") or "").strip()
+        if status == "sent":
+            sent_at = parse_dt(str(item.get("sent_at") or "")) if item.get("sent_at") else None
+            if sent_at:
+                sent_at_values.append(sent_at)
+        if status in SCHOOLDRIVE_PENDING_AUTORESPONDER_STATUSES:
+            has_pending = True
+
+    if sent_at_values:
+        min_sent_at = _schooldrive_min_sent_at(settings)
+        if min_sent_at and max(sent_at_values) < min_sent_at:
+            return "sent_autoresponder_before_ingest_window"
+        return None
+
+    if has_pending:
+        return None
+
+    return "no_sent_or_pending_autoresponder"
+
+
+def _schooldrive_min_sent_at(settings: Any) -> datetime | None:
+    raw_value = str(getattr(settings, "schooldrive_ingest_min_sent_at", "") or "").strip()
+    if not raw_value:
+        return None
+    parsed = parse_dt(raw_value)
+    if not parsed:
+        raise ValueError("SALES_COCKPIT_SCHOOLDRIVE_INGEST_MIN_SENT_AT must be ISO 8601.")
+    return parsed
 
 
 def _select_inbound_match(

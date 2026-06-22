@@ -13,8 +13,8 @@ def test_schooldrive_smoke_steps_cover_expected_statuses() -> None:
     )
 
     assert [step.expected_status for step in steps] == [
+        "ignored",
         "created",
-        "updated",
         "ignored",
         "duplicate",
         "created",

@@ -101,6 +101,16 @@ sequence_step_index = 1
 
 If no sent autoresponder exists yet, the cockpit waits for the next SchoolDrive snapshot instead of inventing a date. Later sent SchoolDrive autoresponders are stored in the thread, but they must not recreate the initial no-reply follow-up once that initial follow-up has existed.
 
+For new SchoolDrive records, the cockpit applies an operational guard before creating a lead/conversation:
+
+- records with no usable identity are acknowledged and logged as ignored;
+- records with no WhatsApp autoresponder yet are acknowledged and logged as ignored, because the operational clock starts only when the first WhatsApp is actually sent;
+- records with only queued/sending/moderation-pending WhatsApp autoresponders are kept as waiting records, without action;
+- records whose latest sent autoresponder is older than `SALES_COCKPIT_SCHOOLDRIVE_INGEST_MIN_SENT_AT` are acknowledged and logged as ignored when that environment variable is set;
+- existing Cockpit records still accept newer SchoolDrive snapshots so their state can evolve normally.
+
+This prevents a SchoolDrive historical backfill from creating thousands of open Cockpit conversations that have no current operational action. It also keeps the live path intact: if an initially ignored lead later receives a new snapshot with a sent WhatsApp, the cockpit can create the conversation and schedule the Tanjona follow-up at `sent_at + 72h`.
+
 If `is_archived` is true, the cockpit resolves the conversation, closes open actions, and adds an internal note.
 
 The waiting state is deliberate. A SchoolDrive record with no sent WhatsApp yet, or only a queued WhatsApp, does not create a Tanjona follow-up because the 72h clock starts from the sent timestamp. Admin > État reports these records separately as waiting for the first SchoolDrive WhatsApp instead of treating them as broken workflow conversations.

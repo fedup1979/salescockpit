@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     twilio_content_read_only: bool = True
     schooldrive_mcp_url: str | None = None
     schooldrive_webhook_token: str | None = None
+    schooldrive_ingest_min_sent_at: str | None = None
     front_api_token: str | None = None
     front_import_query: str | None = None
     front_import_inbox_ids: str | None = None

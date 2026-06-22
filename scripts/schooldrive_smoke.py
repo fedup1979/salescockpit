@@ -211,7 +211,17 @@ def build_smoke_steps(
         course_name="APP VD SMOKE",
         start_date=(base_time + timedelta(days=40)).date().isoformat(),
         status="pre_subscription",
-        autoresponders=[],
+        autoresponders=[
+            _autoresponder(
+                message_id=f"armsg:{run_id}:archive-sent",
+                short_name="mkt_app_ln_subs_01",
+                whatsapp_template_id="HX_SMOKE_ARCHIVE",
+                variables={"prenom": "Smoke"},
+                status="sent",
+                sent_at=base_time + timedelta(minutes=2),
+                body="Bonjour Smoke, merci pour votre preinscription archive.",
+            )
+        ],
     )
     archive_update = _copy_with(
         archive_initial,
@@ -224,8 +234,8 @@ def build_smoke_steps(
     )
 
     return [
-        SmokeStep("lead initial without WhatsApp", lead_initial, "created"),
-        SmokeStep("lead updated with sent WhatsApp", lead_sent, "updated"),
+        SmokeStep("lead initial without WhatsApp", lead_initial, "ignored"),
+        SmokeStep("lead updated with sent WhatsApp", lead_sent, "created"),
         SmokeStep("older lead replay ignored", stale_replay, "ignored"),
         SmokeStep("duplicate event ignored by event_id", duplicate_sent, "duplicate"),
         SmokeStep("presubscription with sent WhatsApp", presub_sent, "created"),
