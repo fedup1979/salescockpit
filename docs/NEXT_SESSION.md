@@ -267,7 +267,16 @@ Stop-Process -Id <PID> -Force
 
 ## Known Gaps
 
-- SchoolDrive snapshot webhook exists; synthetic smoke, real replay, duplicate/stale handling, and real payload-shape validation have passed. The remaining gate is a fresh live website-form path through AR `sent` snapshot.
+- 2026-06-22 08:43 Europe/Zurich: staging was cleaned after an excessive SchoolDrive projector backfill. Backup before cleanup:
+  `/opt/sales-cockpit/backups/staging/sales_cockpit_staging_before_cleanup_20260622_0820.db`
+  with SHA-256 `68243dee0a2fc1949b09f24fb42a7a555ceff4967bbc16ce6b1ad37b20d58ac6`.
+- SchoolDrive snapshot webhook exists; synthetic smoke, real replay, duplicate/stale handling, real payload-shape validation, and a live post-cleanup staging event have passed. The remaining gate is a fresh website-form lead plus presubscription path through AR `sent` snapshot with course/category data validated in the UI.
+- Staging has `SALES_COCKPIT_SCHOOLDRIVE_INGEST_MIN_SENT_AT=2026-06-22T00:00:00Z` to prevent historical sent WhatsApp records from becoming operational conversations during final testing.
+- New SchoolDrive records without usable identity, without a WhatsApp autoresponder, or with sent autoresponders older than the configured cutoff are acknowledged and logged as ignored. Queued/sending/moderation-pending records with identity are kept as waiting records.
+- After cleanup, staging `pre_cutover_check` passed on commit `e388ed1`, database size was about 0.7 MB, with no foreign-key violations. A live post-cleanup presubscription `subscription:131968` was accepted with AR `armsg:1021237` (`sent`) and routed to a human review action because the SchoolDrive payload had no course category.
+- The cleanup script is `scripts/cleanup_schooldrive_staging.py`. It is dry-run by default and refuses production unless `--allow-production` is supplied. It exists for non-production cleanup only; do not use it casually on prod.
+- If many SchoolDrive records reappear in staging, first check whether they have `ignored_reason` values. A high ignored-event count is acceptable; high `leads.source='schooldrive_webhook'` count is not.
+- Current important SchoolDrive payload risk: at least some live subscription payloads arrive with `course.category = null` and `course.course_name = null`, even when `start_date` exists. The cockpit handles this by creating a review action instead of selecting an automatic sequence, but SchoolDrive course/category enrichment must be validated before production cutover.
 - SchoolDrive URL format is provided by Tiago's webhook contract and should be checked during the first staging replay.
 - Notion connector is placeholder only.
 - Twilio is mock by default locally. Staging was previously tested with Sandbox and then with the DEV sender `+41445054269`, but the DEV WhatsApp account was later blocked by Meta. Do not assume staging can send live WhatsApp. Current safe posture is `mock` for staging and production until explicit cutover.
