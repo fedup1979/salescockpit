@@ -230,7 +230,7 @@ Implemented locally for the refined V1:
 - SchoolDrive signed signal stops follow-ups and marks the lead `signed`.
 - SchoolDrive do-not-contact / opt-out signal sets contact status `do_not_contact`, closes follow-ups, and stores the source note.
 - SchoolDrive course/session-full signal stops follow-ups and creates a Setter I review action to propose another session.
-- These fields still need payload confirmation from SchoolDrive before production reliance.
+- SchoolDrive's updated nested `course` payload is supported locally: nested category, course id, course short/name, full ISO `start_date`, and Roadmap `product` records.
 
 Important timestamp decision:
 
@@ -269,6 +269,7 @@ Fresh website form
 -> SchoolDrive sends automatic WhatsApp AR
 -> AR reaches status=sent
 -> SchoolDrive emits a newer webhook snapshot
+-> payload contains the nested course/category/product shape expected by Sales Cockpit
 -> Cockpit stores status=sent and sent_at
 -> message body appears in thread
 -> Tanjona follow-up is created at sent_at + 72h

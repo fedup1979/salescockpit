@@ -436,6 +436,119 @@ def test_schooldrive_snapshot_accepts_real_subscription_payload_fields() -> None
     assert "whatsapp_template_id" in ar["payload_json"]
 
 
+def test_schooldrive_snapshot_accepts_nested_nutrition_subscription_course() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload(
+        event_id="evt_nested_nutrition_subscription",
+        schooldrive_id="subscription:7931",
+        lead_type="presubscription",
+        first_name="Nora",
+        last_name="Nutrition",
+    )
+    payload["data"]["course"] = {
+        "id": 7931,
+        "category": {"id": 39, "short_name": "Nutrition", "name": "Nutrition (150h)"},
+        "short_name": "NUTRI GE A26",
+        "name": "Nutrition Geneve Automne 2026",
+        "start_date": "2026-12-19T08:30:00Z",
+    }
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    assert result["status"] == "created"
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["course_id"] == "7931"
+    assert conversation["course_category_short_title"] == "Nutrition"
+    assert conversation["course_title"] == "NUTRI GE A26"
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "other"
+    assert action["trigger_reason"] == "unconfigured_course_category"
+
+
+def test_schooldrive_snapshot_accepts_nested_fsm_lead_with_linked_subscription() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload(
+        event_id="evt_nested_fsm_lead_linked_subscription",
+        schooldrive_id="lead:linked-fsm",
+        lead_type="lead",
+    )
+    payload["data"]["course"] = {
+        "id": 7348,
+        "category": {
+            "id": 5,
+            "short_name": "FSM",
+            "name": "Formation Secretaire Medicale",
+        },
+        "short_name": "FSM DISTANCE E26",
+        "name": "Formation Secretaire Medicale a distance Ete 2026",
+        "start_date": "2026-07-13T08:30:00Z",
+    }
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    assert result["status"] == "created"
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["course_id"] == "7348"
+    assert conversation["course_category_short_title"] == "FSM"
+    assert conversation["course_title"] == "FSM DISTANCE E26"
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "follow_up"
+    assert action["sequence_code"] == "lead_no_reply"
+
+
+def test_schooldrive_snapshot_accepts_nested_fsm_lead_without_linked_subscription() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload(
+        event_id="evt_nested_fsm_lead_without_subscription",
+        schooldrive_id="lead:no-linked-subscription",
+        lead_type="lead",
+    )
+    payload["data"]["course"] = {
+        "id": None,
+        "category": {
+            "id": 5,
+            "short_name": "FSM",
+            "name": "Formation Secretaire Medicale",
+        },
+        "short_name": None,
+        "name": None,
+        "start_date": None,
+    }
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    assert result["status"] == "created"
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["course_id"] == "5"
+    assert conversation["course_category_short_title"] == "FSM"
+    assert conversation["course_title"] == "Formation Secretaire Medicale"
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "follow_up"
+    assert action["sequence_code"] == "lead_no_reply"
+
+
+def test_schooldrive_snapshot_accepts_roadmap_product_without_course() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload(
+        event_id="evt_roadmap_product_without_course",
+        schooldrive_id="lead:roadmap-asca-rme",
+        lead_type="lead",
+    )
+    payload["data"].pop("course")
+    payload["data"]["product"] = {"roadmap_descriptive_id": "ASCA_RME"}
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    assert result["status"] == "created"
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["course_id"] == "ASCA_RME"
+    assert conversation["course_category_short_title"] is None
+    assert conversation["course_title"] == "Roadmap ASCA_RME"
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "other"
+    assert action["trigger_reason"] == "unconfigured_course_category"
+
+
 def test_schooldrive_connector_supports_subscription_urls() -> None:
     url = SchoolDriveConnector().get_lead_url("subscription:131885")
 

@@ -21,6 +21,13 @@ Production should use HTTPS before cutover.
 - Stable business key: `data.schooldrive_id`, for example `lead:137797` or `subscription:131885`.
 - `data.status` is stored as `schooldrive_status`; it does not overwrite Sales Cockpit qualification.
 - `data.url` is stored as `schooldrive_url` and used by the UI SchoolDrive link.
+- `data.course` accepts both the original flat shape and the newer nested SchoolDrive shape.
+- New nested course shape:
+  - `course.id` is stored as `course_id`;
+  - `course.category.short_name` is stored as `course_category_short_title`;
+  - `course.short_name` is preferred as `course_title`, with fallbacks to `course.course_name`, `course.session_name`, `course.name`, `course.category.name`, then the category short name;
+  - `course.start_date` may be either an ISO date (`YYYY-MM-DD`) or a full ISO UTC timestamp.
+- If `data.course` is absent and `data.product.roadmap_descriptive_id` is present, Sales Cockpit stores the roadmap identifier as an operational product title and routes the case to human review instead of starting a course-specific flux.
 
 ## Timestamp Convention
 

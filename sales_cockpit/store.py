@@ -1181,6 +1181,77 @@ def _schooldrive_snapshot_is_newer(
     return incoming > current
 
 
+def _clean_schooldrive_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _schooldrive_course_fields(data: dict[str, Any]) -> dict[str, str | None]:
+    course = data.get("course") or {}
+    product = data.get("product") or {}
+    if not isinstance(course, dict):
+        course = {}
+    if not isinstance(product, dict):
+        product = {}
+
+    category_raw = course.get("category")
+    category_id = None
+    category_short_name = None
+    category_name = None
+    if isinstance(category_raw, dict):
+        category_id = _clean_schooldrive_text(category_raw.get("id"))
+        category_short_name = _clean_schooldrive_text(
+            category_raw.get("short_name")
+            or category_raw.get("short_title")
+            or category_raw.get("system_id")
+        )
+        category_name = _clean_schooldrive_text(category_raw.get("name"))
+    else:
+        category_short_name = _clean_schooldrive_text(category_raw)
+
+    course_id = _clean_schooldrive_text(
+        course.get("id")
+        or course.get("course_id")
+        or category_id
+        or category_short_name
+    )
+    course_title = _clean_schooldrive_text(
+        course.get("short_name")
+        or course.get("course_name")
+        or course.get("session_name")
+        or course.get("name")
+        or category_name
+        or category_short_name
+    )
+
+    roadmap_id = _clean_schooldrive_text(product.get("roadmap_descriptive_id"))
+    if not course and roadmap_id:
+        course_id = roadmap_id
+        course_title = f"Roadmap {roadmap_id}"
+
+    return {
+        "course_id": course_id,
+        "course_category_short_title": category_short_name,
+        "course_title": course_title,
+    }
+
+
+def _normalize_schooldrive_course_start(value: Any) -> str | None:
+    text = _clean_schooldrive_text(value)
+    if not text:
+        return None
+    try:
+        return iso_utc(parse_dt(text))
+    except Exception:
+        pass
+    try:
+        return iso_utc(parse_dt(f"{text}T08:00:00Z"))
+    except Exception:
+        return None
+
+
 def _upsert_schooldrive_lead(
     conn: Any,
     data: dict[str, Any],
@@ -1192,14 +1263,15 @@ def _upsert_schooldrive_lead(
     now = iso_utc()
     schooldrive_id = str(data.get("schooldrive_id") or "").strip()
     person = data.get("person") or {}
-    course = data.get("course") or {}
     first_name = str(person.get("first_name") or "").strip() or "Inconnu(e)"
     last_name = str(person.get("last_name") or "").strip()
     phone = str(person.get("phone") or "").strip() or None
     email = str(person.get("email") or "").strip() or None
     lead_type = str(data.get("lead_type") or "lead").strip()
-    category = str(course.get("category") or "").strip() or None
-    course_name = str(course.get("course_name") or "").strip() or None
+    course_fields = _schooldrive_course_fields(data)
+    course_id = course_fields["course_id"]
+    category = course_fields["course_category_short_title"]
+    course_name = course_fields["course_title"]
     source_type = "paid_ads" if lead_type == "lead" else "organic"
     archived_at = _normalize_optional_iso(data.get("archived_at"))
     is_archived = 1 if bool(data.get("is_archived")) else 0
@@ -1239,7 +1311,7 @@ def _upsert_schooldrive_lead(
                 email,
                 phone,
                 phone,
-                category,
+                course_id,
                 category,
                 course_name,
                 lead_type,
@@ -1286,7 +1358,7 @@ def _upsert_schooldrive_lead(
                 email,
                 phone,
                 phone,
-                category,
+                course_id,
                 category,
                 course_name,
                 lead_type,
@@ -1571,8 +1643,9 @@ def _course_start_anchor_for_lead(conn: Any, lead_id: int) -> tuple[str | None, 
     except (TypeError, json.JSONDecodeError):
         payload_start_date = None
 
-    if payload_start_date:
-        return f"{payload_start_date}T08:00:00Z", "Date de cours SchoolDrive"
+    normalized_payload_start = _normalize_schooldrive_course_start(payload_start_date)
+    if normalized_payload_start:
+        return normalized_payload_start, "Date de cours SchoolDrive"
 
     category = (lead.get("course_category_short_title") or "").strip().upper()
     if not category:
