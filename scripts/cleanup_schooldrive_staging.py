@@ -12,7 +12,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from sales_cockpit.config import get_settings
-from sales_cockpit.db import connect, init_db
+from sales_cockpit.db import connect
 
 
 def main() -> None:
@@ -31,7 +31,6 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    init_db()
     settings = get_settings()
     if settings.environment == "production" and not args.allow_production:
         raise SystemExit("Refusing to clean production without --allow-production.")
@@ -101,10 +100,40 @@ def _counts() -> dict[str, int]:
 
 def _cleanup() -> None:
     with connect() as conn:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("CREATE TEMP TABLE IF NOT EXISTS sd_cleanup_ids(id INTEGER PRIMARY KEY)")
+        conn.execute("DELETE FROM sd_cleanup_ids")
+        conn.execute(
+            "INSERT INTO sd_cleanup_ids SELECT id FROM leads WHERE source = 'schooldrive_webhook'"
+        )
+        conn.execute("DELETE FROM tasks WHERE lead_id IN (SELECT id FROM sd_cleanup_ids)")
+        conn.execute("DELETE FROM messages WHERE lead_id IN (SELECT id FROM sd_cleanup_ids)")
+        conn.execute(
+            """
+            DELETE FROM schooldrive_whatsapp_autoresponders
+            WHERE lead_id IN (SELECT id FROM sd_cleanup_ids)
+            """
+        )
+        conn.execute(
+            "DELETE FROM conversations WHERE lead_id IN (SELECT id FROM sd_cleanup_ids)"
+        )
+        conn.execute("DELETE FROM lead_events WHERE lead_id IN (SELECT id FROM sd_cleanup_ids)")
+        conn.execute(
+            """
+            DELETE FROM user_activity_log
+            WHERE lead_id IN (SELECT id FROM sd_cleanup_ids)
+               OR conversation_id NOT IN (SELECT id FROM conversations)
+               OR action_id NOT IN (SELECT id FROM tasks)
+            """
+        )
         conn.execute("DELETE FROM schooldrive_webhook_events")
         conn.execute("DELETE FROM leads WHERE source = 'schooldrive_webhook'")
         conn.execute("DELETE FROM messages WHERE channel = 'schooldrive_autoresponder'")
         conn.execute("DELETE FROM schooldrive_whatsapp_autoresponders")
+        conn.execute("PRAGMA foreign_keys = ON")
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(f"Foreign key violations after cleanup: {len(violations)}")
 
 
 def _vacuum(db_path: Path) -> None:
