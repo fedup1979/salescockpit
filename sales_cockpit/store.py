@@ -2380,9 +2380,14 @@ def list_conversations(
             SELECT t.id FROM tasks t
             WHERE t.lead_id = l.id AND t.status IN ('open', 'in_progress', 'planned', 'blocked')
             ORDER BY
+                CASE t.type
+                    WHEN 'reply' THEN 0
+                    WHEN 'contact_review' THEN 1
+                    ELSE 2
+                END,
+                CASE t.urgency WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
                 CASE WHEN t.due_at IS NULL THEN 1 ELSE 0 END,
                 datetime(t.due_at) ASC,
-                CASE t.urgency WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
                 t.id ASC
             LIMIT 1
         )
@@ -2505,10 +2510,13 @@ def get_next_action_for_lead(lead_id: int) -> dict[str, Any] | None:
             """
             SELECT
                 t.*,
+                l.lead_status,
+                l.contact_status,
                 u.full_name AS assigned_to_name,
                 u.role AS assigned_to_role,
                 u.email AS assigned_to_email
             FROM tasks t
+            JOIN leads l ON l.id = t.lead_id
             LEFT JOIN users u ON u.id = t.assigned_to_user_id
             WHERE t.lead_id = ? AND t.status IN ('open', 'in_progress', 'planned', 'blocked')
             ORDER BY
@@ -2700,6 +2708,8 @@ def assign_standard_next_action(
         return False, "Conversation terminée : réactivez-la avant de créer une action."
     if conv.get("contact_status") in STOP_CONTACT_STATUSES:
         return False, "Contact bloqué : le statut Ne plus contacter doit être levé avant de créer une action."
+    if conv.get("lead_status") in STOP_QUALIFICATION_STATUSES:
+        return False, "Qualification terminale : remettez le prospect Éligible avant de créer une action."
     if action_type == "follow_up" and followups_are_blocked(conv):
         return False, "Ce statut bloque les relances commerciales."
 
@@ -2770,10 +2780,11 @@ def assign_standard_next_action(
                 UPDATE leads
                 SET setter_user_id = ?,
                     sales_stage = ?,
+                    lead_status = CASE WHEN ? = 'setting_call' THEN 'eligible' ELSE lead_status END,
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (assigned_to_user_id, next_stage, now, conv["lead_id"]),
+                (assigned_to_user_id, next_stage, action_type, now, conv["lead_id"]),
             )
         elif action_type == "closing_call":
             conn.execute(
@@ -3090,6 +3101,13 @@ def set_conversation_status(
         return False, "Choisissez une prochaine action pour rouvrir la conversation."
     if status == "open" and previous_status == "resolved" and not (reopen_reason or "").strip():
         return False, "Une note est obligatoire pour réactiver la conversation."
+    if status == "open" and previous_status == "resolved":
+        if reopen_action_type not in {"reply", "follow_up", "setting_call", "closing_call"}:
+            return False, "Choisissez une prochaine action standard valide."
+        if conv.get("contact_status") in STOP_CONTACT_STATUSES:
+            return False, "Le statut Ne plus contacter doit être levé avant de réactiver la conversation."
+        if conv.get("lead_status") in STOP_QUALIFICATION_STATUSES:
+            return False, "La qualification doit être remise à Éligible avant de réactiver la conversation."
 
     now = iso_utc()
     created_action_id = None
@@ -3152,6 +3170,7 @@ def set_conversation_status(
                 SET status = 'open',
                     resolution_reason = NULL,
                     resolution_note = NULL,
+                    resolved_at = NULL,
                     reopened_at = ?,
                     updated_at = ?
                 WHERE id = ?
@@ -3182,6 +3201,40 @@ def set_conversation_status(
                 trigger_reason="conversation_reopened",
                 metadata={"reopen_reason": reopen_reason},
             )
+            if action_type == "reply":
+                conn.execute(
+                    """
+                    UPDATE leads
+                    SET setter_user_id = coalesce(setter_user_id, ?),
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (assigned_to_user_id, now, conv["lead_id"]),
+                )
+            elif action_type == "setting_call":
+                conn.execute(
+                    """
+                    UPDATE leads
+                    SET setter_user_id = ?,
+                        sales_stage = 'appointment_booked',
+                        lead_status = 'eligible',
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (assigned_to_user_id, now, conv["lead_id"]),
+                )
+            elif action_type == "closing_call":
+                conn.execute(
+                    """
+                    UPDATE leads
+                    SET closer_user_id = ?,
+                        sales_stage = 'closing',
+                        lead_status = 'eligible',
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (assigned_to_user_id, now, conv["lead_id"]),
+                )
             _insert_internal_note_message(
                 conn,
                 conv["lead_id"],
@@ -3290,6 +3343,72 @@ def _insert_next_action(
     return int(cursor.lastrowid)
 
 
+def _close_support_records_for_task_ids(
+    conn: Any,
+    task_ids: list[int],
+    user_id: int | None,
+    outcome: str,
+    now: str,
+) -> None:
+    if not task_ids:
+        return
+
+    placeholders = ", ".join("?" for _ in task_ids)
+    request_rows = conn.execute(
+        f"""
+        SELECT id
+        FROM template_requests
+        WHERE task_id IN ({placeholders})
+          AND status IN ('to_create', 'submitted')
+        """,
+        task_ids,
+    ).fetchall()
+    request_ids = [int(row["id"]) for row in request_rows]
+    if request_ids:
+        request_placeholders = ", ".join("?" for _ in request_ids)
+        conn.execute(
+            f"""
+            UPDATE template_requests
+            SET status = 'cancelled',
+                resolved_at = ?,
+                updated_at = ?
+            WHERE id IN ({request_placeholders})
+            """,
+            [now, now, *request_ids],
+        )
+        conn.execute(
+            f"""
+            UPDATE admin_actions
+            SET status = 'done',
+                outcome = ?,
+                completed_by_user_id = ?,
+                completed_at = ?,
+                updated_at = ?
+            WHERE status IN ('open', 'in_progress', 'blocked')
+              AND (
+                task_id IN ({placeholders})
+                OR template_request_id IN ({request_placeholders})
+              )
+            """,
+            [f"support_cancelled:{outcome}", user_id, now, now, *task_ids, *request_ids],
+        )
+        return
+
+    conn.execute(
+        f"""
+        UPDATE admin_actions
+        SET status = 'done',
+            outcome = ?,
+            completed_by_user_id = ?,
+            completed_at = ?,
+            updated_at = ?
+        WHERE status IN ('open', 'in_progress', 'blocked')
+          AND task_id IN ({placeholders})
+        """,
+        [f"support_cancelled:{outcome}", user_id, now, now, *task_ids],
+    )
+
+
 def _complete_open_actions_for_lead(
     conn: Any,
     lead_id: int,
@@ -3340,6 +3459,7 @@ def _complete_open_actions_for_lead(
         """,
         [outcome, now, now, *task_ids],
     )
+    _close_support_records_for_task_ids(conn, task_ids, user_id, outcome, now)
     insert_event(
         conn,
         lead_id,
@@ -3661,6 +3781,17 @@ def _close_outbound_action_and_chain(
                 outcome="Appel setting remplacé",
                 included_types=("setting_call",),
             )
+            conn.execute(
+                """
+                UPDATE leads
+                SET setter_user_id = ?,
+                    sales_stage = 'appointment_booked',
+                    lead_status = 'eligible',
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (assignee_id, sent_at, conv["lead_id"]),
+            )
             next_action_id = _insert_next_action(
                 conn,
                 lead_id=conv["lead_id"],
@@ -3852,6 +3983,144 @@ def _default_active_user_id(conn: Any, role: str) -> int | None:
     return int(row["id"]) if row else None
 
 
+def _conversation_has_unanswered_inbound(conn: Any, conversation_id: int) -> bool:
+    row = conn.execute(
+        """
+        SELECT
+            MAX(CASE WHEN direction = 'inbound' THEN created_at END) AS last_inbound_at,
+            MAX(CASE WHEN direction = 'outbound' THEN created_at END) AS last_outbound_at
+        FROM messages
+        WHERE conversation_id = ?
+        """,
+        (conversation_id,),
+    ).fetchone()
+    if not row or not row["last_inbound_at"]:
+        return False
+    last_inbound = parse_dt(row["last_inbound_at"])
+    last_outbound = parse_dt(row["last_outbound_at"])
+    return bool(last_inbound and (not last_outbound or last_inbound > last_outbound))
+
+
+def _ensure_reply_for_unanswered_inbound(
+    conn: Any,
+    lead_id: int,
+    conversation_id: int,
+    setter_user_id: int | None,
+    created_by_user_id: int | None,
+    now: str,
+    trigger_reason: str,
+) -> int | None:
+    if not _conversation_has_unanswered_inbound(conn, conversation_id):
+        return None
+    setter_id = setter_user_id or setter1_user_id(conn) or _default_active_user_id(conn, "setter")
+    if not setter_id:
+        return None
+    lead = row_to_dict(
+        conn.execute(
+            "SELECT first_name, last_name FROM leads WHERE id = ?",
+            (lead_id,),
+        ).fetchone()
+    )
+    if not lead:
+        return None
+    title = f"Répondre à {lead_full_name(lead)}"
+    existing = conn.execute(
+        """
+        SELECT id
+        FROM tasks
+        WHERE lead_id = ? AND conversation_id = ? AND type = 'reply'
+          AND status IN ('open', 'in_progress', 'planned', 'blocked')
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (lead_id, conversation_id),
+    ).fetchone()
+    if existing:
+        conn.execute(
+            """
+            UPDATE tasks
+            SET title = ?, assigned_to_user_id = ?, due_at = ?,
+                urgency = 'urgent', updated_at = ?
+            WHERE id = ?
+            """,
+            (title, setter_id, now, now, existing["id"]),
+        )
+        return int(existing["id"])
+    return _insert_next_action(
+        conn,
+        lead_id=lead_id,
+        conversation_id=conversation_id,
+        action_type="reply",
+        title=title,
+        assigned_to_user_id=setter_id,
+        created_by_user_id=created_by_user_id,
+        urgency="urgent",
+        due_at=now,
+        trigger_reason=trigger_reason,
+    )
+
+
+def _upsert_contact_review_action(
+    conn: Any,
+    lead_id: int,
+    conversation_id: int,
+    setter_user_id: int,
+    lead: dict[str, Any],
+    now: str,
+    title: str,
+    description: str,
+    trigger_reason: str,
+    event_type: str,
+) -> None:
+    existing_review = conn.execute(
+        """
+        SELECT id FROM tasks
+        WHERE lead_id = ? AND conversation_id = ? AND type = 'contact_review'
+          AND status IN ('open', 'in_progress', 'planned', 'blocked')
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (lead_id, conversation_id),
+    ).fetchone()
+    if existing_review:
+        conn.execute(
+            """
+            UPDATE tasks
+            SET title = ?, assigned_to_user_id = ?, due_at = ?,
+                urgency = 'urgent', description = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (title, setter_user_id, now, description, now, existing_review["id"]),
+        )
+        return
+
+    action_id = _insert_next_action(
+        conn,
+        lead_id=lead_id,
+        conversation_id=conversation_id,
+        action_type="contact_review",
+        title=title,
+        assigned_to_user_id=setter_user_id,
+        created_by_user_id=None,
+        urgency="urgent",
+        due_at=now,
+        description=description,
+        trigger_reason=trigger_reason,
+    )
+    insert_event(
+        conn,
+        lead_id,
+        event_type,
+        new={
+            "task_id": action_id,
+            "assigned_to_user_id": setter_user_id,
+            "conversation_id": conversation_id,
+            "lead_status": lead.get("lead_status"),
+            "contact_status": lead.get("contact_status"),
+        },
+    )
+
+
 def _upsert_reply_action_for_inbound(
     conn: Any,
     lead_id: int,
@@ -3865,7 +4134,11 @@ def _upsert_reply_action_for_inbound(
     now = iso_utc()
     lead = row_to_dict(
         conn.execute(
-            "SELECT first_name, last_name, setter_user_id, contact_status FROM leads WHERE id = ?",
+            """
+            SELECT first_name, last_name, setter_user_id, lead_status, contact_status
+            FROM leads
+            WHERE id = ?
+            """,
             (lead_id,),
         ).fetchone()
     )
@@ -3889,54 +4162,38 @@ def _upsert_reply_action_for_inbound(
     )
 
     if lead.get("contact_status") in STOP_CONTACT_STATUSES:
-        title = f"Revoir le statut de contact de {lead_full_name(lead)}"
-        existing_review = conn.execute(
-            """
-            SELECT id FROM tasks
-            WHERE lead_id = ? AND conversation_id = ? AND type = 'contact_review'
-              AND status IN ('open', 'in_progress', 'planned', 'blocked')
-            ORDER BY id DESC
-            LIMIT 1
-            """,
-            (lead_id, conversation_id),
-        ).fetchone()
-        if existing_review:
-            conn.execute(
-                """
-                UPDATE tasks
-                SET title = ?, assigned_to_user_id = ?, due_at = ?,
-                    urgency = 'urgent', updated_at = ?
-                WHERE id = ?
-                """,
-                (title, setter_id, now, now, existing_review["id"]),
-            )
-            return
-
-        action_id = _insert_next_action(
+        _upsert_contact_review_action(
             conn,
-            lead_id=lead_id,
-            conversation_id=conversation_id,
-            action_type="contact_review",
-            title=title,
-            assigned_to_user_id=setter_id,
-            created_by_user_id=None,
-            urgency="urgent",
-            due_at=now,
+            lead_id,
+            conversation_id,
+            setter_id,
+            lead,
+            now,
+            f"Revoir le statut de contact de {lead_full_name(lead)}",
             description=(
                 "Le prospect est marqué Ne plus contacter mais vient d'écrire. "
                 "Lire le message et décider s'il faut maintenir ou lever le blocage."
             ),
             trigger_reason="do_not_contact_prospect_replied",
+            event_type="contact_review_created_from_inbound",
         )
-        insert_event(
+        return
+
+    if lead.get("lead_status") in STOP_QUALIFICATION_STATUSES:
+        _upsert_contact_review_action(
             conn,
             lead_id,
-            "contact_review_created_from_inbound",
-            new={
-                "task_id": action_id,
-                "assigned_to_user_id": setter_id,
-                "conversation_id": conversation_id,
-            },
+            conversation_id,
+            setter_id,
+            lead,
+            now,
+            f"Revoir la qualification de {lead_full_name(lead)}",
+            description=(
+                "Le prospect a une qualification terminale mais vient d'écrire. "
+                "Lire le message et décider s'il faut maintenir la clôture ou requalifier avant de répondre."
+            ),
+            trigger_reason="terminal_status_prospect_replied",
+            event_type="terminal_status_review_created_from_inbound",
         )
         return
 
@@ -6037,6 +6294,75 @@ def update_lead_qualification(
             _sync_next_action_for_sales_stage(conn, lead_id, user_id, sales_stage, now)
         elif lead_status == "will_sign" and lead_status_changed:
             _sync_next_action_for_lead_status(conn, lead_id, user_id, lead_status, now)
+        elif (
+            previous.get("contact_status") in STOP_CONTACT_STATUSES
+            and effective_contact_status not in STOP_CONTACT_STATUSES
+        ):
+            _complete_open_actions_for_lead(
+                conn,
+                lead_id,
+                user_id,
+                outcome="Statut contact levé manuellement",
+                included_types=("contact_review",),
+            )
+            conversation = row_to_dict(
+                conn.execute(
+                    """
+                    SELECT c.id AS conversation_id, c.status, l.setter_user_id
+                    FROM conversations c
+                    JOIN leads l ON l.id = c.lead_id
+                    WHERE c.lead_id = ?
+                    ORDER BY c.id DESC
+                    LIMIT 1
+                    """,
+                    (lead_id,),
+                ).fetchone()
+            )
+            if conversation and conversation.get("status") == "open":
+                _ensure_reply_for_unanswered_inbound(
+                    conn,
+                    lead_id,
+                    conversation["conversation_id"],
+                    conversation.get("setter_user_id"),
+                    user_id,
+                    now,
+                    "contact_status_lifted_with_unanswered_inbound",
+                )
+        elif (
+            previous.get("lead_status") in STOP_QUALIFICATION_STATUSES
+            and lead_status not in STOP_QUALIFICATION_STATUSES
+            and effective_contact_status not in STOP_CONTACT_STATUSES
+        ):
+            _complete_open_actions_for_lead(
+                conn,
+                lead_id,
+                user_id,
+                outcome="Qualification terminale levée manuellement",
+                included_types=("contact_review",),
+            )
+            conversation = row_to_dict(
+                conn.execute(
+                    """
+                    SELECT c.id AS conversation_id, c.status, l.setter_user_id
+                    FROM conversations c
+                    JOIN leads l ON l.id = c.lead_id
+                    WHERE c.lead_id = ?
+                    ORDER BY c.id DESC
+                    LIMIT 1
+                    """,
+                    (lead_id,),
+                ).fetchone()
+            )
+            if conversation and conversation.get("status") == "open":
+                _ensure_reply_for_unanswered_inbound(
+                    conn,
+                    lead_id,
+                    conversation["conversation_id"],
+                    conversation.get("setter_user_id"),
+                    user_id,
+                    now,
+                    "terminal_status_lifted_with_unanswered_inbound",
+                )
         elif stage_changed:
             _sync_next_action_for_sales_stage(conn, lead_id, user_id, sales_stage, now)
         insert_event(
@@ -6204,8 +6530,8 @@ def _sync_next_action_for_lead_status(
             UPDATE tasks
             SET assigned_to_user_id = ?,
                 due_at = coalesce(due_at, ?),
-                sequence_code = coalesce(sequence_code, 'closer_will_sign'),
-                sequence_step_index = coalesce(sequence_step_index, 1),
+                sequence_code = 'closer_will_sign',
+                sequence_step_index = 1,
                 updated_at = ?
             WHERE id = ?
             """,
@@ -6387,6 +6713,8 @@ def send_freeform_message(
         return False, "Conversation introuvable."
     if conv.get("contact_status") in STOP_CONTACT_STATUSES:
         return False, "Contact bloqué : le statut Ne plus contacter doit être levé avant tout envoi."
+    if conv.get("lead_status") in STOP_QUALIFICATION_STATUSES:
+        return False, "Qualification terminale : remettez le prospect Éligible avant tout envoi."
     if conv.get("status") == "resolved":
         return False, "Conversation terminée : réactivez-la avant tout envoi."
     body = body.strip()
@@ -6501,6 +6829,8 @@ def send_template_message(
         return False, "Modèle introuvable."
     if conv.get("contact_status") in STOP_CONTACT_STATUSES:
         return False, "Contact bloqué : le statut Ne plus contacter doit être levé avant tout envoi."
+    if conv.get("lead_status") in STOP_QUALIFICATION_STATUSES:
+        return False, "Qualification terminale : remettez le prospect Éligible avant tout envoi."
     if conv.get("status") == "resolved":
         return False, "Conversation terminée : réactivez-la avant tout envoi."
     with connect() as conn:
@@ -6873,10 +7203,16 @@ def record_inbound_message(
         conn.execute(
             """
             UPDATE conversations
-            SET last_inbound_at = ?, status = 'open', updated_at = ?
+            SET last_inbound_at = ?,
+                status = 'open',
+                resolution_reason = NULL,
+                resolution_note = NULL,
+                resolved_at = NULL,
+                reopened_at = ?,
+                updated_at = ?
             WHERE id = ?
             """,
-            (now, now, conversation_id),
+            (now, now, now, conversation_id),
         )
         _upsert_reply_action_for_inbound(conn, lead_id, conversation_id, setter_user_id)
         insert_event(
@@ -7140,7 +7476,8 @@ def complete_action_with_workflow(
                     l.lead_status,
                     l.contact_status,
                     l.sales_stage,
-                    c.id AS conversation_id
+                    c.id AS conversation_id,
+                    c.status AS conversation_status
                 FROM tasks t
                 JOIN leads l ON l.id = t.lead_id
                 LEFT JOIN conversations c ON c.id = t.conversation_id
@@ -7151,6 +7488,20 @@ def complete_action_with_workflow(
         )
         if not task:
             return False, "Action introuvable."
+        if task.get("status") not in {"open", "in_progress", "planned", "blocked"}:
+            return False, "Cette action n'est plus active."
+        if task.get("conversation_id") and task.get("conversation_status") != "open":
+            return False, "Conversation terminée : réactivez-la avant de terminer une action."
+        if task.get("contact_status") in STOP_CONTACT_STATUSES and not (
+            task["type"] == "contact_review"
+            and outcome in {"maintain_do_not_contact", "lift_do_not_contact"}
+        ):
+            return False, "Contact bloqué : le statut Ne plus contacter doit être levé avant cette action."
+        if task.get("lead_status") in STOP_QUALIFICATION_STATUSES and not (
+            task["type"] == "contact_review"
+            and outcome in {"keep_terminal_status", "requalify_and_reply"}
+        ):
+            return False, "Qualification terminale : requalifiez le prospect avant cette action."
         if task["type"] in {"setting_call", "closing_call"} and not note:
             return False, "Une mini note est obligatoire après un appel."
         if outcome == "template_missing":
@@ -7370,6 +7721,17 @@ def complete_action_with_workflow(
                     outcome="Appel setting remplacé",
                     included_types=("setting_call",),
                 )
+                conn.execute(
+                    """
+                    UPDATE leads
+                    SET setter_user_id = ?,
+                        sales_stage = 'appointment_booked',
+                        lead_status = 'eligible',
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (assignee_id, now, task["lead_id"]),
+                )
                 next_action_id = _insert_next_action(
                     conn,
                     lead_id=task["lead_id"],
@@ -7432,7 +7794,10 @@ def complete_action_with_workflow(
                 conn.execute(
                     """
                     UPDATE leads
-                    SET closer_user_id = ?, sales_stage = 'closing', updated_at = ?
+                    SET closer_user_id = ?,
+                        sales_stage = 'closing',
+                        lead_status = 'eligible',
+                        updated_at = ?
                     WHERE id = ?
                     """,
                     (closer_id, now, task["lead_id"]),
@@ -7672,6 +8037,8 @@ def complete_action_with_workflow(
             if outcome == "maintain_do_not_contact":
                 resolve("do_not_contact")
             elif outcome == "lift_do_not_contact":
+                if task.get("lead_status") in STOP_QUALIFICATION_STATUSES:
+                    return False, "La qualification est terminale : requalifie le prospect avant de répondre."
                 conn.execute(
                     """
                     UPDATE leads
@@ -7693,6 +8060,39 @@ def complete_action_with_workflow(
                         due_at=now,
                         description=note,
                         trigger_reason="do_not_contact_lifted_after_inbound",
+                        previous_action_id=task_id,
+                    )
+            elif outcome == "keep_terminal_status":
+                reason = (
+                    task.get("lead_status")
+                    if task.get("lead_status") in STOP_QUALIFICATION_STATUSES
+                    else "not_relevant"
+                )
+                resolve(reason)
+            elif outcome == "requalify_and_reply":
+                conn.execute(
+                    """
+                    UPDATE leads
+                    SET lead_status = 'eligible',
+                        contact_status = 'contact_allowed',
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, task["lead_id"]),
+                )
+                if conversation_id:
+                    next_action_id = _insert_next_action(
+                        conn,
+                        lead_id=task["lead_id"],
+                        conversation_id=conversation_id,
+                        action_type="reply",
+                        title=f"Répondre à {full_name}",
+                        assigned_to_user_id=task["assigned_to_user_id"] or user_id,
+                        created_by_user_id=user_id,
+                        urgency="urgent",
+                        due_at=now,
+                        description=note,
+                        trigger_reason="terminal_status_lifted_after_inbound",
                         previous_action_id=task_id,
                     )
 

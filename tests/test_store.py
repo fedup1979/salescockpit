@@ -249,6 +249,25 @@ def test_resolution_requires_reason_and_reopen_requires_action() -> None:
     assert "note" in message
 
 
+def test_reopen_refuses_terminal_lead_status() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Conversation de test.")
+    update_lead_qualification(result["lead_id"], admin["id"], "won", "signed")
+
+    ok, message = set_conversation_status(
+        result["conversation_id"],
+        admin["id"],
+        "open",
+        reopen_action_type="reply",
+        reopen_assigned_to_user_id=admin["id"],
+        reopen_reason="Test reopen",
+    )
+
+    assert ok is False
+    assert "qualification" in message.lower()
+
+
 def test_inbound_message_creates_setter_reply_action() -> None:
     seed_initial_data()
     phone = unique_phone()
@@ -388,6 +407,58 @@ def test_do_not_contact_inbound_creates_contact_review() -> None:
     assert action["assigned_to_role"] == "setter"
 
 
+def test_manual_contact_status_lift_replaces_contact_review_with_reply() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    phone = unique_phone()
+    result = record_inbound_message(phone, "Ne me contactez plus.")
+    update_lead_qualification(
+        result["lead_id"],
+        admin["id"],
+        "lost",
+        "eligible",
+        contact_status="do_not_contact",
+    )
+    record_inbound_message(phone, "Finalement, je veux une réponse.")
+    assert get_next_action_for_lead(result["lead_id"])["type"] == "contact_review"
+
+    update_lead_qualification(
+        result["lead_id"],
+        admin["id"],
+        "setting",
+        "eligible",
+        contact_status="contact_allowed",
+    )
+
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "reply"
+    active_reviews = [
+        item for item in list_actions_for_lead(result["lead_id"], "all")
+        if item["type"] == "contact_review" and item["status"] in {"open", "in_progress", "planned", "blocked"}
+    ]
+    assert active_reviews == []
+
+
+def test_inbound_on_terminal_qualification_creates_review_not_reply() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    phone = unique_phone()
+    result = record_inbound_message(phone, "Bonjour.")
+    update_lead_qualification(result["lead_id"], admin["id"], "won", "signed")
+
+    result = record_inbound_message(phone, "J'ai une autre question.")
+
+    action = get_next_action_for_lead(result["lead_id"])
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["status"] == "open"
+    assert conversation["resolved_at"] is None
+    assert action["type"] == "contact_review"
+    assert action["lead_status"] == "signed"
+    ok, message = send_freeform_message(result["conversation_id"], admin["id"], "Bonjour.")
+    assert ok is False
+    assert "Qualification" in message
+
+
 def test_followup_scheduled_moves_conversation_to_waiting() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
@@ -520,6 +591,9 @@ def test_reply_send_with_setting_booked_creates_setting_call_with_proof() -> Non
     next_action = get_next_action_for_lead(result["lead_id"])
     assert next_action["type"] == "setting_call"
     assert next_action["due_at"] == due_at
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["sales_stage"] == "appointment_booked"
+    assert conversation["lead_status"] == "eligible"
     actions = list_actions_for_lead(result["lead_id"], "all")
     completed_reply = next(item for item in actions if item["type"] == "reply")
     assert completed_reply["outcome"] == "setting_booked"
@@ -599,6 +673,11 @@ def test_overdue_planned_call_does_not_hide_urgent_reply() -> None:
 
     next_action = get_next_action_for_lead(result["lead_id"])
     assert next_action["type"] == "reply"
+    conversation = next(
+        item for item in list_conversations(search=phone)
+        if item["conversation_id"] == result["conversation_id"]
+    )
+    assert conversation["next_action_type"] == "reply"
 
 
 def test_standard_reply_assignment_preserves_planned_call_and_blocks_parallel_followup() -> None:
@@ -2065,6 +2144,7 @@ def test_inbound_cancels_blocked_followup_and_creates_reply() -> None:
         task_id=followup["id"],
     )
     assert ok is True
+    request = next(item for item in list_template_requests() if item["task_id"] == followup["id"])
     assert get_next_action_for_lead(result["lead_id"])["status"] == "blocked"
 
     record_inbound_message(phone, "Je viens de répondre.")
@@ -2076,6 +2156,12 @@ def test_inbound_cancels_blocked_followup_and_creates_reply() -> None:
         if item["type"] == "follow_up" and item["status"] == "blocked"
     ]
     assert blocked_followups == []
+    updated_request = next(item for item in list_template_requests("all") if item["id"] == request["id"])
+    assert updated_request["status"] == "cancelled"
+    assert not [
+        item for item in list_admin_actions()
+        if item.get("template_request_id") == request["id"]
+    ]
 
 
 def test_outbox_keeps_send_error_message_when_twilio_fails(monkeypatch) -> None:

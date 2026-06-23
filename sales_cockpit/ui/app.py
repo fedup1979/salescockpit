@@ -110,7 +110,12 @@ ACTION_OUTCOMES = {
     "follow_up": ["follow_up_sent", "template_missing", "sequence_completed_no_reply"],
     "setting_call": ["to_closing", "not_reached", "not_ready", "not_relevant", "do_not_contact"],
     "closing_call": ["signed", "will_sign", "not_reached", "undecided", "not_relevant", "do_not_contact"],
-    "contact_review": ["maintain_do_not_contact", "lift_do_not_contact"],
+    "contact_review": [
+        "maintain_do_not_contact",
+        "lift_do_not_contact",
+        "keep_terminal_status",
+        "requalify_and_reply",
+    ],
     "other": ["done"],
 }
 REPLY_SEND_OUTCOMES = ["reply_no_appointment", "setting_booked", "closing_booked", "not_relevant", "do_not_contact"]
@@ -1706,25 +1711,57 @@ def render_call_action_form(user: dict, action: dict) -> None:
 
 
 def render_contact_review_action(user: dict, action: dict) -> None:
-    st.warning("Ce prospect est marqué Ne plus contacter, mais il a réécrit. Lisez le message avant de décider.")
+    is_do_not_contact = action.get("contact_status") == "do_not_contact"
+    is_terminal_qualification = action.get("lead_status") in {"not_relevant", "signed"}
+    if is_do_not_contact:
+        st.warning("Ce prospect est marqué Ne plus contacter, mais il a réécrit. Lisez le message avant de décider.")
+    elif is_terminal_qualification:
+        st.warning("Ce prospect a une qualification terminale, mais il a réécrit. Lisez le message avant de décider.")
+    else:
+        st.warning("Ce prospect nécessite une revue humaine avant de répondre.")
     note = st.text_area("Note de revue", height=80, key=f"contact_review_note_{action['id']}")
     cols = st.columns(2)
-    if cols[0].button("Maintenir Ne plus contacter", use_container_width=True, key=f"maintain_dnc_{action['id']}"):
+    if is_do_not_contact:
+        if cols[0].button("Maintenir Ne plus contacter", use_container_width=True, key=f"maintain_dnc_{action['id']}"):
+            ok, message = complete_action_with_workflow(
+                action["id"],
+                user["id"],
+                "maintain_do_not_contact",
+                note=note,
+            )
+            show_result(ok, message)
+            if ok:
+                clear_widget_keys(f"contact_review_note_{action['id']}")
+                st.rerun()
+        if cols[1].button("Lever et répondre", use_container_width=True, key=f"lift_dnc_{action['id']}"):
+            ok, message = complete_action_with_workflow(
+                action["id"],
+                user["id"],
+                "lift_do_not_contact",
+                note=note,
+            )
+            show_result(ok, message)
+            if ok:
+                clear_widget_keys(f"contact_review_note_{action['id']}")
+                st.rerun()
+        return
+
+    if cols[0].button("Maintenir la clôture", use_container_width=True, key=f"keep_terminal_{action['id']}"):
         ok, message = complete_action_with_workflow(
             action["id"],
             user["id"],
-            "maintain_do_not_contact",
+            "keep_terminal_status",
             note=note,
         )
         show_result(ok, message)
         if ok:
             clear_widget_keys(f"contact_review_note_{action['id']}")
             st.rerun()
-    if cols[1].button("Lever et répondre", use_container_width=True, key=f"lift_dnc_{action['id']}"):
+    if cols[1].button("Requalifier et répondre", use_container_width=True, key=f"requalify_reply_{action['id']}"):
         ok, message = complete_action_with_workflow(
             action["id"],
             user["id"],
-            "lift_do_not_contact",
+            "requalify_and_reply",
             note=note,
         )
         show_result(ok, message)

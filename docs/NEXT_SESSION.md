@@ -51,6 +51,7 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 
 - Latest local hardening validation: `133 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\run`, plus `compileall` OK.
 - Use `--basetemp=.pytest-tmp\run` on Windows if Pytest fails after successful test execution because it cannot clean `pytest-current` in `%TEMP%`.
+- Workflow reconciliation after the latest review: a terminal qualification or `Ne plus contacter` can no longer silently coexist with ordinary commercial sends/actions; inbound on those states creates a human review; manually lifting `Ne plus contacter` closes the stale review and recreates `reply` only if the last inbound is unanswered; template requests/admin actions linked to obsolete follow-ups are cancelled.
 - The action is now explicitly validated as the central operational unit of the system.
 - Canonical model: `Parcours` = commercial state, `Flux` = configurable follow-up scenario, `Action` = operational work item.
 - A conversation with `open` status must normally have one open next action.
