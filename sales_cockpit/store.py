@@ -6408,7 +6408,12 @@ def send_freeform_message(
     if attachment_items and (get_settings().twilio_mode or "mock").lower() != "mock" and not media_base_url:
         return False, "Pièce jointe impossible : configure SALES_COCKPIT_PUBLIC_API_BASE_URL pour que Twilio puisse récupérer le média."
     with connect() as conn:
-        ok, guard_message = _check_outbound_safeguards(conn, conv, action_kind=action_kind)
+        ok, guard_message = _check_outbound_safeguards(
+            conn,
+            conv,
+            action_kind=action_kind,
+            enforce_min_followup_delay=False,
+        )
         if not ok:
             return False, guard_message
 
@@ -6653,6 +6658,7 @@ def _check_outbound_safeguards(
     conn: Any,
     conv: dict[str, Any],
     action_kind: str = "follow_up",
+    enforce_min_followup_delay: bool = True,
 ) -> tuple[bool, str]:
     settings = get_outbound_safeguards()
     if settings["outbound_global_block"]:
@@ -6712,7 +6718,7 @@ def _check_outbound_safeguards(
         action_types=("follow_up",),
         include_blocked=True,
     )
-    if active_followup:
+    if active_followup and enforce_min_followup_delay:
         last_row = conn.execute(
             """
             SELECT MAX(sent_at) AS last_sent_at

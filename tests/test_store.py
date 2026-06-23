@@ -2022,6 +2022,32 @@ def test_followup_quota_blocks_followup_but_allows_human_reply() -> None:
     assert ok is True, message
 
 
+def test_freeform_followup_is_not_blocked_by_min_followup_delay() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    phone = unique_phone()
+    result = record_inbound_message(phone, "Bonjour.")
+    reply = get_next_action_for_lead(result["lead_id"])
+    ok, message = send_freeform_message(
+        result["conversation_id"],
+        reply["assigned_to_user_id"],
+        "Bonjour, je vous réponds.",
+    )
+    assert ok is True, message
+    ok, _ = update_outbound_safeguards(admin["id"], {"outbound_min_followup_hours": 24})
+    assert ok is True
+
+    followup = get_next_action_for_lead(result["lead_id"])
+    assert followup["type"] == "follow_up"
+    ok, message = send_freeform_message(
+        result["conversation_id"],
+        followup["assigned_to_user_id"],
+        "Je complète ma réponse pendant que la fenêtre est ouverte.",
+    )
+
+    assert ok is True, message
+
+
 def test_inbound_cancels_blocked_followup_and_creates_reply() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
