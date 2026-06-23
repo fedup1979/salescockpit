@@ -1268,6 +1268,7 @@ def render_template_request_form(user: dict, conv: dict, action: dict | None) ->
     st.caption("À utiliser uniquement si aucun modèle approuvé ne convient.")
     linked_task_id = action["id"] if action and action.get("type") == "follow_up" else None
     request_key_prefix = f"template_request_{conv['id']}_{linked_task_id or 'general'}"
+    default_context = "" if flash else conv.get("last_message_body") or ""
     with st.form(f"template_request_{conv['id']}_{linked_task_id or 'general'}"):
         reason = st.text_input(
             "Modèle manquant",
@@ -1276,7 +1277,7 @@ def render_template_request_form(user: dict, conv: dict, action: dict | None) ->
         )
         context = st.text_area(
             "Contexte pour le modèle",
-            value=conv.get("last_message_body") or "",
+            value=default_context,
             height=90,
             key=f"{request_key_prefix}_context",
         )
