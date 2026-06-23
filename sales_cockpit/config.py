@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     twilio_validate_signature: bool = True
     twilio_webhook_url: str | None = None
     twilio_status_callback_url: str | None = None
+    public_api_base_url: str | None = None
     twilio_content_read_only: bool = True
     schooldrive_mcp_url: str | None = None
     schooldrive_webhook_token: str | None = None

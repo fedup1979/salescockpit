@@ -5,6 +5,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from sales_cockpit import __version__
@@ -12,6 +13,7 @@ from sales_cockpit.config import get_settings
 from sales_cockpit.db import seed_initial_data
 from sales_cockpit.store import (
     create_template,
+    get_attachment_download,
     get_conversation,
     ingest_schooldrive_snapshot,
     list_conversations,
@@ -112,6 +114,18 @@ def startup() -> None:
 def health() -> dict:
     settings = get_settings()
     return {"status": "ok", "version": __version__, "mode": settings.twilio_mode}
+
+
+@app.get("/media/attachments/{attachment_id}/{token_name}")
+def media_attachment(attachment_id: int, token_name: str) -> FileResponse:
+    attachment = get_attachment_download(attachment_id, token_name)
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    return FileResponse(
+        path=attachment["path"],
+        media_type=attachment["mime_type"],
+        filename=attachment["file_name"],
+    )
 
 
 def _clean_bearer_token(value: str | None) -> str:

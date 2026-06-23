@@ -12,7 +12,9 @@ class MockTwilioResult:
 
 
 class MockTwilioClient:
-    def send_freeform(self, to_phone: str, body: str) -> MockTwilioResult:
+    def send_freeform(
+        self, to_phone: str, body: str, media_urls: list[str] | None = None
+    ) -> MockTwilioResult:
         return MockTwilioResult(sid=f"SM_MOCK_{uuid4().hex[:24]}", status="sent")
 
     def send_template(

@@ -1,4 +1,5 @@
 ﻿from datetime import UTC, datetime, timedelta
+from urllib.parse import unquote
 from uuid import uuid4
 
 from sales_cockpit.config import get_settings
@@ -20,6 +21,7 @@ from sales_cockpit.store import (
     deactivate_sequence_step,
     deactivate_course_default_session,
     get_conversation,
+    get_attachment_download,
     get_integration_readiness,
     get_next_action_for_lead,
     get_outbound_safeguards,
@@ -444,6 +446,57 @@ def test_reply_send_closes_reply_and_schedules_followup() -> None:
     next_action = get_next_action_for_lead(result["lead_id"])
     assert next_action["type"] == "follow_up"
     assert next_action["sequence_code"] == "setter_no_next_step"
+
+
+def test_freeform_message_can_store_attachment(monkeypatch) -> None:
+    monkeypatch.setenv("SALES_COCKPIT_PUBLIC_API_BASE_URL", "https://cockpit.example.test")
+    get_settings.cache_clear()
+    seed_initial_data()
+    result = record_inbound_message(unique_phone(), "Bonjour, je veux des informations.")
+    action = get_next_action_for_lead(result["lead_id"])
+
+    ok, message = send_freeform_message(
+        result["conversation_id"],
+        action["assigned_to_user_id"],
+        "Voici le document.",
+        attachments=[
+            {
+                "file_name": "brochure commerciale.pdf",
+                "mime_type": "application/pdf",
+                "content": b"%PDF-test",
+            }
+        ],
+    )
+
+    assert ok, message
+    outbound = [item for item in list_messages(result["conversation_id"]) if item["direction"] == "outbound"][-1]
+    assert outbound["attachments"][0]["file_name"] == "brochure commerciale.pdf"
+    assert outbound["attachments"][0]["public_url"].startswith("https://cockpit.example.test/media/attachments/")
+    assert " " not in outbound["attachments"][0]["public_url"]
+    token_name = outbound["attachments"][0]["public_url"].rsplit("/", 1)[-1]
+    download = get_attachment_download(outbound["attachments"][0]["id"], unquote(token_name))
+    assert download is not None
+    assert download["path"].read_bytes() == b"%PDF-test"
+
+
+def test_live_freeform_attachment_requires_public_media_base(monkeypatch) -> None:
+    monkeypatch.setenv("SALES_COCKPIT_TWILIO_MODE", "live")
+    monkeypatch.delenv("SALES_COCKPIT_PUBLIC_API_BASE_URL", raising=False)
+    monkeypatch.delenv("SALES_COCKPIT_TWILIO_WEBHOOK_URL", raising=False)
+    get_settings.cache_clear()
+    seed_initial_data()
+    result = record_inbound_message(unique_phone(), "Bonjour.")
+    action = get_next_action_for_lead(result["lead_id"])
+
+    ok, message = send_freeform_message(
+        result["conversation_id"],
+        action["assigned_to_user_id"],
+        "Document.",
+        attachments=[{"file_name": "a.txt", "mime_type": "text/plain", "content": b"test"}],
+    )
+
+    assert ok is False
+    assert "PUBLIC_API_BASE_URL" in message
 
 
 def test_reply_send_with_setting_booked_creates_setting_call_with_proof() -> None:
@@ -1912,7 +1965,7 @@ def test_outbox_keeps_send_error_message_when_twilio_fails(monkeypatch) -> None:
     result = record_inbound_message(unique_phone(), "Bonjour.")
 
     class FailingClient:
-        def send_freeform(self, to_phone: str, body: str):
+        def send_freeform(self, to_phone: str, body: str, media_urls=None):
             raise TwilioMessageError("temporary Twilio failure")
 
     monkeypatch.setattr("sales_cockpit.store.get_whatsapp_client", lambda: FailingClient())

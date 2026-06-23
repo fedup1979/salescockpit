@@ -162,7 +162,7 @@ h1, h2, h3 {
   gap: .35rem;
   padding: .18rem .5rem;
   border: 1px solid var(--sc-border);
-  border-radius: 999px;
+  border-radius: 6px;
   background: oklch(0.99 0.004 250);
   color: var(--sc-muted);
   font-size: .78rem;
@@ -324,6 +324,32 @@ h1, h2, h3 {
 
 .sc-delivery-failed {
   color: oklch(0.52 0.17 28);
+}
+
+.sc-attachment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
+  margin-top: .45rem;
+}
+
+.sc-attachment-link {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: .16rem .45rem;
+  border: 1px solid var(--sc-border);
+  border-radius: 999px;
+  background: oklch(0.985 0.006 250);
+  color: var(--sc-text);
+  font-size: .76rem;
+  line-height: 1.2;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.sc-attachment-link:hover {
+  border-color: var(--sc-accent);
 }
 
 .sc-reply-anchor {

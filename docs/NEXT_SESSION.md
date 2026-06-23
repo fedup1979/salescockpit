@@ -293,7 +293,7 @@ Stop-Process -Id <PID> -Force
 - Twilio is mock by default locally. Staging was previously tested with Sandbox and then with the DEV sender `+41445054269`, but the DEV WhatsApp account was later blocked by Meta. Do not assume staging can send live WhatsApp. Current safe posture is `mock` for staging and production until explicit cutover.
 - Twilio Content API synchronization exists. Real template approval and closed-window template sending still need an end-to-end staging validation with an approved Twilio template.
 - Front import is partially connected in safe pilot mode. Read-only client, dry-run, buffer persistence, exact phone matching, buffer rematch, dry-run-first matched conversion, and Admin visibility exist. Full historical import, ambiguous matching review, and conversation-level history filtering are still pending.
-- WhatsApp attachments are explicitly unavailable in V1; the composer shows this as a note rather than a fake upload control.
+- WhatsApp freeform attachments are available in V1 while the WhatsApp 24-hour window is open. Files are stored in `storage/attachments`, linked through the `attachments` table, and sent to Twilio via `/media/attachments/{id}/{token_name}`. In non-mock Twilio modes, `SALES_COCKPIT_PUBLIC_API_BASE_URL` or a derivable `SALES_COCKPIT_TWILIO_WEBHOOK_URL` origin must be configured so Twilio can fetch the media.
 - API endpoints for app-style reads/writes require `SALES_COCKPIT_API_TOKEN` outside local tests. JSON mock inbound webhooks also require `SALES_COCKPIT_MOCK_WEBHOOK_TOKEN` or the API token outside local tests.
 - Production should use `SALES_COCKPIT_SEED_DEMO_DATA=false`; this keeps users, rules, and templates, but removes local `SD-DEMO-*` conversations.
 - Auth is local password-based only.

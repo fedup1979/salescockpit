@@ -23,7 +23,12 @@ class TwilioMessageError(Exception):
 
 
 class MockWhatsAppClient:
-    def send_freeform(self, to_phone: str, body: str) -> TwilioSendResult:
+    def send_freeform(
+        self,
+        to_phone: str,
+        body: str,
+        media_urls: list[str] | None = None,
+    ) -> TwilioSendResult:
         return TwilioSendResult(
             sid=f"SM_MOCK_{uuid4().hex[:24]}",
             status="sent",
@@ -88,9 +93,17 @@ class TwilioWhatsAppClient:
             params["status_callback"] = self.status_callback_url
         return params
 
-    def send_freeform(self, to_phone: str, body: str) -> TwilioSendResult:
+    def send_freeform(
+        self,
+        to_phone: str,
+        body: str,
+        media_urls: list[str] | None = None,
+    ) -> TwilioSendResult:
         params = self._base_params(to_phone)
-        params["body"] = body
+        if body:
+            params["body"] = body
+        if media_urls:
+            params["media_url"] = media_urls
         try:
             message = self._client().messages.create(**params)
         except Exception as exc:

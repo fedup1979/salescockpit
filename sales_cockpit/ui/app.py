@@ -942,12 +942,14 @@ def render_messages(conversation_id: int, show_internal_notes: bool = True) -> N
         created = format_dt(message_display_timestamp(message))
         template = f" · modèle: {message['template_name']}" if message.get("template_name") else ""
         delivery = render_delivery_status(message)
+        attachments_html = render_message_attachments(message.get("attachments") or [])
         st.markdown(
             f"""
             <div class="sc-message-row {row_css}">
               <div class="sc-message {css}">
                 <div class="sc-message-meta">{sender} · {created}{template}{delivery}</div>
                 <div>{escape_html(message['body'])}</div>
+                {attachments_html}
               </div>
             </div>
             """,
@@ -961,6 +963,24 @@ def message_display_timestamp(message: dict) -> str | None:
     if message.get("direction") == "inbound":
         return message.get("received_at") or message.get("created_at")
     return message.get("created_at")
+
+
+def render_message_attachments(attachments: list[dict]) -> str:
+    if not attachments:
+        return ""
+    links = []
+    for attachment in attachments:
+        name = escape_html(attachment.get("file_name") or "Pièce jointe")
+        size = format_bytes(attachment.get("size_bytes"))
+        label = f"{name} · {escape_html(size)}" if size != "0 B" else name
+        url = attachment.get("public_url")
+        if url:
+            links.append(
+                f'<a class="sc-attachment-link" href="{escape_html(url)}" target="_blank" rel="noreferrer">{label}</a>'
+            )
+        else:
+            links.append(f'<span class="sc-attachment-link">{label}</span>')
+    return f'<div class="sc-attachment-list">{"".join(links)}</div>'
 
 
 def render_delivery_status(message: dict) -> str:
@@ -1158,13 +1178,28 @@ def render_composer(user: dict, conv: dict) -> None:
             st.caption("Si votre message fixe un appel, choisissez d'abord la suite dans l'onglet Actions.")
         freeform_base_key = f"freeform_body_{conv['id']}"
         freeform_key = resettable_widget_key(freeform_base_key)
+        attachment_base_key = f"freeform_attachments_{conv['id']}"
+        attachment_key = resettable_widget_key(attachment_base_key)
         with st.form(f"freeform_{conv['id']}"):
             body = st.text_area("Message libre", height=110, key=freeform_key)
-            st.caption("Pièces jointes : non disponibles en V1.")
+            uploaded_files = st.file_uploader(
+                "Pièces jointes",
+                accept_multiple_files=True,
+                key=attachment_key,
+                help="V1 : maximum 5 fichiers, 10 Mo par fichier. WhatsApp n'accepte les pièces jointes que pendant une fenêtre ouverte.",
+            )
             submitted = st.form_submit_button("Envoyer le message libre")
         if submitted:
-            if not body.strip():
-                st.error("Écrivez un message avant l'envoi.")
+            attachments = [
+                {
+                    "file_name": file.name,
+                    "mime_type": file.type or "application/octet-stream",
+                    "content": file.getvalue(),
+                }
+                for file in uploaded_files or []
+            ]
+            if not body.strip() and not attachments:
+                st.error("Écrivez un message ou ajoutez une pièce jointe avant l'envoi.")
                 return
             ok, message = send_freeform_message(
                 conv["id"],
@@ -1174,12 +1209,15 @@ def render_composer(user: dict, conv: dict) -> None:
                 next_due_at=next_due_at,
                 assigned_to_user_id=assigned_to_user_id,
                 note=action_note,
+                attachments=attachments,
             )
             show_result(ok, message)
             if ok:
                 reset_widget_key(freeform_base_key)
+                reset_widget_key(attachment_base_key)
                 clear_widget_keys(
                     freeform_key,
+                    attachment_key,
                     f"reply_plan_{conv['id']}_reply_note",
                     f"reply_plan_{conv['id']}_reply_date",
                     f"reply_plan_{conv['id']}_reply_time",
@@ -1536,14 +1574,14 @@ def render_call_action_form(user: dict, action: dict) -> None:
         value for value in ACTION_OUTCOMES[action["type"]]
         if value != "not_reached"
     ]
+    reached = st.radio(
+        "Avez-vous pu joindre le prospect ?",
+        ["yes", "no"],
+        horizontal=True,
+        format_func=lambda value: "Oui" if value == "yes" else "Non",
+        key=f"call_reached_{action['id']}",
+    )
     with st.form(f"call_action_form_{action['id']}"):
-        reached = st.radio(
-            "Avez-vous pu joindre le prospect ?",
-            ["yes", "no"],
-            horizontal=True,
-            format_func=lambda value: "Oui" if value == "yes" else "Non",
-            key=f"call_reached_{action['id']}",
-        )
         if reached == "no":
             outcome = "not_reached"
             note = "Prospect non joint."

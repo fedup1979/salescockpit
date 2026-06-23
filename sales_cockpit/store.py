@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlparse
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -64,6 +66,8 @@ BUSINESS_HOURS_BY_ROLE = {
     "setter2": (12, 16),
     "closer": (11, 20),
 }
+MAX_FREEFORM_ATTACHMENTS = 5
+MAX_FREEFORM_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 
 def bootstrap() -> None:
@@ -4213,7 +4217,26 @@ def list_messages(conversation_id: int) -> list[dict[str, Any]]:
             """,
             (conversation_id,),
         ).fetchall()
-    return rows_to_dicts(rows)
+        messages = rows_to_dicts(rows)
+        message_ids = [item["id"] for item in messages]
+        attachments_by_message: dict[int, list[dict[str, Any]]] = {message_id: [] for message_id in message_ids}
+        if message_ids:
+            placeholders = ",".join("?" for _ in message_ids)
+            attachment_rows = conn.execute(
+                f"""
+                SELECT *
+                FROM attachments
+                WHERE message_id IN ({placeholders})
+                ORDER BY id
+                """,
+                message_ids,
+            ).fetchall()
+            for attachment in rows_to_dicts(attachment_rows):
+                attachment["public_url"] = _attachment_public_url(attachment)
+                attachments_by_message.setdefault(int(attachment["message_id"]), []).append(attachment)
+    for message in messages:
+        message["attachments"] = attachments_by_message.get(int(message["id"]), [])
+    return messages
 
 
 def list_templates(search: str = "", approved_only: bool = False) -> list[dict[str, Any]]:
@@ -6194,6 +6217,124 @@ def _sync_next_action_for_lead_status(
     )
 
 
+def _validate_freeform_attachments(attachments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if len(attachments) > MAX_FREEFORM_ATTACHMENTS:
+        raise ValueError(f"Maximum {MAX_FREEFORM_ATTACHMENTS} pièces jointes par message.")
+    validated: list[dict[str, Any]] = []
+    for item in attachments:
+        file_name = _safe_attachment_filename(str(item.get("file_name") or item.get("name") or "piece_jointe"))
+        content = item.get("content")
+        if content is None:
+            content = item.get("bytes")
+        if isinstance(content, bytearray):
+            content = bytes(content)
+        if not isinstance(content, bytes):
+            raise ValueError(f"Pièce jointe invalide : {file_name}.")
+        if not content:
+            raise ValueError(f"Pièce jointe vide : {file_name}.")
+        if len(content) > MAX_FREEFORM_ATTACHMENT_BYTES:
+            limit_mb = MAX_FREEFORM_ATTACHMENT_BYTES // (1024 * 1024)
+            raise ValueError(f"Pièce jointe trop lourde : {file_name}. Limite V1 : {limit_mb} Mo.")
+        validated.append(
+            {
+                "file_name": file_name,
+                "mime_type": str(item.get("mime_type") or item.get("type") or "application/octet-stream"),
+                "content": content,
+            }
+        )
+    return validated
+
+
+def _safe_attachment_filename(value: str) -> str:
+    name = Path(value).name.strip() or "piece_jointe"
+    name = re.sub(r"[^A-Za-z0-9._ -]+", "_", name)
+    name = re.sub(r"\s+", " ", name).strip(" .")
+    return name[:120] or "piece_jointe"
+
+
+def _media_public_base_url() -> str:
+    settings = get_settings()
+    configured = (settings.public_api_base_url or "").strip().rstrip("/")
+    if configured:
+        return configured
+    webhook_url = (settings.twilio_webhook_url or "").strip()
+    if not webhook_url:
+        return ""
+    parsed = urlparse(webhook_url)
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _store_message_attachments(
+    conn: Any,
+    message_id: int,
+    attachments: list[dict[str, Any]],
+    media_base_url: str,
+) -> list[str]:
+    if not attachments:
+        return []
+    now = iso_utc()
+    stored_urls: list[str] = []
+    attachment_dir = get_settings().resolved_storage_path / "attachments" / str(message_id)
+    attachment_dir.mkdir(parents=True, exist_ok=True)
+    for item in attachments:
+        token = uuid4().hex
+        storage_name = f"{token}_{item['file_name']}"
+        storage_path = attachment_dir / storage_name
+        storage_path.write_bytes(item["content"])
+        cursor = conn.execute(
+            """
+            INSERT INTO attachments (
+                message_id, source, file_name, mime_type, size_bytes,
+                storage_url_or_path, created_at
+            ) VALUES (?, 'outbound_upload', ?, ?, ?, ?, ?)
+            """,
+            (
+                message_id,
+                item["file_name"],
+                item["mime_type"],
+                len(item["content"]),
+                str(storage_path),
+                now,
+            ),
+        )
+        attachment = {"id": int(cursor.lastrowid), "storage_url_or_path": str(storage_path)}
+        if media_base_url:
+            stored_urls.append(_attachment_public_url(attachment, media_base_url))
+    return stored_urls
+
+
+def _attachment_public_url(attachment: dict[str, Any], media_base_url: str | None = None) -> str:
+    base_url = (media_base_url if media_base_url is not None else _media_public_base_url()).rstrip("/")
+    if not base_url:
+        return ""
+    path = Path(str(attachment.get("storage_url_or_path") or ""))
+    token_name = quote(path.name, safe="")
+    attachment_id = attachment.get("id")
+    if not attachment_id or not token_name:
+        return ""
+    return f"{base_url}/media/attachments/{attachment_id}/{token_name}"
+
+
+def get_attachment_download(attachment_id: int, token_name: str) -> dict[str, Any] | None:
+    token_name = Path(token_name).name
+    with connect() as conn:
+        attachment = row_to_dict(
+            conn.execute("SELECT * FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+        )
+    if not attachment:
+        return None
+    path = Path(str(attachment.get("storage_url_or_path") or ""))
+    if path.name != token_name or not path.exists() or not path.is_file():
+        return None
+    return {
+        "path": path,
+        "mime_type": attachment.get("mime_type") or "application/octet-stream",
+        "file_name": attachment.get("file_name") or path.name,
+    }
+
+
 def send_freeform_message(
     conversation_id: int,
     user_id: int,
@@ -6202,6 +6343,7 @@ def send_freeform_message(
     next_due_at: str | None = None,
     assigned_to_user_id: int | None = None,
     note: str = "",
+    attachments: list[dict[str, Any]] | None = None,
 ) -> tuple[bool, str]:
     conv = get_conversation(conversation_id)
     if not conv:
@@ -6210,6 +6352,7 @@ def send_freeform_message(
         return False, "Contact bloqué : le statut Ne plus contacter doit être levé avant tout envoi."
     if conv.get("status") == "resolved":
         return False, "Conversation terminée : réactivez-la avant tout envoi."
+    body = body.strip()
     with connect() as conn:
         action_kind = _active_outbound_action_kind(conn, conv["lead_id"])
         if action_kind == "follow_up" and _has_blocked_followup(conn, conv["lead_id"]):
@@ -6217,6 +6360,16 @@ def send_freeform_message(
     state = calculate_window(conv["last_inbound_at"])
     if not state.is_open:
         return False, "Fenêtre WhatsApp fermée. Utilisez un modèle approuvé."
+    try:
+        attachment_items = _validate_freeform_attachments(attachments or [])
+    except ValueError as exc:
+        return False, str(exc)
+    if not body and not attachment_items:
+        return False, "Écrivez un message ou ajoutez une pièce jointe avant l'envoi."
+    stored_body = body or "[Pièce jointe WhatsApp]"
+    media_base_url = _media_public_base_url()
+    if attachment_items and (get_settings().twilio_mode or "mock").lower() != "mock" and not media_base_url:
+        return False, "Pièce jointe impossible : configure SALES_COCKPIT_PUBLIC_API_BASE_URL pour que Twilio puisse récupérer le média."
     with connect() as conn:
         ok, guard_message = _check_outbound_safeguards(conn, conv, action_kind=action_kind)
         if not ok:
@@ -6231,12 +6384,13 @@ def send_freeform_message(
                 twilio_status, whatsapp_window_state_at_send, created_at
             ) VALUES (?, ?, 'outbound', 'whatsapp_twilio', ?, ?, 'pending_send', ?, ?)
             """,
-            (conversation_id, conv["lead_id"], body, user_id, state.state, now),
+            (conversation_id, conv["lead_id"], stored_body, user_id, state.state, now),
         )
         message_id = int(cursor.lastrowid)
+        media_urls = _store_message_attachments(conn, message_id, attachment_items, media_base_url)
 
     try:
-        result = get_whatsapp_client().send_freeform(conv["recipient_phone_e164"], body)
+        result = get_whatsapp_client().send_freeform(conv["recipient_phone_e164"], body, media_urls=media_urls)
     except TwilioConfigurationError as exc:
         _mark_outbound_message_send_error(message_id, None, str(exc))
         return False, str(exc)
@@ -6280,7 +6434,7 @@ def send_freeform_message(
             conv["lead_id"],
             "whatsapp_freeform_sent",
             user_id=user_id,
-            new={"body": body, "twilio_sid": result.sid},
+            new={"body": stored_body, "twilio_sid": result.sid, "attachment_count": len(attachment_items)},
         )
     if result.provider == "twilio":
         return True, "Message libre envoyé."
