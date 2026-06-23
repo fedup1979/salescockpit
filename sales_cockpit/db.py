@@ -12,7 +12,7 @@ from sales_cockpit.security import hash_password
 from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
 
 
-DEMO_SEED_VERSION = "2026-06-23-demo-call-action-labels"
+DEMO_SEED_VERSION = "2026-06-23-demo-admin-template-action"
 BUSINESS_RULES_VERSION = "2026-06-22-workflow-v1-hardening-2"
 
 
@@ -2282,7 +2282,7 @@ def seed_initial_data() -> None:
                 )
                 template_request = lead_task.get("template_request")
                 if template_request:
-                    conn.execute(
+                    request_cursor = conn.execute(
                         """
                         INSERT INTO template_requests (
                             lead_id, conversation_id, task_id, sequence_code, sequence_step_index,
@@ -2301,6 +2301,69 @@ def seed_initial_data() -> None:
                             template_request["reason"],
                             template_request.get("context"),
                             iso_utc(now),
+                            iso_utc(now),
+                        ),
+                    )
+                    request_id = int(request_cursor.lastrowid)
+                    admin_user = conn.execute(
+                        """
+                        SELECT id
+                        FROM users
+                        WHERE role = 'admin' AND active = 1
+                        ORDER BY id
+                        LIMIT 1
+                        """
+                    ).fetchone()
+                    admin_user_id = admin_user["id"] if admin_user else lead_task.get("assigned_to_user_id")
+                    admin_cursor = conn.execute(
+                        """
+                        INSERT INTO admin_actions (
+                            type, title, description, status, lead_id, conversation_id, task_id,
+                            template_request_id, assigned_to_user_id, created_by_user_id,
+                            due_at, metadata_json, created_at, updated_at
+                        ) VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            "template_request",
+                            f"Créer / lier modèle WhatsApp pour {lead['first_name']} {lead['last_name']}".strip(),
+                            template_request.get("context") or template_request["reason"],
+                            lead_id,
+                            conversation_id,
+                            task_cursor.lastrowid,
+                            request_id,
+                            admin_user_id,
+                            lead_task.get("assigned_to_user_id"),
+                            iso_utc(now),
+                            json.dumps(
+                                {
+                                    "source": "demo_seed",
+                                    "sequence_code": lead_task.get("sequence_code"),
+                                    "sequence_step_index": lead_task.get("sequence_step_index"),
+                                    "reason": template_request["reason"],
+                                },
+                                ensure_ascii=False,
+                            ),
+                            iso_utc(now),
+                            iso_utc(now),
+                        ),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO user_activity_log (
+                            user_id, event_type, entity_type, entity_id,
+                            lead_id, conversation_id, action_id, metadata_json, created_at
+                        ) VALUES (?, 'admin_action_created', 'admin_action', ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            lead_task.get("assigned_to_user_id"),
+                            int(admin_cursor.lastrowid),
+                            lead_id,
+                            conversation_id,
+                            task_cursor.lastrowid,
+                            json.dumps(
+                                {"source": "demo_template_request", "template_request_id": request_id},
+                                ensure_ascii=False,
+                            ),
                             iso_utc(now),
                         ),
                     )

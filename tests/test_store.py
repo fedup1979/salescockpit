@@ -87,8 +87,9 @@ def test_bug_report_is_stored_with_activity_log() -> None:
     assert reports[0]["title"] == "Carte incorrecte"
     assert reports[0]["severity"] == "high"
     admin_actions = list_admin_actions()
-    assert admin_actions[0]["type"] == "bug_report"
-    assert admin_actions[0]["bug_report_id"] == reports[0]["id"]
+    bug_actions = [action for action in admin_actions if action["type"] == "bug_report"]
+    assert bug_actions
+    assert bug_actions[0]["bug_report_id"] == reports[0]["id"]
     ok, message = complete_admin_action(admin_actions[0]["id"], user["id"], "Bug revu")
     assert ok is True
     assert "termin" in message
