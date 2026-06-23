@@ -4,7 +4,7 @@ Bienvenue dans Sales Cockpit. Cet outil sert à savoir très vite qui contacter,
 
 ## Par où commencer
 
-La page **Tâches** est la page principale. Quand vous vous connectez, commencez par cette page. Elle montre les actions qui vous sont attribuées : répondre à un message, envoyer une relance, documenter un appel setting, documenter un appel closing ou revoir un contact particulier. Par défaut, la page affiche votre propre file. Vous pouvez consulter la file d'une autre personne si nécessaire.
+La page **Tâches** est la page principale. Quand vous vous connectez, commencez par cette page. Elle montre les actions qui vous sont attribuées : répondre à un message, envoyer une relance, appeler et documenter un appel setting, appeler et documenter un appel closing ou revoir un contact particulier. Par défaut, la page affiche votre propre file. Vous pouvez consulter la file d'une autre personne si nécessaire.
 
 La page **Inbox** sert à retrouver les conversations WhatsApp. Elle est utile pour lire l'historique complet, chercher un prospect, vérifier une conversation terminée ou comprendre ce qui s'est passé avant une action. Dans **Tâches**, on travaille par action. Dans **Inbox**, on consulte par conversation.
 
@@ -42,7 +42,7 @@ Une conversation active doit normalement avoir au moins une action de pilotage c
 
 Il existe une exception importante : si un appel setting ou closing est déjà planifié et que le prospect écrit avant l'appel, le cockpit crée une action urgente **Répondre au message** sans annuler l'appel planifié. Après la réponse, si le rendez-vous reste inchangé, l'appel planifié redevient la prochaine action visible.
 
-Une conversation terminée signifie qu'il n'y a plus rien à faire pour le moment. Elle peut être réactivée, mais il faut alors choisir immédiatement une prochaine action : répondre, relancer, documenter un appel setting ou documenter un appel closing.
+Une conversation terminée signifie qu'il n'y a plus rien à faire pour le moment. Elle peut être réactivée, mais il faut alors choisir immédiatement une prochaine action : répondre, relancer, appeler et documenter un appel setting ou appeler et documenter un appel closing.
 
 La conversation active ou terminée est différente de la fenêtre WhatsApp ouverte ou fermée. Une conversation peut être active alors que la fenêtre WhatsApp est fermée. Dans ce cas, la suite doit passer par un modèle approuvé.
 
@@ -54,7 +54,7 @@ Dans ce cas, l'équipe peut répondre au message, mais elle doit compléter les 
 
 ## Actions, statuts et preuves
 
-Les actions principales sont : répondre au message, envoyer une relance, documenter un appel setting, documenter un appel closing et revoir un contact.
+Les actions principales sont : répondre au message, envoyer une relance, appeler et documenter un appel setting, appeler et documenter un appel closing et revoir un contact.
 
 Une action peut être planifiée, ouverte, en cours, terminée, annulée ou bloquée. Quand elle est terminée, elle doit laisser une preuve : message WhatsApp envoyé, résultat d'appel, mini-note, qualification ou demande de modèle.
 

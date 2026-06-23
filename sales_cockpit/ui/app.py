@@ -126,8 +126,8 @@ PILOTAGE_SUPPORTED_CATEGORIES = ["FSM", "APP", "AS"]
 SEQUENCE_STEP_ACTION_TYPES = ["follow_up", "setting_call", "closing_call", "other"]
 SEQUENCE_STEP_ACTION_LABELS = {
     "follow_up": "Relance WhatsApp",
-    "setting_call": "Documenter appel setting",
-    "closing_call": "Documenter appel closing",
+    "setting_call": "Appeler et documenter appel setting",
+    "closing_call": "Appeler et documenter appel closing",
     "other": "Revue humaine",
 }
 SEQUENCE_STEP_OFFSET_UNITS = ["hours", "days"]
@@ -227,13 +227,13 @@ PILOTAGE_STATE_ROWS = [
         "État": "RDV setting agendé",
         "Code": "appointment_booked",
         "Sens": "Un rendez-vous de setting est prévu à une date et une minute précises.",
-        "Suite normale": "Documenter l'appel setting quand le moment de l'appel arrive.",
+        "Suite normale": "Appeler le prospect puis documenter l'appel setting quand le moment du rendez-vous arrive.",
     },
     {
         "État": "RDV closing agendé",
         "Code": "closing",
         "Sens": "Un rendez-vous de closing est prévu pour le closer.",
-        "Suite normale": "Documenter l'appel closing puis décider : signé, va signer, indécis, non joint ou non pertinent.",
+        "Suite normale": "Appeler le prospect puis documenter l'appel closing : signé, va signer, indécis, non joint ou non pertinent.",
     },
     {
         "État": "Appel setting à documenter",
@@ -333,8 +333,8 @@ DISPLAY_LABELS = {
     "waiting": "En suspens",
     "reply": "Répondre au message",
     "call": "Appeler",
-    "closing_call": "Documenter appel closing",
-    "setting_call": "Documenter appel setting",
+    "closing_call": "Appeler et documenter appel closing",
+    "setting_call": "Appeler et documenter appel setting",
     "to_closing": "Passer au closing",
     "not_reached": "Non joint",
     "not_ready": "Indécis après setting",
@@ -1932,10 +1932,19 @@ def render_work_queue(user: dict) -> None:
             task for task in tasks
             if task.get("assigned_to_user_id") == assignee_filter["id"]
         ]
+    admin_actions = list_admin_actions("open") if user.get("role") == "admin" else []
+    if assignee_filter["id"] != "all":
+        admin_actions = [
+            action for action in admin_actions
+            if action.get("assigned_to_user_id") == assignee_filter["id"]
+        ]
     tasks = sort_work_items(tasks, "attention")
 
+    if admin_actions:
+        render_admin_work_queue(user, admin_actions)
+
     if not tasks:
-        st.info("Aucune action pour ce filtre.")
+        st.info("Aucune action commerciale pour ce filtre.")
         return
 
     tasks_by_queue = {
@@ -2008,6 +2017,37 @@ def render_action_rows(tasks: list[dict], bucket: str) -> None:
                     if task.get("conversation_id"):
                         st.session_state.selected_conversation_id = task["conversation_id"]
                     st.rerun()
+
+
+def render_admin_work_queue(user: dict, actions: list[dict]) -> None:
+    st.subheader("Actions admin")
+    st.caption("Demandes de modèles, bugs et revues techniques à traiter par un admin.")
+    rows = [
+        {
+            "ID": item["id"],
+            "Type": labelize(item["type"]),
+            "Titre": item["title"],
+            "Prospect": lead_display_name(item),
+            "Statut": labelize(item["status"]),
+            "Assignée à": item.get("assigned_to_name") or "Admin",
+            "Échéance": format_due(item.get("due_at")),
+        }
+        for item in actions
+    ]
+    st.dataframe(rows, hide_index=True, use_container_width=True, height=min(260, 72 + 36 * len(rows)))
+    with st.form("complete_admin_work_action_form"):
+        action = st.selectbox(
+            "Action admin à terminer",
+            actions,
+            format_func=lambda item: f"#{item['id']} · {item['title']}",
+        )
+        outcome = st.text_input("Résolution", value="Traité")
+        submitted = st.form_submit_button("Marquer terminée", disabled=not outcome.strip())
+    if submitted:
+        ok, message = complete_admin_action(action["id"], user["id"], outcome.strip())
+        show_result(ok, message)
+        if ok:
+            st.rerun()
 
 
 def action_row_html(task: dict) -> str:
@@ -2083,6 +2123,7 @@ def render_templates(user: dict) -> None:
     else:
         st.info("Vous pouvez consulter les modèles. Seuls les admins peuvent créer ou synchroniser des modèles WhatsApp.")
 
+    templates_for_linking = template_link_options(list_templates())
     st.subheader("Demandes de modèles à créer")
     requests = [
         item for item in list_template_requests()
@@ -2090,6 +2131,40 @@ def render_templates(user: dict) -> None:
     ]
     if requests:
         st.dataframe(requests, hide_index=True, use_container_width=True, height=220)
+        if is_admin:
+            with st.form("link_template_request_form"):
+                request_to_link = st.selectbox(
+                    "Demande à lier",
+                    requests,
+                    format_func=lambda item: f"#{item['id']} · {lead_display_name(item)} · {item.get('reason') or 'Sans motif'}",
+                )
+                linked_template = st.selectbox(
+                    "Template Twilio synchronisé",
+                    templates_for_linking,
+                    index=template_link_index(templates_for_linking, request_to_link.get("template_id")),
+                    format_func=template_link_label,
+                )
+                new_status = st.selectbox(
+                    "Statut de la demande",
+                    ["to_create", "submitted", "approved", "rejected", "cancelled"],
+                    index=safe_index(
+                        ["to_create", "submitted", "approved", "rejected", "cancelled"],
+                        request_to_link.get("status"),
+                    ),
+                    format_func=labelize,
+                )
+                link_submitted = st.form_submit_button("Mettre à jour le lien")
+            if link_submitted:
+                selected_template_id = int(linked_template["id"]) if linked_template.get("id") else None
+                ok, message = update_template_request_status(
+                    request_to_link["id"],
+                    user["id"],
+                    new_status,
+                    selected_template_id,
+                )
+                show_result(ok, message)
+                if ok:
+                    st.rerun()
         if is_admin and not twilio_read_only:
             with st.expander("Créer un modèle Twilio depuis une demande", expanded=False):
                 with st.form("create_template_from_request"):
@@ -2212,6 +2287,18 @@ def render_templates(user: dict) -> None:
         return
 
     with st.form("create_twilio_template"):
+        linked_requests = [{"id": 0, "label": "Aucune demande liée"}] + [
+            {
+                "id": item["id"],
+                "label": f"#{item['id']} · {lead_display_name(item)} · {item.get('reason') or 'Sans motif'}",
+            }
+            for item in requests
+        ]
+        linked_request = st.selectbox(
+            "Demande liée",
+            linked_requests,
+            format_func=lambda item: item["label"],
+        )
         name = st.text_input("Nom Twilio", placeholder="relance_financement_fsm")
         body = st.text_area(
             "Corps du modèle",
@@ -2242,7 +2329,7 @@ def render_templates(user: dict) -> None:
             for item in placeholders_raw.split(",")
             if item.strip()
         }
-        ok, message, _template_id = create_and_submit_twilio_template(
+        ok, message, template_id = create_and_submit_twilio_template(
             user["id"],
             name.strip(),
             body.strip(),
@@ -2250,6 +2337,13 @@ def render_templates(user: dict) -> None:
             placeholders=placeholders,
             submit_for_approval=submit_for_approval,
         )
+        if ok and template_id and linked_request.get("id"):
+            update_template_request_status(
+                int(linked_request["id"]),
+                user["id"],
+                "submitted" if submit_for_approval else "to_create",
+                template_id,
+            )
         show_result(ok, message)
         if ok:
             st.rerun()
@@ -2303,6 +2397,26 @@ def is_demo_template(template: dict) -> bool:
 
 def is_approved_real_twilio_template(template: dict) -> bool:
     return is_real_twilio_template(template) and template.get("status") == "approved"
+
+
+def template_link_options(templates: list[dict]) -> list[dict]:
+    return [{"id": 0, "name": "Aucun template lié", "status": "", "twilio_content_sid": ""}] + [
+        item for item in templates if is_real_twilio_template(item)
+    ]
+
+
+def template_link_index(options: list[dict], template_id: int | None) -> int:
+    for index, item in enumerate(options):
+        if item.get("id") == template_id:
+            return index
+    return 0
+
+
+def template_link_label(template: dict) -> str:
+    if not template.get("id"):
+        return "Aucun template lié"
+    sid = template.get("twilio_content_sid") or "Sans SID"
+    return f"{template['name']} · {template_status_label(template)} · {sid}"
 
 
 def mapping_has_approved_real_template(mapping: dict) -> bool:
@@ -3109,14 +3223,14 @@ VALIDATION_CASE_NATURAL_LANGUAGE = {
         "Setter I fixe un appel setting.",
     ): (
         "Lorsque Setter I obtient un rendez-vous de setting, il choisit l'option correspondante, indique le responsable et la date de l'appel. "
-        "Le message de confirmation envoyé au prospect clôt l'action Répondre. Sales Cockpit crée ensuite une action future pour documenter l'appel setting au moment du rendez-vous."
+        "Le message de confirmation envoyé au prospect clôt l'action Répondre. Sales Cockpit crée ensuite une action future pour appeler le prospect et documenter l'appel setting au moment du rendez-vous."
     ),
     (
         "Action Répondre ouverte",
         "Setter I fixe directement un appel closing.",
     ): (
         "Lorsque Setter I fixe directement un appel de closing, il choisit le closer et l'heure du rendez-vous. Le message de confirmation clôt l'action Répondre. "
-        "Sales Cockpit passe alors le dossier en phase closing et crée une action future pour documenter l'appel closing."
+        "Sales Cockpit passe alors le dossier en phase closing et crée une action future pour appeler le prospect et documenter l'appel closing."
     ),
     (
         "Action Répondre ou appel en cours de traitement",
@@ -3187,7 +3301,7 @@ VALIDATION_CASE_NATURAL_LANGUAGE = {
         "Une relance liée au début du cours devient éligible.",
     ): (
         "Lorsqu'un appel setting ou closing est déjà planifié, une relance liée au début du cours ne doit pas remplacer cet appel. "
-        "Sales Cockpit conserve l'appel comme action principale. Le responsable doit réaliser ou documenter l'appel au moment prévu."
+        "Sales Cockpit conserve l'appel comme action principale. Le responsable doit appeler le prospect puis documenter l'appel au moment prévu."
     ),
     (
         "Catégorie de cours active sans date SchoolDrive explicite",
@@ -3222,7 +3336,7 @@ VALIDATION_CASE_NATURAL_LANGUAGE = {
         "L'appel est réussi et le prospect doit passer au closing.",
     ): (
         "Lorsqu'un appel setting a eu lieu et que le prospect doit passer au closing, Setter I documente l'appel, choisit le closer et indique la date du rendez-vous de closing. "
-        "Sales Cockpit crée alors une action future pour documenter l'appel closing et affiche la note dans la conversation."
+        "Sales Cockpit crée alors une action future pour appeler le prospect et documenter l'appel closing, puis affiche la note dans la conversation."
     ),
     (
         "Appel setting à documenter",
@@ -4097,11 +4211,18 @@ def render_admin(user: dict) -> None:
         requests = list_template_requests()
         if requests:
             st.dataframe(requests, hide_index=True, use_container_width=True, height=320)
+            templates_for_linking = template_link_options(list_templates())
             with st.form("update_template_request_status"):
                 request = st.selectbox(
                     "Demande",
                     requests,
                     format_func=lambda item: f"#{item['id']} · {lead_display_name(item)} · {labelize(item['status'])}",
+                )
+                linked_template = st.selectbox(
+                    "Template Twilio lié",
+                    templates_for_linking,
+                    index=template_link_index(templates_for_linking, request.get("template_id")),
+                    format_func=template_link_label,
                 )
                 status = st.selectbox(
                     "Nouveau statut",
@@ -4111,7 +4232,13 @@ def render_admin(user: dict) -> None:
                 )
                 submitted = st.form_submit_button("Mettre à jour la demande")
             if submitted:
-                ok, message = update_template_request_status(request["id"], user["id"], status)
+                selected_template_id = int(linked_template["id"]) if linked_template.get("id") else None
+                ok, message = update_template_request_status(
+                    request["id"],
+                    user["id"],
+                    status,
+                    selected_template_id,
+                )
                 show_result(ok, message)
                 if ok:
                     st.rerun()

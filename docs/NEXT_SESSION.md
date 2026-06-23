@@ -60,7 +60,9 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - The validated workflow model is documented in `docs/ACTION_WORKFLOW.md` and structured in `sales_cockpit/business_rules.py`; read it before changing `Tâches`, actions, follow-ups, calls, templates, qualification, or automation.
 - Admin now includes a `Workflow` tab showing main action types, support actions, action statuses, and the transition table.
 - The main V1 action chain is `reply`, `follow_up`, `setting_call`, `closing_call`.
-- `setting_call` and `closing_call` are now the future action to document the call at the appointment time. In UI copy, prefer `Documenter appel setting` and `Documenter appel closing`.
+- `setting_call` and `closing_call` are now the future action to call the prospect and document the call at the appointment time. In UI copy, prefer `Appeler et documenter appel setting` and `Appeler et documenter appel closing`.
+- Template requests create `admin_actions`. Admin users now see open admin actions from the `Tâches` page as well as `Admin > Actions admin`.
+- A template request can be linked manually to a synced Twilio template from `Modèles` or `Admin > Templates`; approving a linked, real approved Twilio template unblocks the related Setter II follow-up.
 - Qualification, manual notes, and template creation are support actions/proofs by default, not main workflow actions.
 - `setting_call` is the preferred internal term. The UI should say `Appel`, for example `Appel setting` and `Appel closing`, not `Entretien`.
 - Persisted action statuses should be `planned`, `open`, `in_progress`, `done`, `cancelled`, `blocked`; `due` should be calculated from `due_at`, not stored as a status.

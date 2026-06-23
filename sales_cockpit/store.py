@@ -329,6 +329,13 @@ def _admin_user_id(conn: Any) -> int | None:
     return int(row["id"]) if row else None
 
 
+def _call_task_title(action_type: str, full_name: str, retry: bool = False) -> str:
+    call_kind = "setting" if action_type == "setting_call" else "closing"
+    if retry:
+        return f"Appeler et documenter le rappel {call_kind} de {full_name}"
+    return f"Appeler et documenter l'appel {call_kind} de {full_name}"
+
+
 def _ensure_admin_action(
     conn: Any,
     action_type: str,
@@ -2722,8 +2729,8 @@ def assign_standard_next_action(
         titles = {
             "reply": f"Répondre à {full_name}",
             "follow_up": f"Relancer {full_name}",
-            "setting_call": f"Documenter l'appel setting de {full_name}",
-            "closing_call": f"Documenter l'appel closing de {full_name}",
+            "setting_call": _call_task_title("setting_call", full_name),
+            "closing_call": _call_task_title("closing_call", full_name),
         }
         trigger_reasons = {
             "reply": "standard_reply_assigned",
@@ -3023,7 +3030,7 @@ def handoff_to_closer(
             lead_id=conv["lead_id"],
             conversation_id=conversation_id,
             action_type="closing_call",
-            title=f"Documenter l'appel closing de {full_name}",
+            title=_call_task_title("closing_call", full_name),
             assigned_to_user_id=closer_user_id,
             created_by_user_id=user_id,
             urgency="high",
@@ -3155,18 +3162,18 @@ def set_conversation_status(
             action_type = reopen_action_type or "reply"
             assigned_to_user_id = reopen_assigned_to_user_id or user_id
             action_labels = {
-                "reply": "Répondre à",
-                "follow_up": "Relancer",
-                "setting_call": "Documenter l'appel setting de",
-                "closing_call": "Documenter l'appel closing de",
+                "reply": f"Répondre à {full_name}",
+                "follow_up": f"Relancer {full_name}",
+                "setting_call": _call_task_title("setting_call", full_name),
+                "closing_call": _call_task_title("closing_call", full_name),
             }
-            prefix = action_labels.get(action_type, "Traiter")
+            title = action_labels.get(action_type, f"Traiter {full_name}")
             created_action_id = _insert_next_action(
                 conn,
                 lead_id=conv["lead_id"],
                 conversation_id=conversation_id,
                 action_type=action_type,
-                title=f"{prefix} {full_name}",
+                title=title,
                 assigned_to_user_id=assigned_to_user_id,
                 created_by_user_id=user_id,
                 urgency="normal" if reopen_due_at else "high",
@@ -3659,7 +3666,7 @@ def _close_outbound_action_and_chain(
                 lead_id=conv["lead_id"],
                 conversation_id=conv["id"],
                 action_type="setting_call",
-                title=f"Documenter l'appel setting de {full_name}",
+                title=_call_task_title("setting_call", full_name),
                 assigned_to_user_id=assignee_id,
                 created_by_user_id=user_id,
                 urgency="high",
@@ -3697,7 +3704,7 @@ def _close_outbound_action_and_chain(
                 lead_id=conv["lead_id"],
                 conversation_id=conv["id"],
                 action_type="closing_call",
-                title=f"Documenter l'appel closing de {full_name}",
+                title=_call_task_title("closing_call", full_name),
                 assigned_to_user_id=closer_id,
                 created_by_user_id=user_id,
                 urgency="high",
@@ -6086,12 +6093,12 @@ def _sync_next_action_for_sales_stage(
     if sales_stage == "closing":
         target_type = "closing_call"
         assignee_id = row.get("closer_user_id") or default_closer_user_id(conn)
-        title = f"Documenter l'appel closing de {full_name}"
+        title = _call_task_title("closing_call", full_name)
         urgency = "high"
     elif sales_stage == "appointment_booked":
         target_type = "setting_call"
         assignee_id = row.get("setter_user_id") or _default_active_user_id(conn, "setter")
-        title = f"Documenter l'appel setting de {full_name}"
+        title = _call_task_title("setting_call", full_name)
         urgency = "high"
     elif sales_stage in {"new", "setting"}:
         target_type = "reply"
@@ -7362,7 +7369,7 @@ def complete_action_with_workflow(
                     lead_id=task["lead_id"],
                     conversation_id=conversation_id,
                     action_type="setting_call",
-                    title=f"Documenter l'appel setting de {full_name}",
+                    title=_call_task_title("setting_call", full_name),
                     assigned_to_user_id=assignee_id,
                     created_by_user_id=user_id,
                     urgency="high",
@@ -7397,7 +7404,7 @@ def complete_action_with_workflow(
                     lead_id=task["lead_id"],
                     conversation_id=conversation_id,
                     action_type="closing_call",
-                    title=f"Documenter l'appel closing de {full_name}",
+                    title=_call_task_title("closing_call", full_name),
                     assigned_to_user_id=closer_id,
                     created_by_user_id=user_id,
                     urgency="high",
@@ -7429,7 +7436,7 @@ def complete_action_with_workflow(
                     lead_id=task["lead_id"],
                     conversation_id=conversation_id,
                     action_type="closing_call",
-                    title=f"Documenter l'appel closing de {full_name}",
+                    title=_call_task_title("closing_call", full_name),
                     assigned_to_user_id=closer_id,
                     created_by_user_id=user_id,
                     urgency="high",
@@ -7465,7 +7472,7 @@ def complete_action_with_workflow(
                         lead_id=task["lead_id"],
                         conversation_id=conversation_id,
                         action_type="setting_call",
-                        title=f"Documenter le rappel setting de {full_name}",
+                        title=_call_task_title("setting_call", full_name, retry=True),
                         assigned_to_user_id=task["assigned_to_user_id"] or user_id,
                         created_by_user_id=user_id,
                         urgency="high",
@@ -7488,7 +7495,7 @@ def complete_action_with_workflow(
                         lead_id=task["lead_id"],
                         conversation_id=conversation_id,
                         action_type="setting_call",
-                        title=f"Documenter le rappel setting de {full_name}",
+                        title=_call_task_title("setting_call", full_name, retry=True),
                         assigned_to_user_id=task["assigned_to_user_id"] or user_id,
                         created_by_user_id=user_id,
                         urgency="high",
@@ -7571,7 +7578,7 @@ def complete_action_with_workflow(
                         lead_id=task["lead_id"],
                         conversation_id=conversation_id,
                         action_type="closing_call",
-                        title=f"Documenter le rappel closing de {full_name}",
+                        title=_call_task_title("closing_call", full_name, retry=True),
                         assigned_to_user_id=task["assigned_to_user_id"] or user_id,
                         created_by_user_id=user_id,
                         urgency="high",
@@ -7594,7 +7601,7 @@ def complete_action_with_workflow(
                         lead_id=task["lead_id"],
                         conversation_id=conversation_id,
                         action_type="closing_call",
-                        title=f"Documenter le rappel closing de {full_name}",
+                        title=_call_task_title("closing_call", full_name, retry=True),
                         assigned_to_user_id=task["assigned_to_user_id"] or user_id,
                         created_by_user_id=user_id,
                         urgency="high",

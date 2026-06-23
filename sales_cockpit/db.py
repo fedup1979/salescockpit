@@ -697,6 +697,38 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
         UPDATE tasks
+        SET title = replace(title, 'Documenter l''appel setting de', 'Appeler et documenter l''appel setting de')
+        WHERE type = 'setting_call'
+          AND title LIKE 'Documenter l''appel setting de%'
+        """
+    )
+    conn.execute(
+        """
+        UPDATE tasks
+        SET title = replace(title, 'Documenter l''appel closing de', 'Appeler et documenter l''appel closing de')
+        WHERE type = 'closing_call'
+          AND title LIKE 'Documenter l''appel closing de%'
+        """
+    )
+    conn.execute(
+        """
+        UPDATE tasks
+        SET title = replace(title, 'Documenter le rappel setting de', 'Appeler et documenter le rappel setting de')
+        WHERE type = 'setting_call'
+          AND title LIKE 'Documenter le rappel setting de%'
+        """
+    )
+    conn.execute(
+        """
+        UPDATE tasks
+        SET title = replace(title, 'Documenter le rappel closing de', 'Appeler et documenter le rappel closing de')
+        WHERE type = 'closing_call'
+          AND title LIKE 'Documenter le rappel closing de%'
+        """
+    )
+    conn.execute(
+        """
+        UPDATE tasks
         SET sequence_code = 'post_closing_undecided'
         WHERE sequence_code = 'post_call_undecided'
         """
