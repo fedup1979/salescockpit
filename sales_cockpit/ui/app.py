@@ -6,6 +6,7 @@ from html import escape
 from pathlib import Path
 import sys
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 
@@ -101,6 +102,7 @@ INBOX_QUEUES = WORK_QUEUES + ["all"]
 ACTION_QUEUES = ["due", "future", "completed", "all"]
 STANDARD_NEXT_ACTION_TYPES = ["reply", "follow_up", "setting_call", "closing_call"]
 DATE_INPUT_FORMAT = "DD.MM.YYYY"
+DISPLAY_TZ = ZoneInfo("Europe/Zurich")
 WIDGET_CLEAR_QUEUE_KEY = "_sales_cockpit_clear_widget_keys"
 WORK_SORTS = ["assignee_name", "lead_name", "due_at"]
 ACTION_OUTCOMES = {
@@ -806,7 +808,7 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
             )
             reopen_date = st.date_input(
                 "Date",
-                value=datetime.now().date(),
+                value=local_today(),
                 key=f"reopen_date_{conv['id']}",
                 format=DATE_INPUT_FORMAT,
             )
@@ -937,7 +939,7 @@ def render_messages(conversation_id: int, show_internal_notes: bool = True) -> N
             css = "sc-message-outbound"
             row_css = "sc-message-row-outbound"
             sender = normalize_user_display_name(message.get("sender_email"), message.get("sender_name") or "ESSR")
-        created = format_dt(message.get("created_at"))
+        created = format_dt(message_display_timestamp(message))
         template = f" · modèle: {message['template_name']}" if message.get("template_name") else ""
         delivery = render_delivery_status(message)
         st.markdown(
@@ -951,6 +953,14 @@ def render_messages(conversation_id: int, show_internal_notes: bool = True) -> N
             """,
             unsafe_allow_html=True,
         )
+
+
+def message_display_timestamp(message: dict) -> str | None:
+    if message.get("direction") == "outbound":
+        return message.get("sent_at") or message.get("created_at")
+    if message.get("direction") == "inbound":
+        return message.get("received_at") or message.get("created_at")
+    return message.get("created_at")
 
 
 def render_delivery_status(message: dict) -> str:
@@ -1061,7 +1071,7 @@ def get_reply_send_plan(
             assigned_to_user_id = assignee_options[0]["id"] if assignee_options else None
         appointment_date = st.session_state.get(
             f"{key_prefix}_reply_date",
-            datetime.now().date(),
+            local_today(),
         )
         appointment_time = st.session_state.get(
             f"{key_prefix}_reply_time",
@@ -1107,7 +1117,7 @@ def render_reply_send_plan_controls(
         st.session_state[f"{key_prefix}_reply_assignee_id"] = assignee["id"]
         appointment_date = st.date_input(
             "Date du rendez-vous",
-            value=datetime.now().date(),
+            value=local_today(),
             key=f"{key_prefix}_reply_date",
             format=DATE_INPUT_FORMAT,
         )
@@ -1146,7 +1156,8 @@ def render_composer(user: dict, conv: dict) -> None:
         st.success("Fenêtre WhatsApp ouverte : message libre autorisé.")
         if action and action.get("type") == "reply":
             st.caption("Si votre message fixe un appel, choisissez d'abord la suite dans l'onglet Actions.")
-        freeform_key = f"freeform_body_{conv['id']}"
+        freeform_base_key = f"freeform_body_{conv['id']}"
+        freeform_key = resettable_widget_key(freeform_base_key)
         with st.form(f"freeform_{conv['id']}"):
             body = st.text_area("Message libre", height=110, key=freeform_key)
             st.caption("Pièces jointes : non disponibles en V1.")
@@ -1166,6 +1177,7 @@ def render_composer(user: dict, conv: dict) -> None:
             )
             show_result(ok, message)
             if ok:
+                reset_widget_key(freeform_base_key)
                 clear_widget_keys(
                     freeform_key,
                     f"reply_plan_{conv['id']}_reply_note",
@@ -1269,17 +1281,19 @@ def render_template_request_form(user: dict, conv: dict, action: dict | None) ->
     linked_task_id = action["id"] if action and action.get("type") == "follow_up" else None
     request_key_prefix = f"template_request_{conv['id']}_{linked_task_id or 'general'}"
     default_context = "" if flash else conv.get("last_message_body") or ""
+    reason_key = resettable_widget_key(f"{request_key_prefix}_reason")
+    context_key = resettable_widget_key(f"{request_key_prefix}_context")
     with st.form(f"template_request_{conv['id']}_{linked_task_id or 'general'}"):
         reason = st.text_input(
             "Modèle manquant",
             placeholder="Ex. relance financement pour APP",
-            key=f"{request_key_prefix}_reason",
+            key=reason_key,
         )
         context = st.text_area(
             "Contexte pour le modèle",
             value=default_context,
             height=90,
-            key=f"{request_key_prefix}_context",
+            key=context_key,
         )
         submitted = st.form_submit_button("Créer la demande de modèle")
     if submitted:
@@ -1293,7 +1307,9 @@ def render_template_request_form(user: dict, conv: dict, action: dict | None) ->
         show_result(ok, message)
         if ok:
             st.session_state[flash_key] = message
-            clear_widget_keys(f"{request_key_prefix}_reason", f"{request_key_prefix}_context")
+            reset_widget_key(f"{request_key_prefix}_reason")
+            reset_widget_key(f"{request_key_prefix}_context")
+            clear_widget_keys(reason_key, context_key)
             st.rerun()
 
 
@@ -1513,7 +1529,7 @@ def render_whatsapp_action_guidance(user: dict, conv: dict, action: dict) -> Non
 
 def render_call_action_form(user: dict, action: dict) -> None:
     users = list_users()
-    current_dt = parse_dt(action.get("due_at")) or utc_now()
+    current_dt = (parse_dt(action.get("due_at")) or utc_now()).astimezone(DISPLAY_TZ)
     current_date = current_dt.date()
     current_time = current_dt.time().replace(second=0, microsecond=0)
     reached_outcomes = [
@@ -1556,7 +1572,7 @@ def render_call_action_form(user: dict, action: dict) -> None:
                     assigned_to_user_id = closer["id"]
                 next_date = st.date_input(
                     "Date du rendez-vous",
-                    value=datetime.now().date(),
+                    value=local_today(),
                     key=f"call_date_{action['id']}",
                     format=DATE_INPUT_FORMAT,
                 )
@@ -1736,7 +1752,7 @@ def render_standard_action_planner(user: dict, conv: dict, users: list[dict], ac
     )
     action_date = st.date_input(
         "Date",
-        value=datetime.now().date(),
+        value=local_today(),
         key=f"standard_action_date_{conv['id']}",
         format=DATE_INPUT_FORMAT,
     )
@@ -1819,7 +1835,8 @@ def render_next_action_box(user: dict, conv: dict) -> None:
 
 
 def render_manual_note_box(user: dict, conv: dict) -> None:
-    note_key = f"manual_note_body_{conv['id']}"
+    note_base_key = f"manual_note_body_{conv['id']}"
+    note_key = resettable_widget_key(note_base_key)
     with st.form(f"manual_note_{conv['id']}"):
         body = st.text_area("Résumé ou transcript privé", height=130, key=note_key)
         submitted = st.form_submit_button("Ajouter la note privée")
@@ -1830,6 +1847,7 @@ def render_manual_note_box(user: dict, conv: dict) -> None:
         ok, message = add_manual_note(conv["id"], user["id"], body.strip(), True)
         show_result(ok, message)
         if ok:
+            reset_widget_key(note_base_key)
             clear_widget_keys(note_key)
             st.rerun()
 
@@ -4550,6 +4568,14 @@ def apply_pending_widget_clears() -> None:
         st.session_state.pop(key, None)
 
 
+def resettable_widget_key(base_key: str) -> str:
+    return f"{base_key}_{int(st.session_state.get(f'{base_key}_reset', 0))}"
+
+
+def reset_widget_key(base_key: str) -> None:
+    st.session_state[f"{base_key}_reset"] = int(st.session_state.get(f"{base_key}_reset", 0)) + 1
+
+
 def labelize(value: str | None) -> str:
     if not value:
         return "Non défini"
@@ -4595,7 +4621,7 @@ def format_dt(value: str | None) -> str:
     parsed = parse_dt(value)
     if not parsed:
         return "Non disponible"
-    return parsed.astimezone().strftime("%d.%m.%Y %H:%M")
+    return parsed.astimezone(DISPLAY_TZ).strftime("%d.%m.%Y %H:%M")
 
 
 def format_window_boundary(value: str | None) -> str:
@@ -4604,7 +4630,7 @@ def format_window_boundary(value: str | None) -> str:
     parsed = parse_dt(value)
     if not parsed:
         return "Non disponible"
-    return parsed.astimezone().strftime("%d.%m.%Y à %H:%M")
+    return parsed.astimezone(DISPLAY_TZ).strftime("%d.%m.%Y à %H:%M")
 
 
 def format_due(value: str | None) -> str:
@@ -4613,8 +4639,8 @@ def format_due(value: str | None) -> str:
     parsed = parse_dt(value)
     if not parsed:
         return "Échéance invalide"
-    local = parsed.astimezone()
-    today = datetime.now().date()
+    local = parsed.astimezone(DISPLAY_TZ)
+    today = local_today()
     if local.date() == today:
         return f"Aujourd’hui {local.strftime('%H:%M')}"
     return local.strftime("%d.%m.%Y %H:%M")
@@ -4626,7 +4652,7 @@ def format_action_datetime(value: str | None) -> str:
     parsed = parse_dt(value)
     if not parsed:
         return "Échéance invalide"
-    return parsed.astimezone().strftime("%d.%m %H:%M")
+    return parsed.astimezone(DISPLAY_TZ).strftime("%d.%m %H:%M")
 
 
 def next_action_display_title(action: dict) -> str:
@@ -4802,12 +4828,16 @@ def sort_work_items(tasks: list[dict], sort_by: str) -> list[dict]:
 
 
 def quick_due_at(days: int) -> str:
-    return local_due_at(datetime.now().date() + timedelta(days=days), time(9, 0))
+    return local_due_at(local_today() + timedelta(days=days), time(9, 0))
 
 
 def local_due_at(selected_date, selected_time: time) -> str:
-    local_dt = datetime.combine(selected_date, selected_time)
+    local_dt = datetime.combine(selected_date, selected_time, tzinfo=DISPLAY_TZ)
     return local_dt.astimezone(timezone.utc).isoformat()
+
+
+def local_today():
+    return utc_now().astimezone(DISPLAY_TZ).date()
 
 
 def compact_text(value: str, max_chars: int) -> str:

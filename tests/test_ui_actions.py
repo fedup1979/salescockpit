@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from uuid import uuid4
 
 from streamlit.testing.v1 import AppTest
@@ -11,6 +11,13 @@ from sales_cockpit.store import (
     list_conversations,
     record_inbound_message,
     set_conversation_status,
+)
+from sales_cockpit.ui.app import (
+    format_action_datetime,
+    format_dt,
+    format_due,
+    local_due_at,
+    message_display_timestamp,
 )
 
 
@@ -25,6 +32,23 @@ def render_selected_action(action_id: int, user_email: str = "service.etudiants@
     app.session_state["selected_action_id"] = action_id
     app.run(timeout=10)
     return app
+
+
+def test_ui_dates_are_displayed_in_geneva_time() -> None:
+    assert format_dt("2026-06-23T06:11:00Z") == "23.06.2026 08:11"
+    assert format_action_datetime("2026-06-23T06:11:00Z") == "23.06 08:11"
+    assert "08:11" in format_due("2026-06-23T06:11:00Z")
+    assert local_due_at(date(2026, 6, 23), time(8, 11)) == "2026-06-23T06:11:00+00:00"
+    assert (
+        message_display_timestamp(
+            {
+                "direction": "outbound",
+                "created_at": "2026-06-23T06:10:55Z",
+                "sent_at": "2026-06-23T06:11:00Z",
+            }
+        )
+        == "2026-06-23T06:11:00Z"
+    )
 
 
 def test_reply_action_guides_to_conversation_send_without_generic_completion() -> None:
