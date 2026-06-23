@@ -3779,7 +3779,7 @@ def _close_outbound_action_and_chain(
                 conv["lead_id"],
                 user_id,
                 outcome="Appel setting remplacé",
-                included_types=("setting_call",),
+                included_types=("setting_call", "closing_call"),
             )
             conn.execute(
                 """
@@ -3820,7 +3820,7 @@ def _close_outbound_action_and_chain(
                 conv["lead_id"],
                 user_id,
                 outcome="Appel closing remplacé",
-                included_types=("closing_call",),
+                included_types=("setting_call", "closing_call"),
             )
             conn.execute(
                 """
@@ -7719,7 +7719,7 @@ def complete_action_with_workflow(
                     task["lead_id"],
                     user_id,
                     outcome="Appel setting remplacé",
-                    included_types=("setting_call",),
+                    included_types=("setting_call", "closing_call"),
                 )
                 conn.execute(
                     """
@@ -7757,7 +7757,7 @@ def complete_action_with_workflow(
                     task["lead_id"],
                     user_id,
                     outcome="Appel closing remplacé",
-                    included_types=("closing_call",),
+                    included_types=("setting_call", "closing_call"),
                 )
                 conn.execute(
                     """
@@ -8095,6 +8095,27 @@ def complete_action_with_workflow(
                         trigger_reason="terminal_status_lifted_after_inbound",
                         previous_action_id=task_id,
                     )
+
+        elif task["type"] == "other":
+            if conversation_id and not _first_active_action_for_lead(conn, task["lead_id"]):
+                assignee_id = task.get("assigned_to_user_id") or setter1_user_id(conn) or user_id
+                next_action_id = _insert_next_action(
+                    conn,
+                    lead_id=task["lead_id"],
+                    conversation_id=conversation_id,
+                    action_type="reply",
+                    title=f"Répondre à {full_name}",
+                    assigned_to_user_id=assignee_id,
+                    created_by_user_id=user_id,
+                    urgency="high",
+                    due_at=now,
+                    description=(
+                        "Action de revue terminée sans suite explicite. "
+                        "Définir la suite ou clore la conversation."
+                    ),
+                    trigger_reason="human_review_completed_requires_next_action",
+                    previous_action_id=task_id,
+                )
 
         if next_action_id:
             conn.execute(

@@ -15,6 +15,7 @@ from sales_cockpit.store import (
     complete_action_with_workflow,
     create_and_submit_twilio_template,
     create_bug_report,
+    create_next_action,
     create_template,
     create_template_request,
     add_sequence_step,
@@ -651,6 +652,47 @@ def test_inbound_during_planned_call_preserves_call_and_creates_reply() -> None:
     assert active_followups == []
 
 
+def test_reply_setting_booked_replaces_existing_closing_call() -> None:
+    seed_initial_data()
+    phone = unique_phone()
+    result = record_inbound_message(phone, "Je veux finaliser.")
+    reply = get_next_action_for_lead(result["lead_id"])
+    closing_due_at = iso_utc(utc_now() + timedelta(days=1))
+    ok, message = send_freeform_message(
+        result["conversation_id"],
+        reply["assigned_to_user_id"],
+        "Yasmine vous appelle demain.",
+        action_outcome="closing_booked",
+        next_due_at=closing_due_at,
+        note="RDV closing.",
+    )
+    assert ok is True, message
+    assert get_next_action_for_lead(result["lead_id"])["type"] == "closing_call"
+
+    record_inbound_message(phone, "Je préfère refaire un point avant.")
+    reply = get_next_action_for_lead(result["lead_id"])
+    setting_due_at = iso_utc(utc_now() + timedelta(hours=2))
+    ok, message = send_freeform_message(
+        result["conversation_id"],
+        reply["assigned_to_user_id"],
+        "Très bien, Mihary vous appelle d'abord.",
+        action_outcome="setting_booked",
+        next_due_at=setting_due_at,
+        assigned_to_user_id=reply["assigned_to_user_id"],
+        note="Retour au setting.",
+    )
+
+    assert ok is True, message
+    active_calls = [
+        item for item in list_actions_for_lead(result["lead_id"], "all")
+        if item["type"] in {"setting_call", "closing_call"}
+        and item["status"] in {"open", "planned", "in_progress", "blocked"}
+    ]
+    assert len(active_calls) == 1
+    assert active_calls[0]["type"] == "setting_call"
+    assert active_calls[0]["due_at"] == setting_due_at
+
+
 def test_overdue_planned_call_does_not_hide_urgent_reply() -> None:
     seed_initial_data()
     phone = unique_phone()
@@ -1224,6 +1266,36 @@ def test_sync_twilio_templates_auto_unblocks_linked_template_request(monkeypatch
         item for item in list_admin_actions()
         if item.get("template_request_id") == request["id"]
     ]
+
+
+def test_other_review_completion_creates_fallback_reply_when_no_action_remains() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Cas à revoir.")
+    reply = get_next_action_for_lead(result["lead_id"])
+    with connect() as conn:
+        conn.execute(
+            "UPDATE tasks SET status = 'done', outcome = 'test setup' WHERE id = ?",
+            (reply["id"],),
+        )
+    other_id = create_next_action(
+        result["lead_id"],
+        result["conversation_id"],
+        "other",
+        "Revoir catégorie non renseignée",
+        admin["id"],
+        admin["id"],
+        due_at=iso_utc(),
+        description="Revue humaine.",
+        trigger_reason="test_review",
+    )
+
+    ok, message = complete_action_with_workflow(other_id, admin["id"], "done", note="Revue faite.")
+
+    assert ok is True, message
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "reply"
+    assert next_action["trigger_reason"] == "human_review_completed_requires_next_action"
 
 
 def test_twilio_content_read_only_blocks_remote_template_creation(monkeypatch) -> None:
