@@ -191,7 +191,7 @@ Dropdown labels are displayed in French. Internal values remain in English.
 - `blocked follow_up`: shows the linked missing-template request or lets the user create one.
 - `setting_call` and `closing_call`: future actions to document the call result with mandatory note.
 - `contact_review`: shows only the explicit do-not-contact review decisions.
-- `Actions avancées`: kept minimal. V1 only supports documenting `Message fait hors cockpit`. Do not reintroduce generic manual action creation, out-of-flow handoff, manual data correction, or conversation reopen there.
+- No `Actions avancées` block in V1. `reply` and `follow_up` actions must be resolved through the Conversation composer so the system keeps a real outbound-message proof. Do not reintroduce generic manual action creation, off-cockpit message completion, out-of-flow handoff, manual data correction, or conversation reopen there.
 - Action history includes outcome and message proof when available.
 
 ### Private Note Tab

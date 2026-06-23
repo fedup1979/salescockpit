@@ -100,6 +100,8 @@ WORK_QUEUES = ["todo", "waiting", "resolved"]
 INBOX_QUEUES = WORK_QUEUES + ["all"]
 ACTION_QUEUES = ["due", "future", "completed", "all"]
 STANDARD_NEXT_ACTION_TYPES = ["reply", "follow_up", "setting_call", "closing_call"]
+DATE_INPUT_FORMAT = "DD.MM.YYYY"
+WIDGET_CLEAR_QUEUE_KEY = "_sales_cockpit_clear_widget_keys"
 WORK_SORTS = ["assignee_name", "lead_name", "due_at"]
 ACTION_OUTCOMES = {
     "reply": ["reply_no_appointment", "setting_booked", "closing_booked", "not_relevant", "do_not_contact"],
@@ -413,6 +415,7 @@ def main() -> None:
     st.set_page_config(page_title="Sales Cockpit", page_icon="SC", layout="wide")
     st.markdown(APP_CSS, unsafe_allow_html=True)
     seed_initial_data()
+    apply_pending_widget_clears()
 
     if "user" not in st.session_state:
         render_login()
@@ -530,18 +533,20 @@ def render_bug_report_button(user: dict, page: str) -> None:
 def render_bug_report_dialog(user: dict, page: str) -> None:
     st.caption("Décrivez ce qui semble incorrect ou améliorable. Le signalement sera relié à la page courante et, si possible, à la conversation ou à l'action sélectionnée.")
     with st.form("bug_report_form"):
-        title = st.text_input("Titre court", placeholder="Ex. mauvaise prochaine action")
+        title = st.text_input("Titre court", placeholder="Ex. mauvaise prochaine action", key="bug_report_title")
         description = st.text_area(
             "Ce qui semble incorrect ou améliorable",
             height=140,
+            key="bug_report_description",
         )
-        actual = st.text_area("Ce que vous voyez", height=90)
-        expected = st.text_area("Ce que vous attendiez", height=90)
+        actual = st.text_area("Ce que vous voyez", height=90, key="bug_report_actual")
+        expected = st.text_area("Ce que vous attendiez", height=90, key="bug_report_expected")
         severity = st.selectbox(
             "Priorité",
             ["normal", "high", "urgent"],
             index=0,
             format_func=labelize,
+            key="bug_report_severity",
         )
         submitted = st.form_submit_button("Envoyer")
     if submitted:
@@ -562,6 +567,12 @@ def render_bug_report_dialog(user: dict, page: str) -> None:
         )
         show_result(ok, message)
         if ok:
+            clear_widget_keys(
+                "bug_report_title",
+                "bug_report_description",
+                "bug_report_actual",
+                "bug_report_expected",
+            )
             st.rerun()
 
 
@@ -793,7 +804,12 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
                 format_func=format_user,
                 key=f"reopen_assignee_{conv['id']}",
             )
-            reopen_date = st.date_input("Date", value=datetime.now().date(), key=f"reopen_date_{conv['id']}")
+            reopen_date = st.date_input(
+                "Date",
+                value=datetime.now().date(),
+                key=f"reopen_date_{conv['id']}",
+                format=DATE_INPUT_FORMAT,
+            )
             reopen_time = st.time_input(
                 "Heure",
                 value=time(9, 0),
@@ -818,6 +834,11 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
             )
             show_result(ok, message)
             if ok:
+                clear_widget_keys(
+                    f"reopen_reason_{conv['id']}",
+                    f"reopen_date_{conv['id']}",
+                    f"reopen_time_{conv['id']}",
+                )
                 st.rerun()
     else:
         with st.popover("Clore la conversation", use_container_width=True):
@@ -843,6 +864,7 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
             )
             show_result(ok, message)
             if ok:
+                clear_widget_keys(f"resolve_note_header_{conv['id']}")
                 st.rerun()
 
 
@@ -857,7 +879,12 @@ def identity_badge_html(item: dict) -> str:
 
 
 def state_chip_html(label: str, value: str) -> str:
-    return f'<span><strong>{escape_html(label)}</strong> {escape_html(value)}</span>'
+    return (
+        '<span class="sc-state-chip">'
+        f'<strong>{escape_html(label)}</strong>'
+        f'<span>{escape_html(value)}</span>'
+        "</span>"
+    )
 
 
 def render_compact_lead_state(conv: dict) -> None:
@@ -1082,6 +1109,7 @@ def render_reply_send_plan_controls(
             "Date du rendez-vous",
             value=datetime.now().date(),
             key=f"{key_prefix}_reply_date",
+            format=DATE_INPUT_FORMAT,
         )
         appointment_time = st.time_input(
             "Heure",
@@ -1118,8 +1146,9 @@ def render_composer(user: dict, conv: dict) -> None:
         st.success("Fenêtre WhatsApp ouverte : message libre autorisé.")
         if action and action.get("type") == "reply":
             st.caption("Si votre message fixe un appel, choisissez d'abord la suite dans l'onglet Actions.")
+        freeform_key = f"freeform_body_{conv['id']}"
         with st.form(f"freeform_{conv['id']}"):
-            body = st.text_area("Message libre", height=110)
+            body = st.text_area("Message libre", height=110, key=freeform_key)
             st.caption("Pièces jointes : non disponibles en V1.")
             submitted = st.form_submit_button("Envoyer le message libre")
         if submitted:
@@ -1137,6 +1166,12 @@ def render_composer(user: dict, conv: dict) -> None:
             )
             show_result(ok, message)
             if ok:
+                clear_widget_keys(
+                    freeform_key,
+                    f"reply_plan_{conv['id']}_reply_note",
+                    f"reply_plan_{conv['id']}_reply_date",
+                    f"reply_plan_{conv['id']}_reply_time",
+                )
                 st.rerun()
     else:
         st.warning("Fenêtre WhatsApp fermée : un modèle approuvé est obligatoire.")
@@ -1216,6 +1251,10 @@ def render_composer(user: dict, conv: dict) -> None:
         )
         show_result(ok, message)
         if ok:
+            clear_widget_keys(
+                f"reply_plan_{conv['id']}_reply_note",
+                *[f"tpl_{template['id']}_{placeholder['placeholder_key']}" for placeholder in template["placeholders"]],
+            )
             st.rerun()
     render_template_request_form(user, conv, action)
 
@@ -1228,15 +1267,18 @@ def render_template_request_form(user: dict, conv: dict, action: dict | None) ->
     st.markdown("**Demander un nouveau modèle WhatsApp**")
     st.caption("À utiliser uniquement si aucun modèle approuvé ne convient.")
     linked_task_id = action["id"] if action and action.get("type") == "follow_up" else None
+    request_key_prefix = f"template_request_{conv['id']}_{linked_task_id or 'general'}"
     with st.form(f"template_request_{conv['id']}_{linked_task_id or 'general'}"):
         reason = st.text_input(
             "Modèle manquant",
             placeholder="Ex. relance financement pour APP",
+            key=f"{request_key_prefix}_reason",
         )
         context = st.text_area(
             "Contexte pour le modèle",
             value=conv.get("last_message_body") or "",
             height=90,
+            key=f"{request_key_prefix}_context",
         )
         submitted = st.form_submit_button("Créer la demande de modèle")
     if submitted:
@@ -1250,6 +1292,7 @@ def render_template_request_form(user: dict, conv: dict, action: dict | None) ->
         show_result(ok, message)
         if ok:
             st.session_state[flash_key] = message
+            clear_widget_keys(f"{request_key_prefix}_reason", f"{request_key_prefix}_context")
             st.rerun()
 
 
@@ -1432,24 +1475,6 @@ def action_consequence(action_type: str, outcome: str) -> str:
     return consequences.get((action_type, outcome), "Le système appliquera la suite prévue par la règle métier.")
 
 
-def render_current_action_card(action: dict) -> None:
-    assignee = display_assignee_name(action)
-    st.markdown(
-        f"""
-        <div class="sc-panel">
-          <div class="sc-action-title">{escape_html(action['title'])}</div>
-          <div class="sc-row-meta">
-            {escape_html(labelize(action['type']))} · {escape_html(assignee)} ·
-            {escape_html(format_due(action.get('due_at')))} · {escape_html(labelize(action.get('status')))} ·
-            {escape_html(labelize(action.get('urgency')))}
-          </div>
-          {f"<div class='sc-action-description'>{escape_html(action['description'])}</div>" if action.get('description') else ""}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def render_blocked_action(user: dict, conv: dict, action: dict) -> None:
     st.warning("Relance bloquée : modèle WhatsApp manquant.")
     requests = [
@@ -1504,7 +1529,9 @@ def render_call_action_form(user: dict, action: dict) -> None:
         )
         if reached == "no":
             outcome = "not_reached"
-            st.info("Le système créera le rappel d'appel prévu, puis une relance Setter II si les rappels sont épuisés.")
+            note = "Prospect non joint."
+            assigned_to_user_id = None
+            next_due_at = None
         else:
             outcome = st.selectbox(
                 "Résultat de l'appel",
@@ -1512,29 +1539,34 @@ def render_call_action_form(user: dict, action: dict) -> None:
                 format_func=labelize,
                 key=f"call_outcome_{action['id']}",
             )
-        st.caption(action_consequence(action["type"], outcome))
-        note = st.text_area("Note d'appel obligatoire", height=100, key=f"call_note_{action['id']}")
-        assigned_to_user_id = None
-        next_due_at = None
-        if outcome == "to_closing":
-            closers = [item for item in users if item["role"] == "closer"]
-            if closers:
-                closer = st.selectbox(
-                    "Closer",
-                    closers,
-                    format_func=format_user,
-                    key=f"call_closer_{action['id']}",
+            st.caption(action_consequence(action["type"], outcome))
+            note = st.text_area("Note d'appel obligatoire", height=100, key=f"call_note_{action['id']}")
+            assigned_to_user_id = None
+            next_due_at = None
+            if outcome == "to_closing":
+                closers = [item for item in users if item["role"] == "closer"]
+                if closers:
+                    closer = st.selectbox(
+                        "Closer",
+                        closers,
+                        format_func=format_user,
+                        key=f"call_closer_{action['id']}",
+                    )
+                    assigned_to_user_id = closer["id"]
+                next_date = st.date_input(
+                    "Date du rendez-vous",
+                    value=datetime.now().date(),
+                    key=f"call_date_{action['id']}",
+                    format=DATE_INPUT_FORMAT,
                 )
-                assigned_to_user_id = closer["id"]
-            next_date = st.date_input("Date du rendez-vous", value=datetime.now().date(), key=f"call_date_{action['id']}")
-            next_time = st.time_input(
-                "Heure",
-                value=time(9, 0),
-                step=timedelta(minutes=1),
-                key=f"call_time_{action['id']}",
-            )
-            next_due_at = local_due_at(next_date, next_time)
-        submitted = st.form_submit_button("Enregistrer le résultat", disabled=not note.strip())
+                next_time = st.time_input(
+                    "Heure",
+                    value=time(9, 0),
+                    step=timedelta(minutes=1),
+                    key=f"call_time_{action['id']}",
+                )
+                next_due_at = local_due_at(next_date, next_time)
+        submitted = st.form_submit_button("Enregistrer le résultat")
     if submitted:
         if not note.strip():
             st.error("Une note d'appel est obligatoire.")
@@ -1549,6 +1581,12 @@ def render_call_action_form(user: dict, action: dict) -> None:
         )
         show_result(ok, message)
         if ok:
+            clear_widget_keys(
+                f"call_note_{action['id']}",
+                f"call_date_{action['id']}",
+                f"call_time_{action['id']}",
+                f"call_closer_{action['id']}",
+            )
             st.rerun()
 
     with st.expander("Déplacer ou annuler le RDV", expanded=False):
@@ -1557,6 +1595,7 @@ def render_call_action_form(user: dict, action: dict) -> None:
                 "Nouvelle date",
                 value=current_date,
                 key=f"reschedule_date_{action['id']}",
+                format=DATE_INPUT_FORMAT,
             )
             next_time = st.time_input(
                 "Nouvelle heure",
@@ -1569,16 +1608,24 @@ def render_call_action_form(user: dict, action: dict) -> None:
                 height=80,
                 key=f"reschedule_note_{action['id']}",
             )
-            submitted = st.form_submit_button("Déplacer le RDV", disabled=not note.strip())
+            submitted = st.form_submit_button("Déplacer le RDV")
         if submitted:
+            if not note.strip():
+                st.error("Une note de déplacement est obligatoire.")
+                return
             ok, message = reschedule_call_action(
                 action["id"],
                 user["id"],
                 local_due_at(next_date, next_time),
-                note,
+                note.strip(),
             )
             show_result(ok, message)
             if ok:
+                clear_widget_keys(
+                    f"reschedule_note_{action['id']}",
+                    f"reschedule_date_{action['id']}",
+                    f"reschedule_time_{action['id']}",
+                )
                 st.rerun()
 
         with st.form(f"cancel_call_form_{action['id']}"):
@@ -1587,15 +1634,19 @@ def render_call_action_form(user: dict, action: dict) -> None:
                 height=80,
                 key=f"cancel_call_note_{action['id']}",
             )
-            submitted = st.form_submit_button("Annuler sans nouveau RDV", disabled=not note.strip())
+            submitted = st.form_submit_button("Annuler sans nouveau RDV")
         if submitted:
+            if not note.strip():
+                st.error("Une note d'annulation est obligatoire.")
+                return
             ok, message = cancel_call_action_without_replacement(
                 action["id"],
                 user["id"],
-                note,
+                note.strip(),
             )
             show_result(ok, message)
             if ok:
+                clear_widget_keys(f"cancel_call_note_{action['id']}")
                 st.rerun()
 
 
@@ -1612,6 +1663,7 @@ def render_contact_review_action(user: dict, action: dict) -> None:
         )
         show_result(ok, message)
         if ok:
+            clear_widget_keys(f"contact_review_note_{action['id']}")
             st.rerun()
     if cols[1].button("Lever et répondre", use_container_width=True, key=f"lift_dnc_{action['id']}"):
         ok, message = complete_action_with_workflow(
@@ -1622,6 +1674,7 @@ def render_contact_review_action(user: dict, action: dict) -> None:
         )
         show_result(ok, message)
         if ok:
+            clear_widget_keys(f"contact_review_note_{action['id']}")
             st.rerun()
 
 
@@ -1629,7 +1682,7 @@ def render_other_action_form(user: dict, action: dict) -> None:
     st.info("Action de revue humaine. Ajoutez une note indiquant ce qui a été fait, puis marquez l'action terminée.")
     with st.form(f"other_action_form_{action['id']}"):
         note = st.text_area("Note obligatoire", height=90, key=f"other_action_note_{action['id']}")
-        submitted = st.form_submit_button("Marquer l'action terminée", disabled=not note.strip())
+        submitted = st.form_submit_button("Marquer l'action terminée")
     if submitted:
         if not note.strip():
             st.error("Ajoutez une note pour terminer cette action.")
@@ -1642,52 +1695,7 @@ def render_other_action_form(user: dict, action: dict) -> None:
         )
         show_result(ok, message)
         if ok:
-            st.rerun()
-
-
-def render_manual_completion_advanced(user: dict, action: dict | None) -> None:
-    if not action or action.get("type") not in {"reply", "follow_up"}:
-        return
-    st.markdown("**Message fait hors cockpit**")
-    st.caption("À utiliser seulement si le message a réellement été envoyé ailleurs. Une note est obligatoire.")
-    outcomes = (
-        ["reply_no_appointment", "setting_booked", "closing_booked", "not_relevant", "do_not_contact"]
-        if action["type"] == "reply"
-        else ["follow_up_sent", "sequence_completed_no_reply"]
-    )
-    with st.form(f"manual_complete_{action['id']}"):
-        outcome = st.selectbox("Résultat", outcomes, format_func=labelize, key=f"manual_complete_outcome_{action['id']}")
-        note = st.text_area("Preuve / note obligatoire", height=90, key=f"manual_complete_note_{action['id']}")
-        next_due_at = None
-        assigned_to_user_id = None
-        if outcome in {"setting_booked", "closing_booked"}:
-            users = list_users()
-            assignee_options = reply_call_assignee_options(users, outcome)
-            assignee = st.selectbox("Responsable de l'appel", assignee_options, format_func=format_user, key=f"manual_complete_assignee_{action['id']}")
-            next_date = st.date_input("Date du rendez-vous", value=datetime.now().date(), key=f"manual_complete_date_{action['id']}")
-            next_time = st.time_input(
-                "Heure",
-                value=time(9, 0),
-                step=timedelta(minutes=1),
-                key=f"manual_complete_time_{action['id']}",
-            )
-            next_due_at = local_due_at(next_date, next_time)
-            assigned_to_user_id = assignee["id"]
-        submitted = st.form_submit_button("Enregistrer hors cockpit")
-    if submitted:
-        if not note.strip():
-            st.error("Ajoutez une note pour documenter l'action faite hors cockpit.")
-            return
-        ok, message = complete_action_with_workflow(
-            action["id"],
-            user["id"],
-            outcome,
-            note=note,
-            next_due_at=next_due_at,
-            assigned_to_user_id=assigned_to_user_id,
-        )
-        show_result(ok, message)
-        if ok:
+            clear_widget_keys(f"other_action_note_{action['id']}")
             st.rerun()
 
 
@@ -1729,6 +1737,7 @@ def render_standard_action_planner(user: dict, conv: dict, users: list[dict], ac
         "Date",
         value=datetime.now().date(),
         key=f"standard_action_date_{conv['id']}",
+        format=DATE_INPUT_FORMAT,
     )
     action_time = st.time_input(
         "Heure",
@@ -1758,17 +1767,12 @@ def render_standard_action_planner(user: dict, conv: dict, users: list[dict], ac
         )
         show_result(ok, message)
         if ok:
+            clear_widget_keys(
+                f"standard_action_note_{conv['id']}",
+                f"standard_action_date_{conv['id']}",
+                f"standard_action_time_{conv['id']}",
+            )
             st.rerun()
-
-
-def render_advanced_actions(user: dict, conv: dict, action: dict | None) -> None:
-    if conv.get("status") != "open":
-        return
-    with st.expander("Actions avancées"):
-        st.caption(
-            "À utiliser seulement si le message a réellement été envoyé hors du cockpit."
-        )
-        render_manual_completion_advanced(user, action)
 
 
 def render_next_action_box(user: dict, conv: dict) -> None:
@@ -1777,9 +1781,6 @@ def render_next_action_box(user: dict, conv: dict) -> None:
     active_assignee_id = default_assignee_id(conv, action, user)
 
     if action:
-        st.markdown("**Action actuelle**")
-        render_current_action_card(action)
-        st.markdown('<div class="sc-action-form-gap"></div>', unsafe_allow_html=True)
         if action.get("status") == "blocked":
             render_blocked_action(user, conv, action)
         elif action["type"] in {"reply", "follow_up"}:
@@ -1799,7 +1800,6 @@ def render_next_action_box(user: dict, conv: dict) -> None:
     if conv["status"] == "open":
         st.divider()
         render_standard_action_planner(user, conv, users, active_assignee_id)
-        render_advanced_actions(user, conv, action)
     else:
         st.caption("Conversation terminée : utilisez Réactiver en haut de la fiche pour créer une nouvelle action.")
 
@@ -1818,13 +1818,18 @@ def render_next_action_box(user: dict, conv: dict) -> None:
 
 
 def render_manual_note_box(user: dict, conv: dict) -> None:
+    note_key = f"manual_note_body_{conv['id']}"
     with st.form(f"manual_note_{conv['id']}"):
-        body = st.text_area("Résumé ou transcript privé", height=130)
+        body = st.text_area("Résumé ou transcript privé", height=130, key=note_key)
         submitted = st.form_submit_button("Ajouter la note privée")
     if submitted:
+        if not body.strip():
+            st.error("Écris une note avant de l'ajouter.")
+            return
         ok, message = add_manual_note(conv["id"], user["id"], body.strip(), True)
         show_result(ok, message)
         if ok:
+            clear_widget_keys(note_key)
             st.rerun()
 
 
@@ -2568,6 +2573,7 @@ def render_pilotage_default_sessions(user: dict) -> None:
         start_date = st.date_input(
             "Date de début de référence",
             value=parse_iso_date_or_today((current or {}).get("default_start_date")),
+            format=DATE_INPUT_FORMAT,
         )
         schooldrive_url = st.text_input(
             "Lien SchoolDrive de la session, optionnel",
@@ -3600,7 +3606,12 @@ def render_pilotage_simulator() -> None:
     with col_b:
         selected_session = default_sessions.get(category)
         default_date = parse_iso_date_or_today((selected_session or {}).get("default_start_date"))
-        start_date = st.date_input("Date de début utilisée", value=default_date, key="pilotage_sim_start")
+        start_date = st.date_input(
+            "Date de début utilisée",
+            value=default_date,
+            key="pilotage_sim_start",
+            format=DATE_INPUT_FORMAT,
+        )
 
     if selected_session:
         st.info(
@@ -4525,6 +4536,17 @@ def show_result(ok: bool, message: str) -> None:
         st.success(message)
     else:
         st.error(message)
+
+
+def clear_widget_keys(*keys: str) -> None:
+    pending = list(st.session_state.get(WIDGET_CLEAR_QUEUE_KEY, []))
+    pending.extend(key for key in keys if key)
+    st.session_state[WIDGET_CLEAR_QUEUE_KEY] = list(dict.fromkeys(pending))
+
+
+def apply_pending_widget_clears() -> None:
+    for key in st.session_state.pop(WIDGET_CLEAR_QUEUE_KEY, []):
+        st.session_state.pop(key, None)
 
 
 def labelize(value: str | None) -> str:

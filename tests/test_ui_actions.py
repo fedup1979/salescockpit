@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from streamlit.testing.v1 import AppTest
@@ -5,6 +6,7 @@ from streamlit.testing.v1 import AppTest
 from sales_cockpit.db import seed_initial_data
 from sales_cockpit.store import (
     authenticate,
+    assign_standard_next_action,
     get_next_action_for_lead,
     list_conversations,
     record_inbound_message,
@@ -149,7 +151,7 @@ def test_status_tab_no_longer_exposes_parcours_selector() -> None:
     assert "Forçage admin du parcours" not in markup
 
 
-def test_advanced_actions_only_show_off_cockpit_message_flow() -> None:
+def test_advanced_actions_are_not_exposed() -> None:
     seed_initial_data()
     user = authenticate("service.etudiants@essr.ch", "ChangeMe!2026")
     result = record_inbound_message(unique_phone(), "Je veux des informations.")
@@ -163,9 +165,39 @@ def test_advanced_actions_only_show_off_cockpit_message_flow() -> None:
     assert len(app.exception) == 0
     markdown = "\n".join(item.value for item in app.markdown)
     button_labels = [item.label for item in app.button]
-    assert "Message fait hors cockpit" in markdown
+    assert "Actions avancées" not in markdown
+    assert "Message fait hors cockpit" not in markdown
     assert "Créer une action manuelle" not in markdown
     assert "Passer au closer hors flux normal" not in markdown
     assert "Planifier une relance exceptionnelle" not in markdown
     assert "Créer l'action" not in button_labels
     assert "Passer au closer" not in button_labels
+
+
+def test_call_not_reached_hides_note_fields() -> None:
+    seed_initial_data()
+    user = authenticate("service.etudiants@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je suis disponible pour un appel.")
+    ok, message = assign_standard_next_action(
+        result["conversation_id"],
+        user["id"],
+        "setting_call",
+        user["id"],
+        datetime.now(timezone.utc).isoformat(),
+        "RDV test.",
+    )
+    assert ok, message
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "setting_call"
+
+    app = render_selected_action(action["id"])
+    assert len(app.exception) == 0
+    assert "Note d'appel obligatoire" in [item.label for item in app.text_area]
+
+    reached = next(item for item in app.radio if item.label == "Avez-vous pu joindre le prospect ?")
+    reached.set_value("no")
+    app.run(timeout=10)
+
+    assert len(app.exception) == 0
+    assert "Note d'appel obligatoire" not in [item.label for item in app.text_area]
+    assert "Enregistrer le résultat" in [item.label for item in app.button]

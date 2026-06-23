@@ -156,7 +156,7 @@ h1, h2, h3 {
   margin: .35rem 0 .7rem 0;
 }
 
-.sc-compact-state span {
+.sc-compact-state > span {
   display: inline-flex;
   align-items: center;
   gap: .35rem;
@@ -166,7 +166,15 @@ h1, h2, h3 {
   background: oklch(0.99 0.004 250);
   color: var(--sc-muted);
   font-size: .78rem;
-  line-height: 1.2;
+  line-height: 1.15;
+  min-height: 1.65rem;
+}
+
+.sc-compact-state > span > span,
+.sc-compact-state strong {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.15;
 }
 
 .sc-compact-state strong {
@@ -433,10 +441,6 @@ h1, h2, h3 {
   padding: .75rem .85rem;
   margin: .65rem 0 1rem 0;
   background: oklch(0.99 0.004 250);
-}
-
-.sc-action-form-gap {
-  height: .5rem;
 }
 
 .sc-action-title {
