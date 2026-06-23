@@ -1650,6 +1650,98 @@ def test_blocked_followup_cannot_be_closed_by_unrelated_template_send() -> None:
     ]
 
 
+def test_blocked_followup_can_be_sent_with_recommended_approved_template() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je cherche une solution specifique.")
+
+    ok, _ = send_freeform_message(result["conversation_id"], admin["id"], "Je regarde.")
+    assert ok is True
+    followup = get_next_action_for_lead(result["lead_id"])
+    assert followup["type"] == "follow_up"
+
+    old_sent_at = iso_utc(utc_now() - timedelta(days=4))
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE leads
+            SET lead_type = 'lead', course_category_short_title = 'FSM'
+            WHERE id = ?
+            """,
+            (result["lead_id"],),
+        )
+        conn.execute(
+            """
+            UPDATE messages
+            SET sent_at = ?, created_at = ?
+            WHERE lead_id = ? AND direction = 'outbound'
+            """,
+            (old_sent_at, old_sent_at, result["lead_id"]),
+        )
+        conn.execute(
+            """
+            UPDATE conversations
+            SET last_outbound_at = ?
+            WHERE id = ?
+            """,
+            (old_sent_at, result["conversation_id"]),
+        )
+        conn.execute(
+            """
+            UPDATE tasks
+            SET sequence_code = 'lead_no_reply',
+                sequence_step_index = 1,
+                due_at = ?
+            WHERE id = ?
+            """,
+            (iso_utc(utc_now() - timedelta(hours=1)), followup["id"]),
+        )
+
+    template_id = create_template(
+        user_id=admin["id"],
+        name="relance_places_fsm_test",
+        body="Bonjour, il reste des places pour la formation FSM.",
+        status="approved",
+        language="fr",
+        category="marketing",
+        placeholders={},
+        twilio_content_sid="HXbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    )
+    ok, message = upsert_sequence_template_mapping(
+        admin["id"],
+        "lead_no_reply",
+        1,
+        "lead",
+        "FSM",
+        template_id,
+        "Relance FSM test",
+    )
+    assert ok is True, message
+
+    ok, _ = create_template_request(
+        result["conversation_id"],
+        admin["id"],
+        "Modele specifique demande.",
+        "Contexte de relance.",
+        task_id=followup["id"],
+    )
+    assert ok is True
+    blocked = get_next_action_for_lead(result["lead_id"])
+    assert blocked["status"] == "blocked"
+    recommended = get_recommended_template_for_action(blocked["id"])
+    assert recommended["template_id"] == template_id
+
+    ok, message = send_template_message(result["conversation_id"], admin["id"], template_id, {})
+
+    assert ok is True, message
+    actions = list_actions_for_lead(result["lead_id"], "all")
+    assert next(item for item in actions if item["id"] == blocked["id"])["status"] == "done"
+    assert not [
+        item for item in actions
+        if item["status"] == "blocked" and item["blocked_reason"] == "template_missing"
+    ]
+
+
 def test_call_completion_note_is_visible_in_conversation() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")

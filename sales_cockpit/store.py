@@ -3397,6 +3397,32 @@ def _has_blocked_followup(conn: Any, lead_id: int) -> bool:
     return bool(row)
 
 
+def _blocked_followup_allows_template(conn: Any, lead_id: int, template_id: int) -> bool:
+    action = _first_active_action_for_lead(
+        conn,
+        lead_id,
+        action_types=("follow_up",),
+        include_blocked=True,
+    )
+    if not action or action.get("status") != "blocked":
+        return True
+    linked_request = conn.execute(
+        """
+        SELECT id
+        FROM template_requests
+        WHERE task_id = ?
+          AND status = 'approved'
+          AND template_id = ?
+        LIMIT 1
+        """,
+        (action["id"], template_id),
+    ).fetchone()
+    if linked_request:
+        return True
+    recommended = _recommended_template_mapping_for_action(conn, action["id"])
+    return bool(recommended and int(recommended["template_id"]) == int(template_id))
+
+
 def _due_after(base_iso: str, delay: str) -> str:
     base = parse_dt(base_iso) or utc_now()
     normalized = delay.strip().lower()
@@ -3563,7 +3589,7 @@ def _close_outbound_action_and_chain(
         conn,
         conv["lead_id"],
         action_types=("reply", "follow_up"),
-        include_blocked=False,
+        include_blocked=True,
     )
     if not action:
         return
@@ -5500,67 +5526,71 @@ def deactivate_sequence_template_mapping(user_id: int, mapping_id: int) -> tuple
 
 def get_recommended_template_for_action(action_id: int) -> dict[str, Any] | None:
     with connect() as conn:
-        row = conn.execute(
-            """
-            SELECT
-                t.sequence_code,
-                t.sequence_step_index,
-                l.lead_type,
-                l.course_category_short_title
-            FROM tasks t
-            JOIN leads l ON l.id = t.lead_id
-            WHERE t.id = ? AND t.type = 'follow_up'
-              AND t.sequence_code IS NOT NULL
-              AND t.sequence_step_index IS NOT NULL
-            """,
-            (action_id,),
-        ).fetchone()
-        if not row:
-            return None
-        action = row_to_dict(row)
-        lead_type = _normalize_mapping_dimension(action.get("lead_type") or "all")
-        course_category = _normalize_mapping_dimension(
-            action.get("course_category_short_title") or "all",
-            uppercase=True,
-        )
-        mapping = conn.execute(
-            """
-            SELECT
-                stm.*,
-                wt.name AS template_name,
-                wt.status AS template_status,
-                wt.language AS template_language,
-                wt.category AS template_category,
-                wt.body AS template_body,
-                wt.twilio_content_sid,
-                wt.twilio_content_type
-            FROM sequence_template_mappings stm
-            JOIN whatsapp_templates wt ON wt.id = stm.template_id
-            WHERE stm.active = 1
-              AND wt.status = 'approved'
-              AND wt.twilio_content_sid IS NOT NULL
-              AND wt.twilio_content_sid LIKE 'HX%'
-              AND wt.twilio_content_sid NOT LIKE 'HX_MOCK_%'
-              AND stm.sequence_code = ?
-              AND stm.sequence_step_index = ?
-              AND stm.lead_type IN ('all', ?)
-              AND stm.course_category IN ('all', ?)
-            ORDER BY
-                CASE WHEN stm.lead_type = ? THEN 1 ELSE 0 END DESC,
-                CASE WHEN stm.course_category = ? THEN 1 ELSE 0 END DESC,
-                stm.updated_at DESC
-            LIMIT 1
-            """,
-            (
-                action["sequence_code"],
-                action["sequence_step_index"],
-                lead_type,
-                course_category,
-                lead_type,
-                course_category,
-            ),
-        ).fetchone()
+        mapping = _recommended_template_mapping_for_action(conn, action_id)
     return row_to_dict(mapping)
+
+
+def _recommended_template_mapping_for_action(conn: Any, action_id: int) -> Any:
+    row = conn.execute(
+        """
+        SELECT
+            t.sequence_code,
+            t.sequence_step_index,
+            l.lead_type,
+            l.course_category_short_title
+        FROM tasks t
+        JOIN leads l ON l.id = t.lead_id
+        WHERE t.id = ? AND t.type = 'follow_up'
+          AND t.sequence_code IS NOT NULL
+          AND t.sequence_step_index IS NOT NULL
+        """,
+        (action_id,),
+    ).fetchone()
+    if not row:
+        return None
+    action = row_to_dict(row)
+    lead_type = _normalize_mapping_dimension(action.get("lead_type") or "all")
+    course_category = _normalize_mapping_dimension(
+        action.get("course_category_short_title") or "all",
+        uppercase=True,
+    )
+    return conn.execute(
+        """
+        SELECT
+            stm.*,
+            wt.name AS template_name,
+            wt.status AS template_status,
+            wt.language AS template_language,
+            wt.category AS template_category,
+            wt.body AS template_body,
+            wt.twilio_content_sid,
+            wt.twilio_content_type
+        FROM sequence_template_mappings stm
+        JOIN whatsapp_templates wt ON wt.id = stm.template_id
+        WHERE stm.active = 1
+          AND wt.status = 'approved'
+          AND wt.twilio_content_sid IS NOT NULL
+          AND wt.twilio_content_sid LIKE 'HX%'
+          AND wt.twilio_content_sid NOT LIKE 'HX_MOCK_%'
+          AND stm.sequence_code = ?
+          AND stm.sequence_step_index = ?
+          AND stm.lead_type IN ('all', ?)
+          AND stm.course_category IN ('all', ?)
+        ORDER BY
+            CASE WHEN stm.lead_type = ? THEN 1 ELSE 0 END DESC,
+            CASE WHEN stm.course_category = ? THEN 1 ELSE 0 END DESC,
+            stm.updated_at DESC
+        LIMIT 1
+        """,
+        (
+            action["sequence_code"],
+            action["sequence_step_index"],
+            lead_type,
+            course_category,
+            lead_type,
+            course_category,
+        ),
+    ).fetchone()
 
 
 def _is_approved_real_twilio_template(template: Any) -> bool:
@@ -6463,7 +6493,11 @@ def send_template_message(
         return False, "Conversation terminée : réactivez-la avant tout envoi."
     with connect() as conn:
         action_kind = _active_outbound_action_kind(conn, conv["lead_id"])
-        if action_kind == "follow_up" and _has_blocked_followup(conn, conv["lead_id"]):
+        if (
+            action_kind == "follow_up"
+            and _has_blocked_followup(conn, conv["lead_id"])
+            and not _blocked_followup_allows_template(conn, conv["lead_id"], template_id)
+        ):
             return False, "Relance bloquée : le nouveau modèle doit être approuvé avant l'envoi."
     if template["status"] != "approved":
         return False, "Ce modèle n'est pas approuvé."
@@ -6669,7 +6703,7 @@ def _check_outbound_safeguards(
         conn,
         lead_id,
         action_types=("follow_up",),
-        include_blocked=False,
+        include_blocked=True,
     )
     if active_followup:
         last_row = conn.execute(
