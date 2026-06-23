@@ -12,7 +12,7 @@ from sales_cockpit.security import hash_password
 from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
 
 
-DEMO_SEED_VERSION = "2026-06-22-workflow-v1"
+DEMO_SEED_VERSION = "2026-06-23-demo-call-action-labels"
 BUSINESS_RULES_VERSION = "2026-06-22-workflow-v1-hardening-2"
 
 
@@ -983,7 +983,7 @@ def _normalize_seeded_demo_actions(
         task_id = int(row["task_id"])
         if row["sales_stage"] in {"closing", "appointment_booked"}:
             action_type = "closing_call"
-            action_title = f"Contacter {full_name} pour closing"
+            action_title = f"Appeler et documenter l'appel closing de {full_name}"
             assignee_id = closer_id
             due_at = now - timedelta(minutes=15 + task_id)
             urgency = "high" if row["temperature"] != "hot" else "urgent"
@@ -1001,7 +1001,7 @@ def _normalize_seeded_demo_actions(
             urgency = "high"
         elif row["sales_stage"] == "new":
             action_type = "setting_call"
-            action_title = f"Appeler {full_name} pour qualification"
+            action_title = f"Appeler et documenter l'appel setting de {full_name}"
             assignee_id = setter_id
             due_at = now
             urgency = "normal"
@@ -1656,7 +1656,7 @@ def _build_demo_scenarios(
             [
                 task(
                     "setting_call",
-                    "Appeler Nadia Keller pour setting",
+                    "Appeler et documenter l'appel setting de Nadia Keller",
                     mihary_id,
                     timedelta(minutes=20),
                     "high",
@@ -1685,7 +1685,7 @@ def _build_demo_scenarios(
             [
                 task(
                     "setting_call",
-                    "Appeler Romain Blanc pour setting",
+                    "Appeler et documenter l'appel setting de Romain Blanc",
                     mihary_id,
                     -timedelta(hours=2),
                     "high",
@@ -1695,7 +1695,7 @@ def _build_demo_scenarios(
                 ),
                 task(
                     "setting_call",
-                    "Rappeler Romain Blanc pour setting",
+                    "Appeler et documenter le rappel setting de Romain Blanc",
                     mihary_id,
                     timedelta(hours=2),
                     "high",
@@ -1726,7 +1726,7 @@ def _build_demo_scenarios(
             [
                 task(
                     "closing_call",
-                    "Contacter Nicolas Meyer pour closing",
+                    "Appeler et documenter l'appel closing de Nicolas Meyer",
                     yasmine_id,
                     -timedelta(minutes=15),
                     "urgent",
@@ -1755,7 +1755,7 @@ def _build_demo_scenarios(
             [
                 task(
                     "closing_call",
-                    "Contacter Émilie Morel pour closing",
+                    "Appeler et documenter l'appel closing d'Émilie Morel",
                     yasmine_id,
                     -timedelta(hours=24),
                     "high",
@@ -1765,7 +1765,7 @@ def _build_demo_scenarios(
                 ),
                 task(
                     "closing_call",
-                    "Rappeler Émilie Morel pour closing",
+                    "Appeler et documenter le rappel closing d'Émilie Morel",
                     yasmine_id,
                     timedelta(hours=24),
                     "high",
@@ -1796,7 +1796,7 @@ def _build_demo_scenarios(
             [
                 task(
                     "closing_call",
-                    "Contacter Mathieu Garnier pour closing",
+                    "Appeler et documenter l'appel closing de Mathieu Garnier",
                     yasmine_id,
                     -timedelta(days=3),
                     "high",
@@ -1898,7 +1898,7 @@ def _build_demo_scenarios(
             [
                 task(
                     "closing_call",
-                    "Contacter Irina Lopes pour closing",
+                    "Appeler et documenter l'appel closing d'Irina Lopes",
                     yasmine_id,
                     -timedelta(days=1),
                     "high",
