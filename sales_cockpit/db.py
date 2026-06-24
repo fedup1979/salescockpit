@@ -745,20 +745,16 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
         """
         UPDATE sequence_steps
         SET action_type = CASE
-            WHEN action_type IS NULL OR trim(action_type) = '' THEN
-                CASE
-                    WHEN sequence_code = 'setting_call_not_reached' AND step_index IN (1, 2) THEN 'setting_call'
-                    WHEN sequence_code = 'closing_call_not_reached' AND step_index IN (1, 2) THEN 'closing_call'
-                    WHEN template_name IS NULL OR trim(template_name) = '' THEN 'other'
-                    ELSE 'follow_up'
-                END
-            ELSE action_type
-        END,
+                WHEN sequence_code = 'setting_call_not_reached' AND step_index IN (1, 2) THEN 'setting_call'
+                WHEN sequence_code = 'closing_call_not_reached' AND step_index IN (1, 2) THEN 'closing_call'
+                WHEN template_name IS NULL OR trim(template_name) = '' THEN 'other'
+                ELSE 'follow_up'
+            END,
             requires_template = CASE
-            WHEN action_type = 'follow_up' THEN 1
-            WHEN template_name IS NULL OR trim(template_name) = '' THEN 0
-            ELSE requires_template
-        END
+                WHEN template_name IS NULL OR trim(template_name) = '' THEN 0
+                ELSE 1
+            END
+        WHERE action_type IS NULL OR trim(action_type) = ''
         """
     )
     no_show_migration_row = conn.execute(
@@ -1136,6 +1132,7 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
         UPDATE sequences
         SET active = 0, updated_at = ?
         WHERE code = 'post_call_undecided'
+          AND active != 0
         """,
         (current_time,),
     )
@@ -1163,6 +1160,7 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
             ON CONFLICT(sequence_code, step_index) DO UPDATE SET
                 sequence_id = excluded.sequence_id
+            WHERE sequence_steps.sequence_id != excluded.sequence_id
             """,
             (
                 sequence_id,
