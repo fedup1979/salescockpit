@@ -2,6 +2,21 @@
 
 This document tracks deliberate V1 shortcuts that must not be forgotten during staging and production cutover.
 
+## Workflow Invariants Hardening
+
+The V1 workflow now relies on this invariant: an open commercial conversation must have one active next action, except for tightly controlled internal transitions. The nominal UI path is aligned, but several safeguards should be hardened before external automation or V2 workflow expansion.
+
+V2 debt:
+
+- make critical store transitions atomic: validate the next step, assignee, outcome, and sequence availability before marking the current task `done`;
+- validate `action_outcome` strictly by action type so an unsupported outcome cannot close an action without creating the expected next state;
+- add a stronger guard against multiple active main actions, while preserving the intentional `reply` plus planned call exception;
+- decide explicitly whether `manual_reprise` plus planned call is an allowed exception or a data anomaly;
+- make `pre_cutover_check.py` strictly read-only, or document why it is allowed to call `seed_initial_data()`;
+- evaluate a global hook for outbound messages sent without an active `reply` or `follow_up`;
+- update any remaining legacy copy that says a user should choose the next commercial action from `Conversation`;
+- replace legacy "post-call undecided follow-up" wording with "manual reprise" everywhere it still appears.
+
 ## Refactoring Before Official V2
 
 V1 intentionally concentrated a lot of behavior in a small number of files to move fast during the cutover window. This is acceptable for the V1 launch, but it must not become the long-term architecture.

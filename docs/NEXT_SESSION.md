@@ -117,10 +117,10 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - Structured course categories live in `course_categories`. V1 seeds `FSM`, `APP`, and `AS`. Unsupported SchoolDrive categories are stored, displayed, and routed to a Setter I review task instead of receiving an automated Setter II relance flux.
 - V1 step/template changes affect only newly created future sequences. Existing open tasks are not recalculated.
 - Outbound WhatsApp messages close the active `reply` or `follow_up` action and create the next follow-up when applicable.
-- If a `reply` is sent while a setting/closing call is already planned and no new appointment outcome is chosen, the reply closes and the planned call remains the next action.
+- If a `reply` is sent while a setting/closing call is already planned, the reply closes and the planned call remains the next action.
 - `reply` and `follow_up` should not be manually marked as sent in the main Actions flow. The normal proof is the outbound WhatsApp message from the Conversation composer.
-- The Conversation composer can capture the send-time outcome for a `reply`: no appointment, setting appointment booked, closing appointment booked, non pertinent, or ne plus contacter.
-- The `reply` outcome labels must explain the next action clearly. If the prospect accepts an appointment, the user should choose `RDV setting fixé : créer un appel` or `RDV closing fixé : créer un appel` before sending the WhatsApp reply.
+- The Conversation composer must not capture the next commercial action for a `reply`. It sends messages, approved templates, and template requests only.
+- If the prospect accepts an appointment after a reply, the user sends the WhatsApp message first, then creates the setting or closing call from the stable Actions block.
 - The Actions tab is now stable: status banner, fixed standard block, then action history. `reply` and `follow_up` explain that the work is done from `Conversation`; the standard block can schedule/modify calls, request/document manual reprises, document due calls, and skip eligible flow steps.
 - V1 no longer exposes `Actions avancées`. `reply` and `follow_up` must be resolved through the Conversation composer so there is a real outbound-message proof. Do not reintroduce generic manual action creation, off-cockpit message completion, manual handoff to closer, manual data correction, or conversation reopen there.
 - Setting and closing calls can be completed with business outcomes that create the next action.

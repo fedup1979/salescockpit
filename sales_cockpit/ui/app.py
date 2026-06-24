@@ -122,14 +122,6 @@ ACTION_OUTCOMES = {
     "manual_reprise_setter": ["done"],
     "manual_reprise_closer": ["done"],
 }
-REPLY_SEND_OUTCOMES = ["reply_no_appointment", "setting_booked", "closing_booked", "not_relevant", "do_not_contact"]
-REPLY_SEND_OUTCOME_LABELS = {
-    "reply_no_appointment": "Pas de RDV : relance Setter II à +72h",
-    "setting_booked": "RDV setting fixé : créer un appel",
-    "closing_booked": "RDV closing fixé : créer un appel",
-    "not_relevant": "Hors cible : clore la conversation",
-    "do_not_contact": "Ne plus contacter : clore et bloquer",
-}
 CALL_ACTION_TYPES = {"setting_call", "closing_call"}
 PILOTAGE_SUPPORTED_CATEGORIES = ["FSM", "APP", "AS"]
 SEQUENCE_STEP_ACTION_TYPES = [
@@ -1041,19 +1033,6 @@ def next_action_context(conv: dict) -> dict | None:
     return get_next_action_for_lead(conv["lead_id"])
 
 
-def reply_call_assignee_options(users: list[dict], outcome: str) -> list[dict]:
-    if outcome == "setting_booked":
-        options = [
-            user for user in users
-            if user.get("role") == "setter" and (user.get("email") or "").lower() != "setter2@essr.ch"
-        ]
-        return options or users
-    if outcome == "closing_booked":
-        options = [user for user in users if user.get("role") == "closer"]
-        return options or users
-    return users
-
-
 def standard_action_assignee_options(users: list[dict], action_type: str) -> list[dict]:
     if action_type in {"reply", "setting_call", "manual_reprise_setter"}:
         options = [
@@ -1098,116 +1077,18 @@ def active_planned_call_for_lead(lead_id: int | None) -> dict | None:
     return calls[0]
 
 
-def get_reply_send_plan(
-    action: dict | None,
-    key_prefix: str,
-    users: list[dict],
-) -> tuple[str | None, str | None, int | None, str]:
-    if not action or action.get("type") != "reply":
-        return None, None, None, ""
-
-    outcome = st.session_state.get(f"{key_prefix}_reply_outcome", "reply_no_appointment")
-    note = (st.session_state.get(f"{key_prefix}_reply_note") or "").strip()
-    next_due_at = None
-    assigned_to_user_id = None
-    if outcome in {"setting_booked", "closing_booked"}:
-        assignee_options = reply_call_assignee_options(users, outcome)
-        assigned_to_user_id = st.session_state.get(
-            f"{key_prefix}_reply_assignee_id",
-            action.get("assigned_to_user_id") if outcome == "setting_booked" else None,
-        )
-        if not any(user["id"] == assigned_to_user_id for user in assignee_options):
-            assigned_to_user_id = assignee_options[0]["id"] if assignee_options else None
-        appointment_date = st.session_state.get(
-            f"{key_prefix}_reply_date",
-            local_today(),
-        )
-        appointment_time = st.session_state.get(
-            f"{key_prefix}_reply_time",
-            time(9, 0),
-        )
-        next_due_at = local_due_at(appointment_date, appointment_time)
-    return outcome, next_due_at, assigned_to_user_id, note
-
-
-def render_reply_send_plan_controls(
-    action: dict | None,
-    key_prefix: str,
-    users: list[dict],
-) -> None:
-    if not action or action.get("type") != "reply":
-        return
-
-    st.markdown("**Après votre réponse, quelle suite faut-il créer ?**")
-    st.caption("Si le prospect accepte un appel, choisissez `RDV setting fixé`, renseignez le rendez-vous, puis envoyez le message dans Conversation.")
-    active_call = active_planned_call_for_lead(action.get("lead_id"))
-    labels = dict(REPLY_SEND_OUTCOME_LABELS)
-    if active_call:
-        labels["reply_no_appointment"] = "Pas de nouveau RDV : conserver l'appel planifié"
-    outcome = st.selectbox(
-        "Suite à créer après l'envoi",
-        REPLY_SEND_OUTCOMES,
-        format_func=lambda value: labels.get(value, labelize(value)),
-        key=f"{key_prefix}_reply_outcome",
-    )
-    note = st.text_area("Note interne, optionnelle", height=80, key=f"{key_prefix}_reply_note")
-    if outcome in {"setting_booked", "closing_booked"}:
-        assignee_options = reply_call_assignee_options(users, outcome)
-        assignee = st.selectbox(
-            "Responsable de l'appel",
-            assignee_options,
-            index=safe_user_index(
-                assignee_options,
-                action.get("assigned_to_user_id") if outcome == "setting_booked" else None,
-            ),
-            format_func=format_user,
-            key=f"{key_prefix}_{outcome}_reply_assignee",
-        )
-        st.session_state[f"{key_prefix}_reply_assignee_id"] = assignee["id"]
-        appointment_date = st.date_input(
-            "Date du rendez-vous",
-            value=local_today(),
-            key=f"{key_prefix}_reply_date",
-            format=DATE_INPUT_FORMAT,
-        )
-        appointment_time = st.time_input(
-            "Heure",
-            value=time(9, 0),
-            step=timedelta(minutes=1),
-            key=f"{key_prefix}_reply_time",
-        )
-        call_label = "setting" if outcome == "setting_booked" else "closing"
-        st.caption(f"Après l'envoi, un appel {call_label} sera créé le {appointment_date.strftime('%d.%m.%Y')} à {appointment_time.strftime('%H:%M')}.")
-    elif outcome in {"not_relevant", "do_not_contact"}:
-        st.warning("Cette réponse clôturera la conversation et annulera les relances futures.")
-    elif active_call:
-        call_type = "setting" if active_call.get("type") == "setting_call" else "closing"
-        st.caption(f"Après l'envoi, l'appel {call_type} déjà planifié restera actif.")
-    else:
-        st.caption("Après l'envoi, une relance Setter II sera planifiée à +72h si le prospect ne répond pas.")
-
-
 def render_composer(user: dict, conv: dict) -> None:
     action = next_action_context(conv)
-    users = list_users()
-    action_outcome, next_due_at, assigned_to_user_id, action_note = get_reply_send_plan(
-        action,
-        f"reply_plan_{conv['id']}",
-        users,
-    )
     if conv.get("contact_status") == "do_not_contact":
         st.error("Contact bloqué : le prospect est marqué Ne plus contacter. Le statut doit être levé dans Statuts avant tout envoi.")
         return
     if conv.get("status") == "resolved":
         st.info("Conversation terminée : réactivez la conversation avant tout nouvel envoi.")
         return
-    if action and action.get("type") == "reply":
-        render_reply_send_plan_controls(action, f"reply_plan_{conv['id']}", users)
-        st.divider()
     if conv["window_is_open"]:
         st.success("Fenêtre WhatsApp ouverte : message libre autorisé.")
         if action and action.get("type") == "reply":
-            st.caption("Si votre message fixe un appel, choisissez la suite ci-dessus avant l'envoi.")
+            st.caption("Envoyez la réponse ici. Si un RDV ou une reprise doit être créée ensuite, faites-le dans Actions.")
         freeform_base_key = f"freeform_body_{conv['id']}"
         freeform_key = resettable_widget_key(freeform_base_key)
         attachment_base_key = f"freeform_attachments_{conv['id']}"
@@ -1237,10 +1118,6 @@ def render_composer(user: dict, conv: dict) -> None:
                 conv["id"],
                 user["id"],
                 body.strip(),
-                action_outcome=action_outcome,
-                next_due_at=next_due_at,
-                assigned_to_user_id=assigned_to_user_id,
-                note=action_note,
                 attachments=attachments,
             )
             show_result(ok, message)
@@ -1250,9 +1127,6 @@ def render_composer(user: dict, conv: dict) -> None:
                 clear_widget_keys(
                     freeform_key,
                     attachment_key,
-                    f"reply_plan_{conv['id']}_reply_note",
-                    f"reply_plan_{conv['id']}_reply_date",
-                    f"reply_plan_{conv['id']}_reply_time",
                 )
                 st.rerun()
     else:
@@ -1326,15 +1200,10 @@ def render_composer(user: dict, conv: dict) -> None:
             user["id"],
             template["id"],
             variables,
-            action_outcome=action_outcome,
-            next_due_at=next_due_at,
-            assigned_to_user_id=assigned_to_user_id,
-            note=action_note,
         )
         show_result(ok, message)
         if ok:
             clear_widget_keys(
-                f"reply_plan_{conv['id']}_reply_note",
                 *[f"tpl_{template['id']}_{placeholder['placeholder_key']}" for placeholder in template["placeholders"]],
             )
             st.rerun()
@@ -1633,8 +1502,7 @@ def render_skip_sequence_step_control(
 def render_whatsapp_action_guidance(user: dict, conv: dict, action: dict) -> None:
     if action["type"] == "reply":
         st.info("Le client attend une réponse. Cette action sera clôturée quand le message sera envoyé dans l'onglet Conversation.")
-        st.caption("L'envoi se fait dans l'onglet Conversation. Sélectionnez la suite après envoi ici.")
-        render_reply_send_plan_controls(action, f"reply_plan_{conv['id']}", list_users())
+        st.caption("L'envoi se fait dans l'onglet Conversation. Si une suite doit être créée après le message, utilisez ensuite le bloc standard de l'onglet Actions.")
         return
 
     if action["type"] == "follow_up":

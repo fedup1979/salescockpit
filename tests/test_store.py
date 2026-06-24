@@ -632,6 +632,48 @@ def test_reply_send_closes_reply_and_schedules_followup() -> None:
     assert next_action["sequence_code"] == "setter_no_next_step"
 
 
+def test_action_tab_can_replace_default_followup_with_setting_call_after_reply_send() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je suis disponible pour un appel.")
+    reply = get_next_action_for_lead(result["lead_id"])
+    assert reply["type"] == "reply"
+
+    ok, message = send_freeform_message(
+        result["conversation_id"],
+        reply["assigned_to_user_id"],
+        "Parfait, je vous confirme le rendez-vous.",
+    )
+    assert ok is True, message
+    default_followup = get_next_action_for_lead(result["lead_id"])
+    assert default_followup["type"] == "follow_up"
+    assert default_followup["sequence_code"] == "setter_no_next_step"
+
+    setter = next(item for item in list_users() if item["email"] == "service.etudiants@essr.ch")
+    due_at = iso_utc(utc_now() + timedelta(hours=2))
+    ok, message = assign_standard_next_action(
+        result["conversation_id"],
+        admin["id"],
+        "setting_call",
+        setter["id"],
+        due_at,
+        "RDV setting confirmé après la réponse WhatsApp.",
+    )
+
+    assert ok is True, message
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "setting_call"
+    assert next_action["due_at"] == due_at
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["sales_stage"] == "appointment_booked"
+    active_followups = [
+        item for item in list_actions_for_lead(result["lead_id"], "all")
+        if item["type"] == "follow_up"
+        and item["status"] in {"open", "planned", "in_progress", "blocked"}
+    ]
+    assert active_followups == []
+
+
 def test_freeform_message_can_store_attachment(monkeypatch) -> None:
     monkeypatch.setenv("SALES_COCKPIT_PUBLIC_API_BASE_URL", "https://cockpit.example.test")
     get_settings.cache_clear()
@@ -964,6 +1006,38 @@ def test_followup_sequence_completion_sets_lost_sales_stage() -> None:
 
     conversation = get_conversation(result["conversation_id"])
     assert conversation["status"] == "resolved"
+    assert conversation["sales_stage"] == "lost"
+    assert get_next_action_for_lead(result["lead_id"]) is None
+
+
+def test_last_followup_sent_from_conversation_resolves_sequence() -> None:
+    seed_initial_data()
+    result = record_inbound_message(unique_phone(), "Bonjour.")
+    reply = get_next_action_for_lead(result["lead_id"])
+    ok, message = send_freeform_message(result["conversation_id"], reply["assigned_to_user_id"], "Bonjour.")
+    assert ok is True, message
+    followup = get_next_action_for_lead(result["lead_id"])
+    assert followup["type"] == "follow_up"
+    last_step_index = max(
+        item["step_index"]
+        for item in list_sequence_steps("setter_no_next_step")
+    )
+    with connect() as conn:
+        conn.execute(
+            "UPDATE tasks SET sequence_step_index = ? WHERE id = ?",
+            (last_step_index, followup["id"]),
+        )
+
+    ok, message = send_freeform_message(
+        result["conversation_id"],
+        followup["assigned_to_user_id"],
+        "Dernière relance.",
+    )
+
+    assert ok is True, message
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["status"] == "resolved"
+    assert conversation["resolution_reason"] == "sequence_completed_no_reply"
     assert conversation["sales_stage"] == "lost"
     assert get_next_action_for_lead(result["lead_id"]) is None
 

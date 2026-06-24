@@ -12,7 +12,7 @@ Mot de passe local : `ChangeMe!2026`.
 
 ## Validation Automatisée Courante
 
-Dernière validation locale : `133 passed`, `compileall` OK.
+Dernière validation locale : `174 passed`, `compileall` OK.
 
 La suite automatisée couvre notamment :
 
@@ -62,11 +62,11 @@ Compte : `service.etudiants@essr.ch`.
 2. Ouvrir `Léa Martin` ou `Inconnu(e)`.
 3. Vérifier que le client attend une réponse.
 4. Ajouter une note privée.
-5. Dans `Actions`, choisir la suite après réponse.
-6. Si le prospect accepte un appel, choisir `RDV setting fixé : créer un appel`.
-7. Dans `Conversation`, envoyer le message libre.
+5. Dans `Conversation`, envoyer le message libre, sans choisir de suite dans cet onglet.
+6. Vérifier qu'une relance de sécurité `Échange setter sans suite` est créée automatiquement si aucun RDV n'existe.
+7. Si le prospect accepte un appel, aller dans `Actions` et programmer le RDV setting depuis le bloc standard.
 
-Résultat attendu : la réponse clôt l'action `Répondre au message`. La prochaine action correspond au choix fait dans `Actions`.
+Résultat attendu : la réponse clôt l'action `Répondre au message`. Par défaut, la prochaine action est le flux `Échange setter sans suite`; si un RDV est programmé ensuite dans `Actions`, il remplace cette relance.
 
 ## P2 Tanjona Relance Modèle
 

@@ -81,9 +81,15 @@ def test_reply_action_guides_to_conversation_send_without_generic_completion() -
     tab_labels = [item.label for item in app.tabs]
     markup = "\n".join(item.value for item in app.markdown)
 
+    selectbox_labels = [item.label for item in app.selectbox]
+    text_area_labels = [item.label for item in app.text_area]
+
     assert "Répondre dans Conversation" in markup
-    assert "Après votre réponse" in markup
-    assert any("choisissez la suite ci-dessus" in text for text in caption_texts)
+    assert "Après votre réponse" not in markup
+    assert "Suite à créer après l'envoi" not in selectbox_labels
+    assert "Note interne, optionnelle" not in text_area_labels
+    assert any("faites-le dans Actions" in text for text in caption_texts)
+    assert all("choisissez la suite" not in text for text in caption_texts)
     assert any(label.startswith("À traiter") for label in tab_labels)
     assert any(label.startswith("En suspens") for label in tab_labels)
     assert any(label.startswith("Terminées") for label in tab_labels)

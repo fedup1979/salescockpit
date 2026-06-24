@@ -171,6 +171,8 @@ Right panel:
 - If WhatsApp window is open: free-form composer is enabled.
 - If WhatsApp window is closed: free-form composer is blocked and template send remains available.
 - Template section has list first, search second, placeholders, resolved preview, then send button.
+- The Conversation tab never asks which next action to create after sending. It only sends free-form messages, sends approved templates, or creates a template request.
+- After an outbound reply, the store creates the default waiting flow automatically. If a call or manual reprise is needed after the message, the user creates it from `Actions`.
 
 ### Statuts Tab
 
@@ -191,6 +193,7 @@ Dropdown labels are displayed in French. Internal values remain in English.
 - Fixed standard block is hidden when the conversation is terminated. When visible, unavailable sections remain visible and greyed with a short reason.
 - Fixed sections: program/modify call, document due call, request manual reprise, document manual reprise, skip current flow step.
 - `reply` and `follow_up` are system actions only. They are never programmed manually from the standard block and are completed by the outbound WhatsApp proof from `Conversation`.
+- Calls and manual reprises are created from the standard Actions block, including after a message sent from `Conversation` has created the default follow-up flow.
 - `contact_review` is not completed from Actions. Users review or lift statuses in `Statuts`; the store closes obsolete contact reviews or recreates the appropriate reply when allowed.
 - `other` is backend fallback/anomaly only. The normal UI does not show an `other` completion form and `Pilotage` does not offer it as a normal new step type.
 - Action history includes outcome and message proof when available.
