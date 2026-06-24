@@ -909,44 +909,44 @@ def state_chip_html(label: str, value: str) -> str:
 
 
 def render_compact_lead_state(user: dict, conv: dict) -> None:
-    contact_html = state_chip_html(
-        "Contact",
-        labelize(conv.get("contact_status") or "contact_allowed"),
-    )
     stage_html = state_chip_html(
         "Parcours",
         labelize(conv["sales_stage"]),
     )
-    qualification_html = state_chip_html(
-        "Qualification",
-        labelize(conv["lead_status"]),
-    )
-    identity_html = ""
-    if identity_needs_review(conv):
-        identity_html = state_chip_html("Identification", "À identifier")
-    state_col, edit_col = st.columns([0.92, 0.08], vertical_alignment="center")
-    with state_col:
+    state_cols = st.columns([0.24, 0.28, 0.28, 0.2], vertical_alignment="center")
+    with state_cols[0]:
         st.markdown(
-            f"""
-            <div class="sc-compact-state">
-              {stage_html}
-              {qualification_html}
-              {contact_html}
-              {identity_html}
-            </div>
-            """,
+            f'<div class="sc-compact-state">{stage_html}</div>',
             unsafe_allow_html=True,
         )
-    with edit_col:
-        render_status_edit_popover(user, conv)
+    with state_cols[1]:
+        render_status_edit_popover(
+            user,
+            conv,
+            f"Qualification · {labelize(conv['lead_status'])} ▾",
+            "qualification",
+        )
+    with state_cols[2]:
+        render_status_edit_popover(
+            user,
+            conv,
+            f"Contact · {labelize(conv.get('contact_status') or 'contact_allowed')} ▾",
+            "contact",
+        )
+    with state_cols[3]:
+        if identity_needs_review(conv):
+            st.markdown(
+                f'<div class="sc-compact-state">{state_chip_html("Identification", "À identifier")}</div>',
+                unsafe_allow_html=True,
+            )
 
 
-def render_status_edit_popover(user: dict, conv: dict) -> None:
-    with st.popover("✎", help="Modifier qualification et contact"):
-        lead_status_key = f"quick_lead_status_{conv['lead_id']}"
-        contact_status_key = f"quick_contact_status_{conv['lead_id']}"
-        note_key = f"quick_status_note_{conv['lead_id']}"
-        with st.form(f"quick_status_edit_{conv['lead_id']}"):
+def render_status_edit_popover(user: dict, conv: dict, trigger_label: str, key_suffix: str) -> None:
+    with st.popover(trigger_label, help="Modifier qualification et contact", use_container_width=True):
+        lead_status_key = f"quick_lead_status_{key_suffix}_{conv['lead_id']}"
+        contact_status_key = f"quick_contact_status_{key_suffix}_{conv['lead_id']}"
+        note_key = f"quick_status_note_{key_suffix}_{conv['lead_id']}"
+        with st.form(f"quick_status_edit_{key_suffix}_{conv['lead_id']}"):
             lead_status = st.selectbox(
                 "Qualification",
                 LEAD_STATUSES,

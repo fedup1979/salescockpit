@@ -193,10 +193,10 @@ def test_statuses_are_edited_from_header_bubbles_without_status_tab() -> None:
     tab_labels = [item.label for item in app.tabs]
 
     assert "Statuts" not in tab_labels
+    assert "✎" not in markup
     assert "Qualification" in selectbox_labels
     assert "Contact" in selectbox_labels
     assert "Note facultative" in text_area_labels
-    assert "Contact" in markup
     assert all("parcours" not in label.lower() for label in selectbox_labels)
     assert "Forçage admin du parcours" not in markup
 
