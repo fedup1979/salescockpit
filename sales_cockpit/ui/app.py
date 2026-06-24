@@ -34,8 +34,9 @@ from sales_cockpit.business_rules import (
 )
 from sales_cockpit.config import get_settings
 from sales_cockpit.db import seed_initial_data
-from sales_cockpit.services.whatsapp_rules import parse_dt, utc_now
+from sales_cockpit.services.whatsapp_rules import iso_utc, parse_dt, utc_now
 from sales_cockpit.services.schooldrive import SchoolDriveConnector
+from sales_cockpit.ui.action_presenter import build_action_tab_presentation
 from sales_cockpit.store import (
     add_manual_note,
     assign_standard_next_action,
@@ -101,7 +102,7 @@ URGENCIES = ["low", "normal", "high", "urgent"]
 WORK_QUEUES = ["todo", "waiting", "resolved"]
 INBOX_QUEUES = WORK_QUEUES + ["all"]
 ACTION_QUEUES = ["due", "future", "completed", "all"]
-STANDARD_NEXT_ACTION_TYPES = ["reply", "follow_up", "setting_call", "closing_call"]
+STANDARD_NEXT_ACTION_TYPES = ["setting_call", "closing_call", "manual_reprise_setter", "manual_reprise_closer"]
 DATE_INPUT_FORMAT = "DD.MM.YYYY"
 DISPLAY_TZ = ZoneInfo("Europe/Zurich")
 WIDGET_CLEAR_QUEUE_KEY = "_sales_cockpit_clear_widget_keys"
@@ -137,7 +138,6 @@ SEQUENCE_STEP_ACTION_TYPES = [
     "closing_call",
     "manual_reprise_setter",
     "manual_reprise_closer",
-    "other",
 ]
 SEQUENCE_STEP_ACTION_LABELS = {
     "follow_up": "Relance WhatsApp",
@@ -145,7 +145,6 @@ SEQUENCE_STEP_ACTION_LABELS = {
     "closing_call": "Appeler et documenter appel closing",
     "manual_reprise_setter": "Reprise manuelle setter",
     "manual_reprise_closer": "Reprise manuelle closer",
-    "other": "Revue humaine",
 }
 SEQUENCE_STEP_OFFSET_UNITS = ["hours", "days"]
 SEQUENCE_STEP_OFFSET_UNIT_LABELS = {
@@ -1056,7 +1055,7 @@ def reply_call_assignee_options(users: list[dict], outcome: str) -> list[dict]:
 
 
 def standard_action_assignee_options(users: list[dict], action_type: str) -> list[dict]:
-    if action_type in {"reply", "setting_call"}:
+    if action_type in {"reply", "setting_call", "manual_reprise_setter"}:
         options = [
             user for user in users
             if user.get("role") == "setter" and (user.get("email") or "").lower() != "setter2@essr.ch"
@@ -1069,7 +1068,7 @@ def standard_action_assignee_options(users: list[dict], action_type: str) -> lis
         ]
         setters = [user for user in users if user.get("role") == "setter"]
         return tanjona or setters or users
-    if action_type == "closing_call":
+    if action_type in {"closing_call", "manual_reprise_closer"}:
         closers = [user for user in users if user.get("role") == "closer"]
         return closers or users
     return users
@@ -1077,10 +1076,10 @@ def standard_action_assignee_options(users: list[dict], action_type: str) -> lis
 
 def standard_action_button_label(action_type: str) -> str:
     labels = {
-        "reply": "Répondre à un message",
-        "follow_up": "Planifier une relance",
         "setting_call": "Programmer un appel setting",
         "closing_call": "Programmer un appel closing",
+        "manual_reprise_setter": "Demander une reprise setter",
+        "manual_reprise_closer": "Demander une reprise closer",
     }
     return labels.get(action_type, labelize(action_type))
 
@@ -1197,15 +1196,18 @@ def render_composer(user: dict, conv: dict) -> None:
         users,
     )
     if conv.get("contact_status") == "do_not_contact":
-        st.error("Contact bloqué : le prospect est marqué Ne plus contacter. Le statut doit être levé dans Actions avant tout envoi.")
+        st.error("Contact bloqué : le prospect est marqué Ne plus contacter. Le statut doit être levé dans Statuts avant tout envoi.")
         return
     if conv.get("status") == "resolved":
-        st.info("Conversation terminée : réactivez la conversation dans Actions avant tout nouvel envoi.")
+        st.info("Conversation terminée : réactivez la conversation avant tout nouvel envoi.")
         return
+    if action and action.get("type") == "reply":
+        render_reply_send_plan_controls(action, f"reply_plan_{conv['id']}", users)
+        st.divider()
     if conv["window_is_open"]:
         st.success("Fenêtre WhatsApp ouverte : message libre autorisé.")
         if action and action.get("type") == "reply":
-            st.caption("Si votre message fixe un appel, choisissez d'abord la suite dans l'onglet Actions.")
+            st.caption("Si votre message fixe un appel, choisissez la suite ci-dessus avant l'envoi.")
         freeform_base_key = f"freeform_body_{conv['id']}"
         freeform_key = resettable_widget_key(freeform_base_key)
         attachment_base_key = f"freeform_attachments_{conv['id']}"
@@ -1778,6 +1780,148 @@ def render_call_action_form(user: dict, action: dict) -> None:
                 st.rerun()
 
 
+def render_call_documentation_form(user: dict, action: dict) -> None:
+    users = list_users()
+    reached_outcomes = [
+        value for value in ACTION_OUTCOMES[action["type"]]
+        if value != "not_reached"
+    ]
+    reached = st.radio(
+        "Avez-vous pu joindre le prospect ?",
+        ["yes", "no"],
+        horizontal=True,
+        format_func=lambda value: "Oui" if value == "yes" else "Non",
+        key=f"call_reached_{action['id']}",
+    )
+    with st.form(f"call_documentation_form_{action['id']}"):
+        if reached == "no":
+            outcome = "not_reached"
+            note = "Prospect non joint."
+            assigned_to_user_id = None
+            next_due_at = None
+        else:
+            outcome = st.selectbox(
+                "Résultat de l'appel",
+                reached_outcomes,
+                format_func=labelize,
+                key=f"call_outcome_{action['id']}",
+            )
+            st.caption(action_consequence(action["type"], outcome))
+            note = st.text_area("Note d'appel obligatoire", height=100, key=f"call_note_{action['id']}")
+            assigned_to_user_id = None
+            next_due_at = None
+            if outcome == "to_closing":
+                closers = [item for item in users if item["role"] == "closer"]
+                if closers:
+                    closer = st.selectbox(
+                        "Closer",
+                        closers,
+                        format_func=format_user,
+                        key=f"call_closer_{action['id']}",
+                    )
+                    assigned_to_user_id = closer["id"]
+                next_date = st.date_input(
+                    "Date du rendez-vous",
+                    value=local_today(),
+                    key=f"call_date_{action['id']}",
+                    format=DATE_INPUT_FORMAT,
+                )
+                next_time = st.time_input(
+                    "Heure",
+                    value=time(9, 0),
+                    step=timedelta(minutes=1),
+                    key=f"call_time_{action['id']}",
+                )
+                next_due_at = local_due_at(next_date, next_time)
+        submitted = st.form_submit_button("Enregistrer le résultat")
+    if submitted:
+        if not note.strip():
+            st.error("Une note d'appel est obligatoire.")
+            return
+        ok, message = complete_action_with_workflow(
+            action["id"],
+            user["id"],
+            outcome,
+            note=note,
+            next_due_at=next_due_at,
+            assigned_to_user_id=assigned_to_user_id,
+        )
+        show_result(ok, message)
+        if ok:
+            clear_widget_keys(
+                f"call_note_{action['id']}",
+                f"call_date_{action['id']}",
+                f"call_time_{action['id']}",
+                f"call_closer_{action['id']}",
+            )
+            st.rerun()
+
+
+def render_call_reschedule_controls(user: dict, action: dict) -> None:
+    current_dt = (parse_dt(action.get("due_at")) or utc_now()).astimezone(DISPLAY_TZ)
+    current_date = current_dt.date()
+    current_time = current_dt.time().replace(second=0, microsecond=0)
+    with st.expander("Déplacer ou annuler le RDV", expanded=False):
+        with st.form(f"reschedule_call_form_{action['id']}"):
+            next_date = st.date_input(
+                "Nouvelle date",
+                value=current_date,
+                key=f"reschedule_date_{action['id']}",
+                format=DATE_INPUT_FORMAT,
+            )
+            next_time = st.time_input(
+                "Nouvelle heure",
+                value=current_time,
+                step=timedelta(minutes=1),
+                key=f"reschedule_time_{action['id']}",
+            )
+            note = st.text_area(
+                "Note de déplacement obligatoire",
+                height=80,
+                key=f"reschedule_note_{action['id']}",
+            )
+            submitted = st.form_submit_button("Déplacer le RDV")
+        if submitted:
+            if not note.strip():
+                st.error("Une note de déplacement est obligatoire.")
+                return
+            ok, message = reschedule_call_action(
+                action["id"],
+                user["id"],
+                local_due_at(next_date, next_time),
+                note.strip(),
+            )
+            show_result(ok, message)
+            if ok:
+                clear_widget_keys(
+                    f"reschedule_note_{action['id']}",
+                    f"reschedule_date_{action['id']}",
+                    f"reschedule_time_{action['id']}",
+                )
+                st.rerun()
+
+        with st.form(f"cancel_call_form_{action['id']}"):
+            note = st.text_area(
+                "Note d'annulation obligatoire",
+                height=80,
+                key=f"cancel_call_note_{action['id']}",
+            )
+            submitted = st.form_submit_button("Annuler sans nouveau RDV")
+        if submitted:
+            if not note.strip():
+                st.error("Une note d'annulation est obligatoire.")
+                return
+            ok, message = cancel_call_action_without_replacement(
+                action["id"],
+                user["id"],
+                note.strip(),
+            )
+            show_result(ok, message)
+            if ok:
+                clear_widget_keys(f"cancel_call_note_{action['id']}")
+                st.rerun()
+
+
 def render_contact_review_action(user: dict, action: dict) -> None:
     is_do_not_contact = action.get("contact_status") == "do_not_contact"
     is_terminal_qualification = action.get("lead_status") in {"not_relevant", "signed"}
@@ -1885,6 +2029,30 @@ def render_manual_reprise_action_form(user: dict, action: dict) -> None:
     render_skip_sequence_step_control(user, action)
 
 
+def render_manual_reprise_documentation_form(user: dict, action: dict) -> None:
+    if action["type"] == "manual_reprise_setter":
+        st.info("Reprise manuelle setter : relisez la conversation, décidez si un message, un appel ou une autre suite est utile, puis terminez l'action avec une note.")
+    else:
+        st.info("Reprise manuelle closer : relisez la conversation et les éléments envoyés, décidez si une reprise personnalisée est utile, puis terminez l'action avec une note.")
+    with st.form(f"manual_reprise_documentation_form_{action['id']}"):
+        note = st.text_area("Note obligatoire", height=100, key=f"manual_reprise_note_{action['id']}")
+        submitted = st.form_submit_button("Marquer la reprise terminée")
+    if submitted:
+        if not note.strip():
+            st.error("Ajoute une note pour terminer cette reprise.")
+            return
+        ok, message = complete_action_with_workflow(
+            action["id"],
+            user["id"],
+            "done",
+            note=note,
+        )
+        show_result(ok, message)
+        if ok:
+            clear_widget_keys(f"manual_reprise_note_{action['id']}")
+            st.rerun()
+
+
 def render_standard_action_planner(user: dict, conv: dict, users: list[dict], active_assignee_id: int) -> None:
     if conv.get("status") != "open":
         return
@@ -1961,48 +2129,305 @@ def render_standard_action_planner(user: dict, conv: dict, users: list[dict], ac
             st.rerun()
 
 
+def render_action_tab_banner(banner: dict) -> None:
+    severity = banner.get("severity") or "blue"
+    st.markdown(
+        f"""
+        <div class="sc-action-banner sc-action-banner-{escape_html(severity)}">
+          <div class="sc-action-banner-title">{escape_html(banner.get("title") or "")}</div>
+          <div class="sc-action-banner-body">{escape_html(banner.get("body") or "")}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_disabled_standard_section(reason: str) -> None:
+    st.markdown(
+        f'<div class="sc-disabled-section">Grisé : {escape_html(reason)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def call_type_short_label(action_type: str | None) -> str:
+    return "setting" if action_type == "setting_call" else "closing"
+
+
+def render_call_schedule_form(
+    user: dict,
+    conv: dict,
+    users: list[dict],
+    action_type: str,
+    active_assignee_id: int,
+) -> None:
+    assignee_options = standard_action_assignee_options(users, action_type)
+    if not assignee_options:
+        st.warning("Aucun responsable compatible.")
+        return
+    default_assignee = active_assignee_id
+    if not any(item["id"] == default_assignee for item in assignee_options):
+        default_assignee = assignee_options[0]["id"]
+    with st.form(f"schedule_{action_type}_{conv['id']}"):
+        assignee = st.selectbox(
+            "Responsable",
+            assignee_options,
+            index=safe_user_index(assignee_options, default_assignee),
+            format_func=format_user,
+            key=f"schedule_{action_type}_assignee_{conv['id']}",
+        )
+        action_date = st.date_input(
+            "Date",
+            value=local_today(),
+            key=f"schedule_{action_type}_date_{conv['id']}",
+            format=DATE_INPUT_FORMAT,
+        )
+        action_time = st.time_input(
+            "Heure",
+            value=time(9, 0),
+            step=timedelta(minutes=1),
+            key=f"schedule_{action_type}_time_{conv['id']}",
+        )
+        note = st.text_area(
+            "Note obligatoire",
+            height=80,
+            key=f"schedule_{action_type}_note_{conv['id']}",
+        )
+        submitted = st.form_submit_button(standard_action_button_label(action_type))
+    if submitted:
+        ok, message = assign_standard_next_action(
+            conv["id"],
+            user["id"],
+            action_type,
+            assignee["id"],
+            local_due_at(action_date, action_time),
+            note,
+        )
+        show_result(ok, message)
+        if ok:
+            clear_widget_keys(
+                f"schedule_{action_type}_note_{conv['id']}",
+                f"schedule_{action_type}_date_{conv['id']}",
+                f"schedule_{action_type}_time_{conv['id']}",
+            )
+            st.rerun()
+
+
+def render_schedule_call_section(
+    user: dict,
+    conv: dict,
+    users: list[dict],
+    active_assignee_id: int,
+    presentation: dict,
+) -> None:
+    section = presentation["sections"]["schedule_call"]
+    st.markdown("**Programmer / modifier un appel**")
+    if not section["enabled"]:
+        cols = st.columns(2)
+        for index, action_type in enumerate(["setting_call", "closing_call"]):
+            with cols[index]:
+                st.markdown(f"**Appel {call_type_short_label(action_type)}**")
+                render_disabled_standard_section(section["reason"])
+        return
+    active_call = presentation.get("active_call")
+    options = section.get("options") or {}
+    cols = st.columns(2)
+    for index, action_type in enumerate(["setting_call", "closing_call"]):
+        option = options.get(action_type, {"enabled": True, "reason": ""})
+        with cols[index]:
+            st.markdown(f"**Appel {call_type_short_label(action_type)}**")
+            if not option.get("enabled"):
+                render_disabled_standard_section(option.get("reason") or "Option indisponible.")
+                continue
+            if active_call and active_call.get("type") == action_type:
+                st.caption(
+                    f"Actif : {format_due(active_call.get('due_at'))} · {display_assignee_name(active_call)}"
+                )
+                render_call_reschedule_controls(user, active_call)
+            elif active_call:
+                render_disabled_standard_section("Un autre type d'appel est déjà actif.")
+            else:
+                render_call_schedule_form(user, conv, users, action_type, active_assignee_id)
+
+
+def render_document_call_section(user: dict, presentation: dict) -> None:
+    section = presentation["sections"]["document_call"]
+    st.markdown("**Documenter un appel**")
+    if not section["enabled"]:
+        render_disabled_standard_section(section["reason"])
+        return
+    render_call_documentation_form(user, section["action"])
+
+
+def render_manual_reprise_request_form(
+    user: dict,
+    conv: dict,
+    users: list[dict],
+    action_type: str,
+    active_assignee_id: int,
+) -> None:
+    assignee_options = standard_action_assignee_options(users, action_type)
+    if not assignee_options:
+        st.warning("Aucun responsable compatible.")
+        return
+    default_assignee = active_assignee_id
+    if not any(item["id"] == default_assignee for item in assignee_options):
+        default_assignee = assignee_options[0]["id"]
+    now_selected = st.checkbox(
+        "Maintenant",
+        value=True,
+        key=f"manual_reprise_{action_type}_now_{conv['id']}",
+    )
+    with st.form(f"manual_reprise_request_{action_type}_{conv['id']}"):
+        assignee = st.selectbox(
+            "Responsable",
+            assignee_options,
+            index=safe_user_index(assignee_options, default_assignee),
+            format_func=format_user,
+            key=f"manual_reprise_{action_type}_assignee_{conv['id']}",
+        )
+        due_at = iso_utc(utc_now())
+        if not now_selected:
+            action_date = st.date_input(
+                "Date",
+                value=local_today(),
+                key=f"manual_reprise_{action_type}_date_{conv['id']}",
+                format=DATE_INPUT_FORMAT,
+            )
+            action_time = st.time_input(
+                "Heure",
+                value=time(9, 0),
+                step=timedelta(minutes=1),
+                key=f"manual_reprise_{action_type}_time_{conv['id']}",
+            )
+            due_at = local_due_at(action_date, action_time)
+        note = st.text_area(
+            "Note obligatoire",
+            height=80,
+            key=f"manual_reprise_{action_type}_note_{conv['id']}",
+        )
+        submitted = st.form_submit_button(standard_action_button_label(action_type))
+    if submitted:
+        ok, message = assign_standard_next_action(
+            conv["id"],
+            user["id"],
+            action_type,
+            assignee["id"],
+            due_at,
+            note,
+        )
+        show_result(ok, message)
+        if ok:
+            clear_widget_keys(
+                f"manual_reprise_{action_type}_note_{conv['id']}",
+                f"manual_reprise_{action_type}_date_{conv['id']}",
+                f"manual_reprise_{action_type}_time_{conv['id']}",
+            )
+            st.rerun()
+
+
+def render_request_manual_reprise_section(
+    user: dict,
+    conv: dict,
+    users: list[dict],
+    active_assignee_id: int,
+    presentation: dict,
+) -> None:
+    section = presentation["sections"]["request_manual_reprise"]
+    st.markdown("**Demander une reprise manuelle**")
+    if not section["enabled"]:
+        render_disabled_standard_section(section["reason"])
+        return
+    cols = st.columns(2)
+    with cols[0]:
+        st.markdown("**Setter**")
+        render_manual_reprise_request_form(
+            user,
+            conv,
+            users,
+            "manual_reprise_setter",
+            active_assignee_id,
+        )
+    with cols[1]:
+        st.markdown("**Closer**")
+        render_manual_reprise_request_form(
+            user,
+            conv,
+            users,
+            "manual_reprise_closer",
+            active_assignee_id,
+        )
+
+
+def render_document_manual_reprise_section(user: dict, presentation: dict) -> None:
+    section = presentation["sections"]["document_manual_reprise"]
+    st.markdown("**Documenter une reprise manuelle**")
+    if not section["enabled"]:
+        render_disabled_standard_section(section["reason"])
+        return
+    render_manual_reprise_documentation_form(user, section["action"])
+
+
+def render_skip_current_step_section(user: dict, presentation: dict) -> None:
+    section = presentation["sections"]["skip_step"]
+    st.markdown("**Ignorer l'étape de flux actuelle**")
+    if not section["enabled"]:
+        render_disabled_standard_section(section["reason"])
+        return
+    render_skip_sequence_step_control(user, section["action"])
+
+
+def render_stable_action_block(
+    user: dict,
+    conv: dict,
+    users: list[dict],
+    active_assignee_id: int,
+    presentation: dict,
+) -> None:
+    st.markdown("**Bloc standard**")
+    render_schedule_call_section(user, conv, users, active_assignee_id, presentation)
+    st.divider()
+    render_document_call_section(user, presentation)
+    st.divider()
+    render_request_manual_reprise_section(user, conv, users, active_assignee_id, presentation)
+    st.divider()
+    render_document_manual_reprise_section(user, presentation)
+    st.divider()
+    render_skip_current_step_section(user, presentation)
+
+
+def render_action_history(actions: list[dict]) -> None:
+    if not actions:
+        return
+    st.divider()
+    st.markdown("**Historique des actions**")
+    for item in actions:
+        proof = " · preuve message" if item.get("proof_message_id") else ""
+        outcome = f" · {labelize(item['outcome'])}" if item.get("outcome") else ""
+        st.caption(
+            f"{item['title']} · {labelize(item['type'])} · {labelize(item['status'])} · "
+            f"{display_assignee_name(item)} · {format_due(item.get('due_at'))}"
+            f"{outcome}{proof}"
+        )
+
+
 def render_next_action_box(user: dict, conv: dict) -> None:
     action = get_next_action_for_lead(conv["lead_id"])
+    actions = list_actions_for_lead(conv["lead_id"], "all")
     users = list_users()
     active_assignee_id = default_assignee_id(conv, action, user)
+    presentation = build_action_tab_presentation(conv, action, actions)
 
-    if action:
-        if action.get("status") == "blocked":
-            render_blocked_action(user, conv, action)
-        elif action["type"] in {"reply", "follow_up"}:
-            render_whatsapp_action_guidance(user, conv, action)
-        elif action["type"] in CALL_ACTION_TYPES:
-            render_call_action_form(user, action)
-        elif action["type"] == "contact_review":
-            render_contact_review_action(user, action)
-        elif action["type"] in {"manual_reprise_setter", "manual_reprise_closer"}:
-            render_manual_reprise_action_form(user, action)
-        else:
-            render_other_action_form(user, action)
-    elif conv["status"] == "open":
-        st.warning("Anomalie : cette conversation est ouverte sans prochaine action.")
-        st.caption("Programmez immédiatement une action principale avec le bloc ci-dessous.")
-    else:
-        st.info("Aucune action ouverte pour cette conversation.")
+    render_action_tab_banner(presentation["banner"])
+    if action and action.get("status") == "blocked" and action.get("type") == "follow_up":
+        render_blocked_action(user, conv, action)
 
     if conv["status"] == "open":
         st.divider()
-        render_standard_action_planner(user, conv, users, active_assignee_id)
+        render_stable_action_block(user, conv, users, active_assignee_id, presentation)
     else:
-        st.caption("Conversation terminée : utilisez Réactiver en haut de la fiche pour créer une nouvelle action.")
+        st.caption("Bloc standard masqué : réactivez la conversation pour créer une nouvelle action.")
 
-    actions = list_actions_for_lead(conv["lead_id"], "all")
-    if actions:
-        st.divider()
-        st.markdown("**Historique des actions**")
-        for item in actions:
-            proof = " · preuve message" if item.get("proof_message_id") else ""
-            outcome = f" · {item['outcome']}" if item.get("outcome") else ""
-            st.caption(
-                f"{item['title']} · {labelize(item['type'])} · {labelize(item['status'])} · "
-                f"{display_assignee_name(item)} · {format_due(item.get('due_at'))}"
-                f"{outcome}{proof}"
-            )
+    render_action_history(actions)
 
 
 def render_manual_note_box(user: dict, conv: dict) -> None:

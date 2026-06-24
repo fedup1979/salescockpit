@@ -201,6 +201,53 @@ h1, h2, h3 {
   text-align: right;
 }
 
+.sc-action-banner {
+  margin: .2rem 0 .9rem 0;
+  padding: .75rem .9rem;
+  border: 1px solid var(--sc-border);
+  border-radius: 8px;
+  background: oklch(0.968 0.014 250);
+  color: var(--sc-text);
+}
+
+.sc-action-banner-blue {
+  border-color: oklch(0.78 0.07 250);
+  background: oklch(0.965 0.018 250);
+}
+
+.sc-action-banner-orange {
+  border-color: oklch(0.78 0.11 82);
+  background: oklch(0.965 0.026 82);
+}
+
+.sc-action-banner-red {
+  border-color: oklch(0.75 0.11 29);
+  background: oklch(0.965 0.022 29);
+}
+
+.sc-action-banner-title {
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: .18rem;
+}
+
+.sc-action-banner-body {
+  color: var(--sc-muted);
+  font-size: .88rem;
+  line-height: 1.35;
+}
+
+.sc-disabled-section {
+  margin: .25rem 0 .55rem 0;
+  padding: .55rem .65rem;
+  border: 1px solid oklch(0.88 0.01 250);
+  border-radius: 8px;
+  background: oklch(0.965 0.006 250);
+  color: oklch(0.55 0.012 250);
+  font-size: .84rem;
+  line-height: 1.35;
+}
+
 .sc-badge {
   display: inline-flex;
   align-items: center;

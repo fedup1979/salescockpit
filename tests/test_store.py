@@ -833,7 +833,7 @@ def test_overdue_planned_call_does_not_hide_urgent_reply() -> None:
     assert conversation["next_action_type"] == "reply"
 
 
-def test_standard_reply_assignment_preserves_planned_call_and_blocks_parallel_followup() -> None:
+def test_inbound_reply_preserves_planned_call_and_standard_commands_reject_whatsapp_actions() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
     phone = unique_phone()
@@ -856,15 +856,8 @@ def test_standard_reply_assignment_preserves_planned_call_and_blocks_parallel_fo
     setter_1 = next(item for item in users if item["email"] == "service.etudiants@essr.ch")
     tanjona = next(item for item in users if item["email"] == "setter2@essr.ch")
 
-    ok, message = assign_standard_next_action(
-        result["conversation_id"],
-        admin["id"],
-        "reply",
-        setter_1["id"],
-        iso_utc(utc_now()),
-        "Le prospect a posÃ© une question avant l'appel.",
-    )
-    assert ok is True, message
+    inbound = record_inbound_message(phone, "J'ai une question avant l'appel.")
+    assert inbound["lead_id"] == result["lead_id"]
     next_action = get_next_action_for_lead(result["lead_id"])
     assert next_action["type"] == "reply"
 
@@ -880,13 +873,24 @@ def test_standard_reply_assignment_preserves_planned_call_and_blocks_parallel_fo
     ok, message = assign_standard_next_action(
         result["conversation_id"],
         admin["id"],
+        "reply",
+        setter_1["id"],
+        iso_utc(utc_now()),
+        "Le prospect a posÃ© une question avant l'appel.",
+    )
+    assert ok is False
+    assert "standard" in message.lower()
+
+    ok, message = assign_standard_next_action(
+        result["conversation_id"],
+        admin["id"],
         "follow_up",
         tanjona["id"],
         iso_utc(utc_now() + timedelta(days=3)),
         "Relance test alors qu'un appel est dÃ©jÃ  prÃ©vu.",
     )
     assert ok is False
-    assert "appel" in message.lower()
+    assert "standard" in message.lower()
 
 
 def test_reply_send_with_do_not_contact_resolves_without_followup() -> None:
@@ -1131,6 +1135,138 @@ def test_standard_action_assignment_creates_closing_call() -> None:
     action = get_next_action_for_lead(result["lead_id"])
     assert action["type"] == "closing_call"
     assert action["assigned_to_user_id"] == closer["id"]
+
+
+def test_standard_action_assignment_creates_manual_reprise_setter_and_closer() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    setter = next(
+        user for user in list_users()
+        if user["role"] == "setter" and user["email"] != "setter2@essr.ch"
+    )
+    closer = next(user for user in list_users() if user["role"] == "closer")
+    setter_result = record_inbound_message(unique_phone(), "Cas à relire côté setter.")
+
+    ok, message = assign_standard_next_action(
+        setter_result["conversation_id"],
+        admin["id"],
+        "manual_reprise_setter",
+        setter["id"],
+        iso_utc(utc_now()),
+        "Relire le contexte avant de décider.",
+    )
+    assert ok is True, message
+    action = get_next_action_for_lead(setter_result["lead_id"])
+    assert action["type"] == "manual_reprise_setter"
+    assert action["assigned_to_user_id"] == setter["id"]
+    assert action["trigger_reason"] == "standard_manual_reprise_setter_requested"
+
+    closer_result = record_inbound_message(unique_phone(), "Cas à relire côté closer.")
+    ok, message = assign_standard_next_action(
+        closer_result["conversation_id"],
+        admin["id"],
+        "manual_reprise_closer",
+        closer["id"],
+        iso_utc(utc_now()),
+        "Relire les éléments de closing.",
+    )
+    assert ok is True, message
+    action = get_next_action_for_lead(closer_result["lead_id"])
+    assert action["type"] == "manual_reprise_closer"
+    assert action["assigned_to_user_id"] == closer["id"]
+    assert action["trigger_reason"] == "standard_manual_reprise_closer_requested"
+
+
+def test_manual_reprise_allowed_but_call_blocked_when_do_not_contact() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    setter = next(
+        user for user in list_users()
+        if user["role"] == "setter" and user["email"] != "setter2@essr.ch"
+    )
+    phone = unique_phone()
+    result = record_inbound_message(phone, "Ne me contactez plus.")
+    update_lead_qualification(
+        result["lead_id"],
+        admin["id"],
+        "lost",
+        "eligible",
+        contact_status="do_not_contact",
+    )
+    record_inbound_message(phone, "Je veux quand même être relu.")
+    assert get_next_action_for_lead(result["lead_id"])["type"] == "contact_review"
+
+    ok, message = assign_standard_next_action(
+        result["conversation_id"],
+        admin["id"],
+        "manual_reprise_setter",
+        setter["id"],
+        iso_utc(utc_now()),
+        "Revue humaine demandée malgré le blocage contact.",
+    )
+    assert ok is True, message
+    reprise = get_next_action_for_lead(result["lead_id"])
+    assert reprise["type"] == "manual_reprise_setter"
+
+    ok, message = assign_standard_next_action(
+        result["conversation_id"],
+        admin["id"],
+        "setting_call",
+        setter["id"],
+        iso_utc(utc_now()),
+        "Tentative d'appel commercial interdite.",
+    )
+    assert ok is False
+    assert "Contact" in message
+
+    ok, message = complete_action_with_workflow(
+        reprise["id"],
+        admin["id"],
+        "done",
+        note="Revue faite, rien à relancer sans levée du statut.",
+    )
+    assert ok is True, message
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["status"] == "resolved"
+    assert conversation["resolution_reason"] == "handled_elsewhere"
+
+
+def test_manual_reprise_preserves_existing_planned_call() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    setter = next(
+        user for user in list_users()
+        if user["role"] == "setter" and user["email"] != "setter2@essr.ch"
+    )
+    result = record_inbound_message(unique_phone(), "Je veux un appel setting.")
+    due_at = iso_utc(utc_now() + timedelta(days=1))
+    ok, message = assign_standard_next_action(
+        result["conversation_id"],
+        admin["id"],
+        "setting_call",
+        setter["id"],
+        due_at,
+        "RDV setting confirmé.",
+    )
+    assert ok is True, message
+
+    ok, message = assign_standard_next_action(
+        result["conversation_id"],
+        admin["id"],
+        "manual_reprise_setter",
+        setter["id"],
+        iso_utc(utc_now()),
+        "Relire avant le RDV sans supprimer l'appel.",
+    )
+    assert ok is True, message
+    active_actions = [
+        item for item in list_actions_for_lead(result["lead_id"], "all")
+        if item["status"] in {"open", "planned", "in_progress", "blocked"}
+    ]
+    assert any(item["type"] == "manual_reprise_setter" for item in active_actions)
+    active_calls = [item for item in active_actions if item["type"] == "setting_call"]
+    assert len(active_calls) == 1
+    assert active_calls[0]["due_at"] == due_at
 
 
 def test_setting_call_not_reached_creates_call_retry_before_followup() -> None:

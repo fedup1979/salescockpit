@@ -14,7 +14,7 @@ Latest recorded staging deployment check:
 - Twilio mode on staging: `mock`.
 - Workflow consistency: no active conversation without action, no resolved conversation with active action, no conflicting main actions.
 - API security readiness checks app API tokens and mock webhook tokens outside local tests.
-- Latest local hardening validation: `156 passed`, `py_compile` OK for `db.py`, `store.py`, and `ui/app.py`. On Windows, run pytest with `--basetemp=.pytest-tmp\run` if `%TEMP%\pytest-current` cleanup raises a permission error after successful execution.
+- Latest local hardening validation: `170 passed`, `py_compile` OK for `store.py`, `ui/app.py`, and `ui/action_presenter.py`. On Windows, run pytest with `--basetemp=.pytest-tmp\run` if `%TEMP%\pytest-current` cleanup raises a permission error after successful execution.
 - Staging and cold production are both deployed on `db6f03b`; staging pre-cutover is OK, and production cold pre-cutover is OK with Twilio still in `mock` mode.
 
 The canonical workflow model is now:
@@ -155,6 +155,7 @@ The canonical workflow model is now:
 - Inbound WhatsApp identity guardrail added: exact phone match attaches automatically; zero or multiple matches create a temporary `À identifier` lead with manual name/course fields.
 - V2 identity-resolution debt is documented in `docs/TECHNICAL_DEBT.md`.
 - Historical SchoolDrive diagnostic: `lead:124126` arrived with `armsg:1005384` as `queued`, while Claude MCP verified the same AR was already `sent` in SchoolDrive and no newer webhook reached Cockpit. Tiago later reported that the projector was published; the remaining gate is a fresh live website-form validation.
+- Actions tab refactored to a stable UX model: banner first, fixed standard block, disabled unavailable sections with reasons, and read-only action history. `reply` and `follow_up` remain system actions completed from `Conversation`; manual standard commands are call scheduling/modification, manual reprise, documentation, and sequence-step skip.
 
 ## Latest Hardening
 

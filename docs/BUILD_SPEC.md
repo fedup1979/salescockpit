@@ -184,14 +184,15 @@ Dropdown labels are displayed in French. Internal values remain in English.
 
 ### Actions Tab
 
-- Current next action with type, owner, due date, status, urgency, and expected proof.
-- Contextual action body by action type.
-- `reply`: guides the user to send the WhatsApp message from `Conversation`; the send form captures the business outcome and creates the next action.
-- `follow_up`: guides the user to send the relance from `Conversation`; closed WhatsApp windows require an approved template.
-- `blocked follow_up`: shows the linked missing-template request or lets the user create one.
-- `setting_call` and `closing_call`: future actions to document the call result with mandatory note.
-- `contact_review`: shows only the explicit do-not-contact review decisions.
-- No `Actions avancées` block in V1. `reply` and `follow_up` actions must be resolved through the Conversation composer so the system keeps a real outbound-message proof. Do not reintroduce generic manual action creation, off-cockpit message completion, out-of-flow handoff, manual data correction, or conversation reopen there.
+- Stable structure: status banner, fixed standard block, then read-only action history.
+- Blue banner: normal expected work, for example reply or follow-up to send from `Conversation`, planned call, due call, or manual reprise.
+- Orange banner: blocked action or status to review, for example missing WhatsApp template, `Ne plus contacter`, or terminal qualification to handle from `Statuts`.
+- Red banner: workflow anomaly, for example open conversation without action, resolved conversation with active action, unknown action type, or legacy `other`.
+- Fixed standard block is hidden when the conversation is terminated. When visible, unavailable sections remain visible and greyed with a short reason.
+- Fixed sections: program/modify call, document due call, request manual reprise, document manual reprise, skip current flow step.
+- `reply` and `follow_up` are system actions only. They are never programmed manually from the standard block and are completed by the outbound WhatsApp proof from `Conversation`.
+- `contact_review` is not completed from Actions. Users review or lift statuses in `Statuts`; the store closes obsolete contact reviews or recreates the appropriate reply when allowed.
+- `other` is backend fallback/anomaly only. The normal UI does not show an `other` completion form and `Pilotage` does not offer it as a normal new step type.
 - Action history includes outcome and message proof when available.
 
 ### Private Note Tab

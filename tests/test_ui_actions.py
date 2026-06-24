@@ -65,13 +65,14 @@ def test_reply_action_guides_to_conversation_send_without_generic_completion() -
     app.run(timeout=10)
 
     assert len(app.exception) == 0
-    info_texts = [item.value for item in app.info]
     button_labels = [item.label for item in app.button]
     caption_texts = [item.value for item in app.caption]
     tab_labels = [item.label for item in app.tabs]
+    markup = "\n".join(item.value for item in app.markdown)
 
-    assert any("Le client attend une réponse" in text for text in info_texts)
-    assert any("Sélectionnez la suite après envoi" in text for text in caption_texts)
+    assert "Répondre dans Conversation" in markup
+    assert "Après votre réponse" in markup
+    assert any("choisissez la suite ci-dessus" in text for text in caption_texts)
     assert any(label.startswith("À traiter") for label in tab_labels)
     assert any(label.startswith("En suspens") for label in tab_labels)
     assert any(label.startswith("Terminées") for label in tab_labels)

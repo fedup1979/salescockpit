@@ -2708,7 +2708,7 @@ def assign_standard_next_action(
     due_at: str,
     note: str,
 ) -> tuple[bool, str]:
-    allowed_types = {"reply", "follow_up", "setting_call", "closing_call"}
+    allowed_types = {"setting_call", "closing_call", "manual_reprise_setter", "manual_reprise_closer"}
     if action_type not in allowed_types:
         return False, "Action standard invalide."
 
@@ -2721,12 +2721,12 @@ def assign_standard_next_action(
         return False, "Conversation introuvable."
     if conv.get("status") != "open":
         return False, "Conversation terminée : réactivez-la avant de créer une action."
-    if conv.get("contact_status") in STOP_CONTACT_STATUSES:
+    call_action = action_type in {"setting_call", "closing_call"}
+    manual_reprise_action = action_type in MANUAL_REPRISE_ACTION_TYPES
+    if call_action and conv.get("contact_status") in STOP_CONTACT_STATUSES:
         return False, "Contact bloqué : le statut Ne plus contacter doit être levé avant de créer une action."
-    if conv.get("lead_status") in STOP_QUALIFICATION_STATUSES:
+    if call_action and conv.get("lead_status") in STOP_QUALIFICATION_STATUSES:
         return False, "Qualification terminale : remettez le prospect Éligible avant de créer une action."
-    if action_type == "follow_up" and followups_are_blocked(conv):
-        return False, "Ce statut bloque les relances commerciales."
 
     with connect() as conn:
         assignee = row_to_dict(
@@ -2740,28 +2740,26 @@ def assign_standard_next_action(
 
         assignee_role = assignee.get("role")
         assignee_email = str(assignee.get("email") or "").lower()
-        if action_type in {"reply", "setting_call"} and (
+        if action_type in {"setting_call", "manual_reprise_setter"} and (
             assignee_role != "setter" or assignee_email == "setter2@essr.ch"
         ):
             return False, "Cette action doit être attribuée à Setter I."
-        if action_type == "follow_up" and assignee_role != "setter":
-            return False, "Une relance doit être attribuée à un setter."
-        if action_type == "closing_call" and assignee_role != "closer":
-            return False, "Un appel closing doit être attribué à un closer."
+        if action_type in {"closing_call", "manual_reprise_closer"} and assignee_role != "closer":
+            return False, "Cette action doit être attribuée à un closer."
 
         now = iso_utc()
         full_name = lead_full_name(conv)
         titles = {
-            "reply": f"Répondre à {full_name}",
-            "follow_up": f"Relancer {full_name}",
             "setting_call": _call_task_title("setting_call", full_name),
             "closing_call": _call_task_title("closing_call", full_name),
+            "manual_reprise_setter": f"Reprise manuelle setter · {full_name}",
+            "manual_reprise_closer": f"Reprise manuelle closer · {full_name}",
         }
         trigger_reasons = {
-            "reply": "standard_reply_assigned",
-            "follow_up": "standard_followup_scheduled",
             "setting_call": "standard_setting_call_scheduled",
             "closing_call": "standard_closing_call_scheduled",
+            "manual_reprise_setter": "standard_manual_reprise_setter_requested",
+            "manual_reprise_closer": "standard_manual_reprise_closer_requested",
         }
 
         active_call = _first_active_action_for_lead(
@@ -2769,16 +2767,12 @@ def assign_standard_next_action(
             conv["lead_id"],
             action_types=("setting_call", "closing_call"),
         )
-        if action_type == "follow_up" and active_call:
+        if call_action and active_call and active_call.get("type") != action_type:
             return (
                 False,
-                "Un appel est déjà planifié. Modifiez l'appel ou créez une réponse urgente, mais ne planifiez pas une relance parallèle.",
+                "Un autre type d'appel est déjà planifié. Modifiez l'appel existant ou annulez-le avant d'en créer un autre.",
             )
-        excluded_types = (
-            ("setting_call", "closing_call")
-            if action_type == "reply" and active_call
-            else ()
-        )
+        excluded_types = ("setting_call", "closing_call") if manual_reprise_action else ()
 
         _complete_open_actions_for_lead(
             conn,
@@ -2788,8 +2782,7 @@ def assign_standard_next_action(
             excluded_types=excluded_types,
         )
 
-        if action_type in {"reply", "setting_call"}:
-            next_stage = "appointment_booked" if action_type == "setting_call" else conv.get("sales_stage")
+        if action_type == "setting_call":
             conn.execute(
                 """
                 UPDATE leads
@@ -2799,7 +2792,7 @@ def assign_standard_next_action(
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (assigned_to_user_id, next_stage, action_type, now, conv["lead_id"]),
+                (assigned_to_user_id, "appointment_booked", action_type, now, conv["lead_id"]),
             )
         elif action_type == "closing_call":
             conn.execute(
@@ -2808,6 +2801,26 @@ def assign_standard_next_action(
                 SET closer_user_id = ?,
                     sales_stage = 'closing',
                     lead_status = 'eligible',
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (assigned_to_user_id, now, conv["lead_id"]),
+            )
+        elif action_type == "manual_reprise_setter":
+            conn.execute(
+                """
+                UPDATE leads
+                SET setter_user_id = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (assigned_to_user_id, now, conv["lead_id"]),
+            )
+        elif action_type == "manual_reprise_closer":
+            conn.execute(
+                """
+                UPDATE leads
+                SET closer_user_id = ?,
                     updated_at = ?
                 WHERE id = ?
                 """,
@@ -7795,13 +7808,19 @@ def complete_action_with_workflow(
         if task.get("conversation_id") and task.get("conversation_status") != "open":
             return False, "Conversation terminée : réactivez-la avant de terminer une action."
         if task.get("contact_status") in STOP_CONTACT_STATUSES and not (
-            task["type"] == "contact_review"
-            and outcome in {"maintain_do_not_contact", "lift_do_not_contact"}
+            (
+                task["type"] == "contact_review"
+                and outcome in {"maintain_do_not_contact", "lift_do_not_contact"}
+            )
+            or (task["type"] in MANUAL_REPRISE_ACTION_TYPES and outcome == "done")
         ):
             return False, "Contact bloqué : le statut Ne plus contacter doit être levé avant cette action."
         if task.get("lead_status") in STOP_QUALIFICATION_STATUSES and not (
-            task["type"] == "contact_review"
-            and outcome in {"keep_terminal_status", "requalify_and_reply"}
+            (
+                task["type"] == "contact_review"
+                and outcome in {"keep_terminal_status", "requalify_and_reply"}
+            )
+            or (task["type"] in MANUAL_REPRISE_ACTION_TYPES and outcome == "done")
         ):
             return False, "Qualification terminale : requalifiez le prospect avant cette action."
         if task["type"] in {"setting_call", "closing_call"} and not note:
@@ -8453,15 +8472,18 @@ def complete_action_with_workflow(
 
         elif task["type"] in MANUAL_REPRISE_ACTION_TYPES:
             if outcome == "done":
-                next_action_id = _advance_sequence_after_action(
-                    conn,
-                    task=task,
-                    user_id=user_id,
-                    now=now,
-                    full_name=full_name,
-                    trigger_reason="manual_reprise_completed",
-                    note=note,
-                )
+                if task.get("sequence_code") and task.get("sequence_step_index"):
+                    next_action_id = _advance_sequence_after_action(
+                        conn,
+                        task=task,
+                        user_id=user_id,
+                        now=now,
+                        full_name=full_name,
+                        trigger_reason="manual_reprise_completed",
+                        note=note,
+                    )
+                else:
+                    resolve("handled_elsewhere")
 
         elif task["type"] == "other":
             if task.get("sequence_code") and task.get("sequence_step_index"):
