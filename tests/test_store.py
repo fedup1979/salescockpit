@@ -1471,6 +1471,37 @@ def test_sequence_steps_can_be_added_updated_and_deactivated() -> None:
     assert updated["id"] not in active_ids
 
 
+def test_readiness_allows_existing_followup_on_inactive_sequence_step() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    users = {item["email"]: item for item in list_users()}
+    conv = next(item for item in list_conversations() if item["conversation_status"] == "open")
+    step = next(item for item in list_sequence_steps("lead_no_reply") if item["step_index"] == 1)
+
+    action_id = create_next_action(
+        conv["lead_id"],
+        conv["conversation_id"],
+        "follow_up",
+        "Relance existante sur étape ensuite désactivée",
+        users["setter2@essr.ch"]["id"],
+        admin["id"],
+        due_at=iso_utc(),
+        sequence_code="lead_no_reply",
+        sequence_step_index=1,
+    )
+    ok, message = deactivate_sequence_step(admin["id"], int(step["id"]))
+    assert ok, message
+
+    readiness = get_integration_readiness()
+    assert readiness["workflow"]["active_followup_missing_step_count"] == 0
+
+    with connect() as conn:
+        conn.execute("UPDATE tasks SET sequence_step_index = 999 WHERE id = ?", (action_id,))
+
+    readiness = get_integration_readiness()
+    assert readiness["workflow"]["active_followup_missing_step_count"] == 1
+
+
 def test_course_default_session_can_be_configured_and_deactivated() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")

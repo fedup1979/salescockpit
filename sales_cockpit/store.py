@@ -754,7 +754,6 @@ def get_integration_readiness() -> dict[str, Any]:
             LEFT JOIN sequence_steps ss
               ON ss.sequence_code = t.sequence_code
              AND ss.step_index = t.sequence_step_index
-             AND ss.active = 1
             WHERE t.type = 'follow_up'
               AND t.status IN ('planned', 'open', 'in_progress', 'blocked')
               AND t.sequence_code IS NOT NULL
