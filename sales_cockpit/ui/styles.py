@@ -156,6 +156,11 @@ h1, h2, h3 {
   margin: .35rem 0 .7rem 0;
 }
 
+.st-key-lead_state_header .sc-compact-state {
+  display: block;
+  width: 100%;
+}
+
 .sc-compact-state > span {
   display: inline-flex;
   align-items: center;
@@ -168,6 +173,11 @@ h1, h2, h3 {
   font-size: .78rem;
   line-height: 1.15;
   min-height: 1.65rem;
+}
+
+.st-key-lead_state_header .sc-compact-state > span {
+  width: 100%;
+  justify-content: flex-start;
 }
 
 .sc-compact-state > span > span,
@@ -187,6 +197,7 @@ h1, h2, h3 {
 }
 
 .st-key-lead_state_header [data-testid="stPopover"] button {
+  width: 100%;
   min-height: 1.65rem;
   padding: .18rem .5rem;
   border: 1px solid var(--sc-border) !important;
@@ -196,6 +207,7 @@ h1, h2, h3 {
   font-size: .78rem;
   line-height: 1.15;
   box-shadow: none !important;
+  justify-content: flex-start;
 }
 
 .st-key-lead_state_header [data-testid="stPopover"] button:hover {
@@ -514,16 +526,37 @@ h1, h2, h3 {
   letter-spacing: 0;
 }
 
-.sc-action-panel {
-  display: flex;
-  justify-content: space-between;
-  gap: .8rem;
-  align-items: flex-start;
+.st-key-next_action_summary_box {
   border: 1px solid var(--sc-border);
   border-radius: 8px;
   padding: .75rem .85rem;
   margin: .65rem 0 1rem 0;
   background: oklch(0.99 0.004 250);
+}
+
+.st-key-next_action_summary_box [data-testid="stPopover"] {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: .42rem;
+}
+
+.st-key-next_action_summary_box [data-testid="stPopover"] button {
+  width: 2rem;
+  min-height: 1.9rem;
+  padding: 0;
+  border: 1px solid oklch(0.72 0.14 29) !important;
+  border-radius: 6px;
+  background: oklch(0.965 0.022 29) !important;
+  color: oklch(0.48 0.17 29) !important;
+  box-shadow: none !important;
+  font-size: .98rem;
+  font-weight: 760;
+}
+
+.st-key-next_action_summary_box [data-testid="stPopover"] button:hover {
+  border-color: oklch(0.58 0.18 29) !important;
+  background: oklch(0.94 0.04 29) !important;
+  color: oklch(0.38 0.16 29) !important;
 }
 
 .sc-action-title {
@@ -726,8 +759,8 @@ div[data-testid="stCheckbox"] span {
     max-width: 94%;
   }
 
-  .sc-action-panel {
-    flex-direction: column;
+  .st-key-next_action_summary_box [data-testid="column"] {
+    width: 100% !important;
   }
 
   .sc-action-badges {

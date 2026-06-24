@@ -11,12 +11,15 @@ from sales_cockpit.store import (
     list_sequence_steps,
     list_conversations,
     record_inbound_message,
+    send_freeform_message,
     set_conversation_status,
 )
 from sales_cockpit.ui.app import (
+    CLOSURE_RESOLUTION_REASON_VALUES,
     format_action_datetime,
     format_dt,
     format_due,
+    labelize,
     local_due_at,
     message_display_timestamp,
     simulated_template_label,
@@ -196,9 +199,16 @@ def test_statuses_are_edited_from_header_bubbles_without_status_tab() -> None:
     assert "✎" not in markup
     assert "Qualification" in selectbox_labels
     assert "Contact" in selectbox_labels
-    assert "Note facultative" in text_area_labels
+    assert "Note facultative" not in text_area_labels
     assert all("parcours" not in label.lower() for label in selectbox_labels)
     assert "Forçage admin du parcours" not in markup
+
+
+def test_close_conversation_reason_choices_are_simplified() -> None:
+    assert "duplicate" not in CLOSURE_RESOLUTION_REASON_VALUES
+    assert "sequence_completed_no_reply" not in CLOSURE_RESOLUTION_REASON_VALUES
+    assert "handled_elsewhere" in CLOSURE_RESOLUTION_REASON_VALUES
+    assert labelize("handled_elsewhere") == "Doublon / Traité ailleurs"
 
 
 def test_advanced_actions_are_not_exposed() -> None:
@@ -293,30 +303,51 @@ def test_disabled_sections_without_active_action_keep_controls_visible() -> None
     assert len(app.exception) == 0
     markup = "\n".join(item.value for item in app.markdown)
     captions = [item.value for item in app.caption]
+    button_labels = [item.label for item in app.button]
+    checkbox_labels = [item.label for item in app.checkbox]
     reached = next(item for item in app.radio if item.label == "Avez-vous pu joindre le prospect ?")
     outcome = next(item for item in app.selectbox if item.label == "Résultat de l'appel")
     call_note = next(item for item in app.text_area if item.label == "Note d'appel obligatoire")
-    skip_note = next(item for item in app.text_area if item.label == "Mini note obligatoire")
-    skip_confirm = next(
-        item for item in app.checkbox
-        if item.label == "Je confirme que cette étape ne doit pas être faite."
-    )
     disabled_buttons = {
         item.label: item.disabled
         for item in app.button
-        if item.label in {"Enregistrer le résultat", "Ignorer cette étape"}
+        if item.label in {"Enregistrer le résultat"}
     }
 
     assert "Grisé :" not in markup
     assert any("Aucun appel actif à documenter" in text for text in captions)
-    assert any("pas une étape de flux ignorable" in text for text in captions)
+    assert "Ignorer l'étape de flux actuelle" not in markup
+    assert "Ignorer cette étape" not in button_labels
+    assert "Je confirme que cette étape ne doit pas être faite." not in checkbox_labels
     assert reached.disabled is True
     assert outcome.disabled is True
     assert call_note.disabled is True
-    assert skip_note.disabled is True
-    assert skip_confirm.disabled is True
     assert disabled_buttons["Enregistrer le résultat"] is True
-    assert disabled_buttons["Ignorer cette étape"] is True
+
+
+def test_skippable_flow_step_uses_red_delete_control_in_next_action_box() -> None:
+    seed_initial_data()
+    user = authenticate("service.etudiants@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Bonjour.")
+    ok, message = send_freeform_message(result["conversation_id"], user["id"], "Je reviens vers vous.")
+    assert ok is True, message
+    followup = get_next_action_for_lead(result["lead_id"])
+    assert followup["type"] == "follow_up"
+
+    app = render_selected_action(followup["id"], followup["assigned_to_email"])
+
+    assert len(app.exception) == 0
+    markup = "\n".join(item.value for item in app.markdown)
+    button_labels = [item.label for item in app.button]
+    warning_texts = [item.value for item in app.warning]
+    checkbox_labels = [item.label for item in app.checkbox]
+    text_area_labels = [item.label for item in app.text_area]
+
+    assert "Ignorer l'étape de flux actuelle" not in markup
+    assert "Supprimer cette action" in button_labels
+    assert any("Attention danger" in text for text in warning_texts)
+    assert "Je confirme que cette action doit être supprimée." in checkbox_labels
+    assert "Note obligatoire" in text_area_labels
 
 
 def test_action_tab_hides_standard_block_label_and_adds_now_shortcut_for_calls() -> None:

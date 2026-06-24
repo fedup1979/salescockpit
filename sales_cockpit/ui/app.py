@@ -98,6 +98,11 @@ from sales_cockpit.ui.styles import APP_CSS
 LEAD_STATUSES = [item["value"] for item in QUALIFICATION_STATUSES]
 CONTACT_STATUS_VALUES = [item["value"] for item in CONTACT_STATUSES]
 RESOLUTION_REASON_VALUES = [item["value"] for item in RESOLUTION_REASONS]
+CLOSURE_RESOLUTION_REASON_VALUES = [
+    value
+    for value in RESOLUTION_REASON_VALUES
+    if value not in {"duplicate", "sequence_completed_no_reply"}
+]
 URGENCIES = ["low", "normal", "high", "urgent"]
 WORK_QUEUES = ["todo", "waiting", "resolved"]
 INBOX_QUEUES = WORK_QUEUES + ["all"]
@@ -319,7 +324,7 @@ DISPLAY_LABELS = {
     "contact_allowed": "Contact autorisé",
     "do_not_contact": "Ne plus contacter",
     "duplicate": "Doublon",
-    "handled_elsewhere": "Traité ailleurs",
+    "handled_elsewhere": "Doublon / Traité ailleurs",
     "sequence_completed_no_reply": "Suivi terminé sans réponse",
     "error": "Erreur",
     "deal_pending": "Deal en attente",
@@ -728,7 +733,7 @@ def render_conversation_detail(user: dict, conversation_id: int) -> None:
 
     render_conversation_context(conv)
     render_compact_lead_state(user, conv)
-    render_next_action_summary(conv)
+    render_next_action_summary(user, conv)
     render_planned_call_notice(conv)
 
     tabs = st.tabs(["Conversation", "Actions", "Notes privées"])
@@ -865,7 +870,7 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
             resolve_note_key = f"resolve_note_header_{conv['id']}"
             reason = st.selectbox(
                 "Motif",
-                RESOLUTION_REASON_VALUES,
+                CLOSURE_RESOLUTION_REASON_VALUES,
                 format_func=labelize,
                 key=resolve_reason_key,
             )
@@ -914,26 +919,16 @@ def render_compact_lead_state(user: dict, conv: dict) -> None:
             "Parcours",
             labelize(conv["sales_stage"]),
         )
-        state_cols = st.columns([0.24, 0.28, 0.28, 0.2], vertical_alignment="center")
+        state_cols = st.columns([1, 1, 1, 0.8], vertical_alignment="center")
         with state_cols[0]:
             st.markdown(
                 f'<div class="sc-compact-state">{stage_html}</div>',
                 unsafe_allow_html=True,
             )
         with state_cols[1]:
-            render_status_edit_popover(
-                user,
-                conv,
-                f"Qualification · {labelize(conv['lead_status'])} ▾",
-                "qualification",
-            )
+            render_qualification_popover(user, conv)
         with state_cols[2]:
-            render_status_edit_popover(
-                user,
-                conv,
-                f"Contact · {labelize(conv.get('contact_status') or 'contact_allowed')} ▾",
-                "contact",
-            )
+            render_contact_popover(user, conv)
         with state_cols[3]:
             if identity_needs_review(conv):
                 st.markdown(
@@ -942,12 +937,11 @@ def render_compact_lead_state(user: dict, conv: dict) -> None:
                 )
 
 
-def render_status_edit_popover(user: dict, conv: dict, trigger_label: str, key_suffix: str) -> None:
-    with st.popover(trigger_label, help="Modifier qualification et contact", use_container_width=True):
-        lead_status_key = f"quick_lead_status_{key_suffix}_{conv['lead_id']}"
-        contact_status_key = f"quick_contact_status_{key_suffix}_{conv['lead_id']}"
-        note_key = f"quick_status_note_{key_suffix}_{conv['lead_id']}"
-        with st.form(f"quick_status_edit_{key_suffix}_{conv['lead_id']}"):
+def render_qualification_popover(user: dict, conv: dict) -> None:
+    trigger_label = f"Qualification · {labelize(conv['lead_status'])} ▾"
+    with st.popover(trigger_label, help="Modifier la qualification", use_container_width=True):
+        lead_status_key = f"quick_lead_status_{conv['lead_id']}"
+        with st.form(f"quick_lead_status_edit_{conv['lead_id']}"):
             lead_status = st.selectbox(
                 "Qualification",
                 LEAD_STATUSES,
@@ -956,15 +950,6 @@ def render_status_edit_popover(user: dict, conv: dict, trigger_label: str, key_s
                 help=HELP_TEXTS["lead_status"],
                 key=lead_status_key,
             )
-            contact_status = st.selectbox(
-                "Contact",
-                CONTACT_STATUS_VALUES,
-                index=safe_index(CONTACT_STATUS_VALUES, conv.get("contact_status")),
-                format_func=labelize,
-                help=HELP_TEXTS["contact_status"],
-                key=contact_status_key,
-            )
-            note = st.text_area("Note facultative", height=70, key=note_key)
             submitted = st.form_submit_button("Mettre à jour")
         if submitted:
             update_lead_qualification(
@@ -972,13 +957,40 @@ def render_status_edit_popover(user: dict, conv: dict, trigger_label: str, key_s
                 user["id"],
                 conv["sales_stage"],
                 lead_status,
+                contact_status=conv.get("contact_status") or "contact_allowed",
+                honor_sales_stage_terminal_mapping=False,
+            )
+            st.success("Qualification mise à jour.")
+            clear_widget_keys(lead_status_key)
+            st.rerun()
+
+
+def render_contact_popover(user: dict, conv: dict) -> None:
+    current_contact_status = conv.get("contact_status") or "contact_allowed"
+    trigger_label = f"Contact · {labelize(current_contact_status)} ▾"
+    with st.popover(trigger_label, help="Modifier le statut de contact", use_container_width=True):
+        contact_status_key = f"quick_contact_status_{conv['lead_id']}"
+        with st.form(f"quick_contact_status_edit_{conv['lead_id']}"):
+            contact_status = st.selectbox(
+                "Contact",
+                CONTACT_STATUS_VALUES,
+                index=safe_index(CONTACT_STATUS_VALUES, current_contact_status),
+                format_func=labelize,
+                help=HELP_TEXTS["contact_status"],
+                key=contact_status_key,
+            )
+            submitted = st.form_submit_button("Mettre à jour")
+        if submitted:
+            update_lead_qualification(
+                conv["lead_id"],
+                user["id"],
+                conv["sales_stage"],
+                conv["lead_status"],
                 contact_status=contact_status,
                 honor_sales_stage_terminal_mapping=False,
             )
-            if note.strip():
-                add_manual_note(conv["id"], user["id"], f"Note statuts : {note.strip()}", True)
-            st.success("Mise à jour enregistrée.")
-            clear_widget_keys(lead_status_key, contact_status_key, note_key)
+            st.success("Contact mis à jour.")
+            clear_widget_keys(contact_status_key)
             st.rerun()
 
 
@@ -1370,7 +1382,7 @@ def identity_candidates(conv: dict) -> list[dict]:
     return [item for item in parsed if isinstance(item, dict)]
 
 
-def render_next_action_summary(conv: dict) -> None:
+def render_next_action_summary(user: dict, conv: dict) -> None:
     action = get_next_action_for_lead(conv["lead_id"])
     if conv["status"] == "resolved":
         title = "Aucune action nécessaire"
@@ -1385,21 +1397,67 @@ def render_next_action_summary(conv: dict) -> None:
         assignee = normalize_user_display_name(None, conv.get("setter_name") or "Non assigné")
         due = "À définir"
 
-    st.markdown(
-        f"""
-        <div class="sc-action-panel">
-          <div>
-            <div class="sc-compact-label">Prochaine action</div>
-            <div class="sc-action-title">{escape_html(title)}</div>
-            <div class="sc-row-meta">{escape_html(due)}</div>
-          </div>
-          <div class="sc-action-badges">
-            <span class="sc-badge sc-badge-muted">{escape_html(assignee)}</span>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    summary_actions = [action] if action else []
+    skip_section = build_action_tab_presentation(conv, action, summary_actions)["sections"]["skip_step"]
+    with st.container(key="next_action_summary_box"):
+        action_col, assignee_col = st.columns([0.72, 0.28], vertical_alignment="top")
+        with action_col:
+            st.markdown(
+                f"""
+                <div class="sc-compact-label">Prochaine action</div>
+                <div class="sc-action-title">{escape_html(title)}</div>
+                <div class="sc-row-meta">{escape_html(due)}</div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with assignee_col:
+            st.markdown(
+                f"""
+                <div class="sc-action-badges">
+                  <span class="sc-badge sc-badge-muted">{escape_html(assignee)}</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if skip_section["enabled"]:
+                render_delete_next_action_popover(user, skip_section["action"])
+
+
+def render_delete_next_action_popover(user: dict, action: dict) -> None:
+    action_id = action["id"]
+    with st.popover("✕", help="Supprimer cette action", use_container_width=False):
+        st.warning(
+            "Attention danger ! Cette fonction permet de supprimer une action. "
+            "Normalement, toutes les actions dans SalesCockpit ont une raison d'être, "
+            "alors ne supprimez une tâche que dans des cas exceptionnels et si vous êtes "
+            "tout à fait au clair quant aux implications système."
+        )
+        with st.form(f"delete_next_action_form_{action_id}"):
+            note = st.text_area(
+                "Note obligatoire",
+                height=90,
+                key=f"delete_next_action_note_{action_id}",
+            )
+            confirm = st.checkbox(
+                "Je confirme que cette action doit être supprimée.",
+                key=f"delete_next_action_confirm_{action_id}",
+            )
+            submitted = st.form_submit_button("Supprimer cette action")
+        if submitted:
+            if not confirm:
+                st.error("Confirme la suppression de cette action.")
+                return
+            if not note.strip():
+                st.error("Ajoute une note pour expliquer pourquoi cette action est supprimée.")
+                return
+            ok, message = skip_sequence_step_action(action_id, user["id"], note.strip())
+            show_result(ok, message)
+            if ok:
+                clear_widget_keys(
+                    f"delete_next_action_note_{action_id}",
+                    f"delete_next_action_confirm_{action_id}",
+                )
+                st.rerun()
 
 
 def render_planned_call_notice(conv: dict) -> None:
@@ -2320,21 +2378,6 @@ def render_document_manual_reprise_section(user: dict, conv: dict, presentation:
     render_manual_reprise_documentation_form(user, section["action"])
 
 
-def render_skip_current_step_section(user: dict, presentation: dict) -> None:
-    section = presentation["sections"]["skip_step"]
-    st.markdown("**Ignorer l'étape de flux actuelle**")
-    if not section["enabled"]:
-        preview_action = section.get("action") or {
-            "id": "disabled_skip_step",
-            "type": "follow_up",
-            "sequence_code": "preview",
-            "sequence_step_index": 1,
-        }
-        render_skip_sequence_step_control(user, preview_action, section["reason"])
-        return
-    render_skip_sequence_step_control(user, section["action"])
-
-
 def render_stable_action_block(
     user: dict,
     conv: dict,
@@ -2349,8 +2392,6 @@ def render_stable_action_block(
     render_request_manual_reprise_section(user, conv, users, active_assignee_id, presentation)
     st.divider()
     render_document_manual_reprise_section(user, conv, presentation)
-    st.divider()
-    render_skip_current_step_section(user, presentation)
 
 
 def render_action_history(actions: list[dict]) -> None:
