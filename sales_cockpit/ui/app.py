@@ -1934,10 +1934,6 @@ def render_manual_reprise_documentation_form(
     disabled = disabled_reason is not None
     if disabled_reason:
         render_disabled_standard_section(disabled_reason)
-    if action["type"] == "manual_reprise_setter":
-        st.info("Reprise manuelle setter : relisez la conversation, décidez si un message, un appel ou une autre suite est utile, puis terminez l'action avec une note.")
-    else:
-        st.info("Reprise manuelle closer : relisez la conversation et les éléments envoyés, décidez si une reprise personnalisée est utile, puis terminez l'action avec une note.")
     action_id = action["id"]
     with st.form(f"manual_reprise_documentation_form_{action_id}"):
         note = st.text_area(

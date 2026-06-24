@@ -312,6 +312,32 @@ def test_disabled_sections_without_active_action_keep_controls_visible() -> None
     assert disabled_buttons["Ignorer cette étape"] is True
 
 
+def test_manual_reprise_documentation_has_no_duplicate_info_box() -> None:
+    seed_initial_data()
+    user = authenticate("service.etudiants@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je veux des informations.")
+    ok, message = assign_standard_next_action(
+        result["conversation_id"],
+        user["id"],
+        "manual_reprise_setter",
+        user["id"],
+        datetime.now(timezone.utc).isoformat(),
+        "Reprise test.",
+    )
+    assert ok, message
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "manual_reprise_setter"
+
+    app = render_selected_action(action["id"])
+
+    assert len(app.exception) == 0
+    markup = "\n".join(item.value for item in app.markdown)
+    info_texts = [item.value for item in app.info]
+    assert "Documenter une reprise manuelle" in markup
+    assert "Note obligatoire" in [item.label for item in app.text_area]
+    assert all("Reprise manuelle setter : relisez" not in text for text in info_texts)
+
+
 def test_pilotage_sequence_step_editor_persists_selected_step_values() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
