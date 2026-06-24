@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, timedelta, time, timezone
 from uuid import uuid4
 
 from streamlit.testing.v1 import AppTest
@@ -33,6 +33,17 @@ def render_selected_action(action_id: int, user_email: str = "service.etudiants@
     app.session_state["selected_action_id"] = action_id
     app.run(timeout=10)
     return app
+
+
+def set_navigation(app: AppTest, page: str) -> None:
+    for key in [
+        "active_navigation",
+        "desktop_navigation",
+        "mobile_navigation",
+        "_last_desktop_navigation",
+        "_last_mobile_navigation",
+    ]:
+        app.session_state[key] = page
 
 
 def test_ui_dates_are_displayed_in_geneva_time() -> None:
@@ -126,7 +137,7 @@ def test_resolved_conversation_hides_whatsapp_send_controls() -> None:
     app.session_state["user"] = admin
     app.session_state["selected_conversation_id"] = result["conversation_id"]
     app.run(timeout=10)
-    app.radio[0].set_value("Inbox")
+    set_navigation(app, "Inbox")
     app.run(timeout=10)
 
     assert len(app.exception) == 0
@@ -146,7 +157,7 @@ def test_admin_users_table_formats_setter2_role() -> None:
     app = AppTest.from_file("sales_cockpit/ui/app.py")
     app.session_state["user"] = admin
     app.run(timeout=10)
-    app.radio[0].set_value("Admin")
+    set_navigation(app, "Admin")
     app.run(timeout=10)
 
     assert len(app.exception) == 0
@@ -165,7 +176,7 @@ def test_status_tab_no_longer_exposes_parcours_selector() -> None:
     app.session_state["user"] = admin
     app.session_state["selected_conversation_id"] = result["conversation_id"]
     app.run(timeout=10)
-    app.radio[0].set_value("Inbox")
+    set_navigation(app, "Inbox")
     app.run(timeout=10)
 
     assert len(app.exception) == 0
@@ -229,6 +240,72 @@ def test_call_not_reached_hides_note_fields() -> None:
     assert "Enregistrer le résultat" in [item.label for item in app.button]
 
 
+def test_disabled_call_documentation_keeps_fields_visible() -> None:
+    seed_initial_data()
+    user = authenticate("service.etudiants@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je suis disponible pour un appel demain.")
+    ok, message = assign_standard_next_action(
+        result["conversation_id"],
+        user["id"],
+        "setting_call",
+        user["id"],
+        (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+        "RDV futur test.",
+    )
+    assert ok, message
+    action = get_next_action_for_lead(result["lead_id"])
+
+    app = render_selected_action(action["id"])
+
+    assert len(app.exception) == 0
+    markup = "\n".join(item.value for item in app.markdown)
+    reached = next(item for item in app.radio if item.label == "Avez-vous pu joindre le prospect ?")
+    outcome = next(item for item in app.selectbox if item.label == "Résultat de l'appel")
+    note = next(item for item in app.text_area if item.label == "Note d'appel obligatoire")
+
+    assert "Grisé :" not in markup
+    assert reached.disabled is True
+    assert outcome.disabled is True
+    assert note.disabled is True
+
+
+def test_disabled_sections_without_active_action_keep_controls_visible() -> None:
+    seed_initial_data()
+    user = authenticate("service.etudiants@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je veux des informations.")
+    action = get_next_action_for_lead(result["lead_id"])
+
+    app = render_selected_action(action["id"])
+
+    assert len(app.exception) == 0
+    markup = "\n".join(item.value for item in app.markdown)
+    captions = [item.value for item in app.caption]
+    reached = next(item for item in app.radio if item.label == "Avez-vous pu joindre le prospect ?")
+    outcome = next(item for item in app.selectbox if item.label == "Résultat de l'appel")
+    call_note = next(item for item in app.text_area if item.label == "Note d'appel obligatoire")
+    skip_note = next(item for item in app.text_area if item.label == "Mini note obligatoire")
+    skip_confirm = next(
+        item for item in app.checkbox
+        if item.label == "Je confirme que cette étape ne doit pas être faite."
+    )
+    disabled_buttons = {
+        item.label: item.disabled
+        for item in app.button
+        if item.label in {"Enregistrer le résultat", "Ignorer cette étape"}
+    }
+
+    assert "Grisé :" not in markup
+    assert any("Aucun appel actif à documenter" in text for text in captions)
+    assert any("pas une étape de flux ignorable" in text for text in captions)
+    assert reached.disabled is True
+    assert outcome.disabled is True
+    assert call_note.disabled is True
+    assert skip_note.disabled is True
+    assert skip_confirm.disabled is True
+    assert disabled_buttons["Enregistrer le résultat"] is True
+    assert disabled_buttons["Ignorer cette étape"] is True
+
+
 def test_pilotage_sequence_step_editor_persists_selected_step_values() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
@@ -238,14 +315,7 @@ def test_pilotage_sequence_step_editor_persists_selected_step_values() -> None:
 
     app = AppTest.from_file("sales_cockpit/ui/app.py")
     app.session_state["user"] = admin
-    for key in [
-        "active_navigation",
-        "desktop_navigation",
-        "mobile_navigation",
-        "_last_desktop_navigation",
-        "_last_mobile_navigation",
-    ]:
-        app.session_state[key] = "Pilotage"
+    set_navigation(app, "Pilotage")
     app.run(timeout=10)
 
     step_select = next(item for item in app.selectbox if item.label == "Étape à modifier")

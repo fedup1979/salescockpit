@@ -237,17 +237,6 @@ h1, h2, h3 {
   line-height: 1.35;
 }
 
-.sc-disabled-section {
-  margin: .25rem 0 .55rem 0;
-  padding: .55rem .65rem;
-  border: 1px solid oklch(0.88 0.01 250);
-  border-radius: 8px;
-  background: oklch(0.965 0.006 250);
-  color: oklch(0.55 0.012 250);
-  font-size: .84rem;
-  line-height: 1.35;
-}
-
 .sc-badge {
   display: inline-flex;
   align-items: center;

@@ -1585,37 +1585,47 @@ def render_blocked_action(user: dict, conv: dict, action: dict) -> None:
     st.info("La demande de nouveau modèle se fait dans l'onglet Conversation, sous Envoyer un modèle.")
 
 
-def render_skip_sequence_step_control(user: dict, action: dict) -> None:
-    if action.get("type") not in {"follow_up", "manual_reprise_setter", "manual_reprise_closer", "other"}:
+def render_skip_sequence_step_control(
+    user: dict,
+    action: dict,
+    disabled_reason: str | None = None,
+) -> None:
+    disabled = disabled_reason is not None
+    if disabled_reason:
+        render_disabled_standard_section(disabled_reason)
+    if not disabled and action.get("type") not in {"follow_up", "manual_reprise_setter", "manual_reprise_closer", "other"}:
         return
-    if not action.get("sequence_code") or not action.get("sequence_step_index"):
+    if not disabled and (not action.get("sequence_code") or not action.get("sequence_step_index")):
         return
-    with st.expander("Ne pas faire cette étape", expanded=False):
+    action_id = action["id"]
+    with st.expander("Ne pas faire cette étape", expanded=disabled):
         st.caption("Ignore cette étape uniquement. Le flux continue à l'étape suivante s'il en existe une.")
-        with st.form(f"skip_sequence_step_form_{action['id']}"):
+        with st.form(f"skip_sequence_step_form_{action_id}"):
             note = st.text_area(
                 "Mini note obligatoire",
                 height=80,
-                key=f"skip_sequence_step_note_{action['id']}",
+                key=f"skip_sequence_step_note_{action_id}",
+                disabled=disabled,
             )
             confirm = st.checkbox(
                 "Je confirme que cette étape ne doit pas être faite.",
-                key=f"skip_sequence_step_confirm_{action['id']}",
+                key=f"skip_sequence_step_confirm_{action_id}",
+                disabled=disabled,
             )
-            submitted = st.form_submit_button("Ignorer cette étape")
-        if submitted:
+            submitted = st.form_submit_button("Ignorer cette étape", disabled=disabled)
+        if submitted and not disabled:
             if not confirm:
                 st.error("Confirme l'abandon de cette étape.")
                 return
             if not note.strip():
                 st.error("Ajoute une mini note pour expliquer pourquoi cette étape est ignorée.")
                 return
-            ok, message = skip_sequence_step_action(action["id"], user["id"], note.strip())
+            ok, message = skip_sequence_step_action(action_id, user["id"], note.strip())
             show_result(ok, message)
             if ok:
                 clear_widget_keys(
-                    f"skip_sequence_step_note_{action['id']}",
-                    f"skip_sequence_step_confirm_{action['id']}",
+                    f"skip_sequence_step_note_{action_id}",
+                    f"skip_sequence_step_confirm_{action_id}",
                 )
                 st.rerun()
 
@@ -1780,10 +1790,19 @@ def render_call_action_form(user: dict, action: dict) -> None:
                 st.rerun()
 
 
-def render_call_documentation_form(user: dict, action: dict) -> None:
+def render_call_documentation_form(
+    user: dict,
+    action: dict,
+    disabled_reason: str | None = None,
+) -> None:
+    disabled = disabled_reason is not None
+    if disabled_reason:
+        render_disabled_standard_section(disabled_reason)
     users = list_users()
+    action_type = action.get("type") if action.get("type") in ACTION_OUTCOMES else "setting_call"
+    action_id = action.get("id")
     reached_outcomes = [
-        value for value in ACTION_OUTCOMES[action["type"]]
+        value for value in ACTION_OUTCOMES[action_type]
         if value != "not_reached"
     ]
     reached = st.radio(
@@ -1791,9 +1810,10 @@ def render_call_documentation_form(user: dict, action: dict) -> None:
         ["yes", "no"],
         horizontal=True,
         format_func=lambda value: "Oui" if value == "yes" else "Non",
-        key=f"call_reached_{action['id']}",
+        key=f"call_reached_{action_id}",
+        disabled=disabled,
     )
-    with st.form(f"call_documentation_form_{action['id']}"):
+    with st.form(f"call_documentation_form_{action_id}"):
         if reached == "no":
             outcome = "not_reached"
             note = "Prospect non joint."
@@ -1804,10 +1824,16 @@ def render_call_documentation_form(user: dict, action: dict) -> None:
                 "Résultat de l'appel",
                 reached_outcomes,
                 format_func=labelize,
-                key=f"call_outcome_{action['id']}",
+                key=f"call_outcome_{action_id}",
+                disabled=disabled,
             )
-            st.caption(action_consequence(action["type"], outcome))
-            note = st.text_area("Note d'appel obligatoire", height=100, key=f"call_note_{action['id']}")
+            st.caption(action_consequence(action_type, outcome))
+            note = st.text_area(
+                "Note d'appel obligatoire",
+                height=100,
+                key=f"call_note_{action_id}",
+                disabled=disabled,
+            )
             assigned_to_user_id = None
             next_due_at = None
             if outcome == "to_closing":
@@ -1817,24 +1843,27 @@ def render_call_documentation_form(user: dict, action: dict) -> None:
                         "Closer",
                         closers,
                         format_func=format_user,
-                        key=f"call_closer_{action['id']}",
+                        key=f"call_closer_{action_id}",
+                        disabled=disabled,
                     )
                     assigned_to_user_id = closer["id"]
                 next_date = st.date_input(
                     "Date du rendez-vous",
                     value=local_today(),
-                    key=f"call_date_{action['id']}",
+                    key=f"call_date_{action_id}",
                     format=DATE_INPUT_FORMAT,
+                    disabled=disabled,
                 )
                 next_time = st.time_input(
                     "Heure",
                     value=time(9, 0),
                     step=timedelta(minutes=1),
-                    key=f"call_time_{action['id']}",
+                    key=f"call_time_{action_id}",
+                    disabled=disabled,
                 )
                 next_due_at = local_due_at(next_date, next_time)
-        submitted = st.form_submit_button("Enregistrer le résultat")
-    if submitted:
+        submitted = st.form_submit_button("Enregistrer le résultat", disabled=disabled)
+    if submitted and not disabled:
         if not note.strip():
             st.error("Une note d'appel est obligatoire.")
             return
@@ -1849,10 +1878,10 @@ def render_call_documentation_form(user: dict, action: dict) -> None:
         show_result(ok, message)
         if ok:
             clear_widget_keys(
-                f"call_note_{action['id']}",
-                f"call_date_{action['id']}",
-                f"call_time_{action['id']}",
-                f"call_closer_{action['id']}",
+                f"call_note_{action_id}",
+                f"call_date_{action_id}",
+                f"call_time_{action_id}",
+                f"call_closer_{action_id}",
             )
             st.rerun()
 
@@ -2029,15 +2058,28 @@ def render_manual_reprise_action_form(user: dict, action: dict) -> None:
     render_skip_sequence_step_control(user, action)
 
 
-def render_manual_reprise_documentation_form(user: dict, action: dict) -> None:
+def render_manual_reprise_documentation_form(
+    user: dict,
+    action: dict,
+    disabled_reason: str | None = None,
+) -> None:
+    disabled = disabled_reason is not None
+    if disabled_reason:
+        render_disabled_standard_section(disabled_reason)
     if action["type"] == "manual_reprise_setter":
         st.info("Reprise manuelle setter : relisez la conversation, décidez si un message, un appel ou une autre suite est utile, puis terminez l'action avec une note.")
     else:
         st.info("Reprise manuelle closer : relisez la conversation et les éléments envoyés, décidez si une reprise personnalisée est utile, puis terminez l'action avec une note.")
-    with st.form(f"manual_reprise_documentation_form_{action['id']}"):
-        note = st.text_area("Note obligatoire", height=100, key=f"manual_reprise_note_{action['id']}")
-        submitted = st.form_submit_button("Marquer la reprise terminée")
-    if submitted:
+    action_id = action["id"]
+    with st.form(f"manual_reprise_documentation_form_{action_id}"):
+        note = st.text_area(
+            "Note obligatoire",
+            height=100,
+            key=f"manual_reprise_note_{action_id}",
+            disabled=disabled,
+        )
+        submitted = st.form_submit_button("Marquer la reprise terminée", disabled=disabled)
+    if submitted and not disabled:
         if not note.strip():
             st.error("Ajoute une note pour terminer cette reprise.")
             return
@@ -2049,7 +2091,7 @@ def render_manual_reprise_documentation_form(user: dict, action: dict) -> None:
         )
         show_result(ok, message)
         if ok:
-            clear_widget_keys(f"manual_reprise_note_{action['id']}")
+            clear_widget_keys(f"manual_reprise_note_{action_id}")
             st.rerun()
 
 
@@ -2143,10 +2185,7 @@ def render_action_tab_banner(banner: dict) -> None:
 
 
 def render_disabled_standard_section(reason: str) -> None:
-    st.markdown(
-        f'<div class="sc-disabled-section">Grisé : {escape_html(reason)}</div>',
-        unsafe_allow_html=True,
-    )
+    st.caption(f"Indisponible : {reason}")
 
 
 def call_type_short_label(action_type: str | None) -> str:
@@ -2159,11 +2198,15 @@ def render_call_schedule_form(
     users: list[dict],
     action_type: str,
     active_assignee_id: int,
+    disabled_reason: str | None = None,
 ) -> None:
     assignee_options = standard_action_assignee_options(users, action_type)
     if not assignee_options:
         st.warning("Aucun responsable compatible.")
         return
+    disabled = disabled_reason is not None
+    if disabled_reason:
+        render_disabled_standard_section(disabled_reason)
     default_assignee = active_assignee_id
     if not any(item["id"] == default_assignee for item in assignee_options):
         default_assignee = assignee_options[0]["id"]
@@ -2174,26 +2217,30 @@ def render_call_schedule_form(
             index=safe_user_index(assignee_options, default_assignee),
             format_func=format_user,
             key=f"schedule_{action_type}_assignee_{conv['id']}",
+            disabled=disabled,
         )
         action_date = st.date_input(
             "Date",
             value=local_today(),
             key=f"schedule_{action_type}_date_{conv['id']}",
             format=DATE_INPUT_FORMAT,
+            disabled=disabled,
         )
         action_time = st.time_input(
             "Heure",
             value=time(9, 0),
             step=timedelta(minutes=1),
             key=f"schedule_{action_type}_time_{conv['id']}",
+            disabled=disabled,
         )
         note = st.text_area(
             "Note obligatoire",
             height=80,
             key=f"schedule_{action_type}_note_{conv['id']}",
+            disabled=disabled,
         )
-        submitted = st.form_submit_button(standard_action_button_label(action_type))
-    if submitted:
+        submitted = st.form_submit_button(standard_action_button_label(action_type), disabled=disabled)
+    if submitted and not disabled:
         ok, message = assign_standard_next_action(
             conv["id"],
             user["id"],
@@ -2221,39 +2268,56 @@ def render_schedule_call_section(
 ) -> None:
     section = presentation["sections"]["schedule_call"]
     st.markdown("**Programmer / modifier un appel**")
-    if not section["enabled"]:
-        cols = st.columns(2)
-        for index, action_type in enumerate(["setting_call", "closing_call"]):
-            with cols[index]:
-                st.markdown(f"**Appel {call_type_short_label(action_type)}**")
-                render_disabled_standard_section(section["reason"])
-        return
     active_call = presentation.get("active_call")
     options = section.get("options") or {}
     cols = st.columns(2)
     for index, action_type in enumerate(["setting_call", "closing_call"]):
-        option = options.get(action_type, {"enabled": True, "reason": ""})
+        option = options.get(action_type, {"enabled": section["enabled"], "reason": section.get("reason", "")})
+        option_enabled = section["enabled"] and option.get("enabled", True)
+        disabled_reason = ""
+        if not section["enabled"]:
+            disabled_reason = section.get("reason") or "Section indisponible."
+        elif not option.get("enabled", True):
+            disabled_reason = option.get("reason") or "Option indisponible."
         with cols[index]:
             st.markdown(f"**Appel {call_type_short_label(action_type)}**")
-            if not option.get("enabled"):
-                render_disabled_standard_section(option.get("reason") or "Option indisponible.")
-                continue
-            if active_call and active_call.get("type") == action_type:
+            if active_call and active_call.get("type") == action_type and option_enabled:
                 st.caption(
                     f"Actif : {format_due(active_call.get('due_at'))} · {display_assignee_name(active_call)}"
                 )
                 render_call_reschedule_controls(user, active_call)
-            elif active_call:
-                render_disabled_standard_section("Un autre type d'appel est déjà actif.")
+            elif active_call and active_call.get("type") == action_type:
+                st.caption(
+                    f"Actif : {format_due(active_call.get('due_at'))} · {display_assignee_name(active_call)}"
+                )
+                render_call_schedule_form(
+                    user,
+                    conv,
+                    users,
+                    action_type,
+                    active_assignee_id,
+                    disabled_reason or "Appel actif non modifiable.",
+                )
             else:
-                render_call_schedule_form(user, conv, users, action_type, active_assignee_id)
+                render_call_schedule_form(
+                    user,
+                    conv,
+                    users,
+                    action_type,
+                    active_assignee_id,
+                    disabled_reason or None,
+                )
 
 
-def render_document_call_section(user: dict, presentation: dict) -> None:
+def render_document_call_section(user: dict, conv: dict, presentation: dict) -> None:
     section = presentation["sections"]["document_call"]
     st.markdown("**Documenter un appel**")
     if not section["enabled"]:
-        render_disabled_standard_section(section["reason"])
+        preview_action = presentation.get("active_call") or {
+            "id": f"disabled_call_{conv['id']}",
+            "type": "setting_call",
+        }
+        render_call_documentation_form(user, preview_action, section["reason"])
         return
     render_call_documentation_form(user, section["action"])
 
@@ -2264,11 +2328,15 @@ def render_manual_reprise_request_form(
     users: list[dict],
     action_type: str,
     active_assignee_id: int,
+    disabled_reason: str | None = None,
 ) -> None:
     assignee_options = standard_action_assignee_options(users, action_type)
     if not assignee_options:
         st.warning("Aucun responsable compatible.")
         return
+    disabled = disabled_reason is not None
+    if disabled_reason:
+        render_disabled_standard_section(disabled_reason)
     default_assignee = active_assignee_id
     if not any(item["id"] == default_assignee for item in assignee_options):
         default_assignee = assignee_options[0]["id"]
@@ -2276,6 +2344,7 @@ def render_manual_reprise_request_form(
         "Maintenant",
         value=True,
         key=f"manual_reprise_{action_type}_now_{conv['id']}",
+        disabled=disabled,
     )
     with st.form(f"manual_reprise_request_{action_type}_{conv['id']}"):
         assignee = st.selectbox(
@@ -2284,6 +2353,7 @@ def render_manual_reprise_request_form(
             index=safe_user_index(assignee_options, default_assignee),
             format_func=format_user,
             key=f"manual_reprise_{action_type}_assignee_{conv['id']}",
+            disabled=disabled,
         )
         due_at = iso_utc(utc_now())
         if not now_selected:
@@ -2292,21 +2362,24 @@ def render_manual_reprise_request_form(
                 value=local_today(),
                 key=f"manual_reprise_{action_type}_date_{conv['id']}",
                 format=DATE_INPUT_FORMAT,
+                disabled=disabled,
             )
             action_time = st.time_input(
                 "Heure",
                 value=time(9, 0),
                 step=timedelta(minutes=1),
                 key=f"manual_reprise_{action_type}_time_{conv['id']}",
+                disabled=disabled,
             )
             due_at = local_due_at(action_date, action_time)
         note = st.text_area(
             "Note obligatoire",
             height=80,
             key=f"manual_reprise_{action_type}_note_{conv['id']}",
+            disabled=disabled,
         )
-        submitted = st.form_submit_button(standard_action_button_label(action_type))
-    if submitted:
+        submitted = st.form_submit_button(standard_action_button_label(action_type), disabled=disabled)
+    if submitted and not disabled:
         ok, message = assign_standard_next_action(
             conv["id"],
             user["id"],
@@ -2334,9 +2407,6 @@ def render_request_manual_reprise_section(
 ) -> None:
     section = presentation["sections"]["request_manual_reprise"]
     st.markdown("**Demander une reprise manuelle**")
-    if not section["enabled"]:
-        render_disabled_standard_section(section["reason"])
-        return
     cols = st.columns(2)
     with cols[0]:
         st.markdown("**Setter**")
@@ -2346,6 +2416,7 @@ def render_request_manual_reprise_section(
             users,
             "manual_reprise_setter",
             active_assignee_id,
+            None if section["enabled"] else section["reason"],
         )
     with cols[1]:
         st.markdown("**Closer**")
@@ -2355,14 +2426,19 @@ def render_request_manual_reprise_section(
             users,
             "manual_reprise_closer",
             active_assignee_id,
+            None if section["enabled"] else section["reason"],
         )
 
 
-def render_document_manual_reprise_section(user: dict, presentation: dict) -> None:
+def render_document_manual_reprise_section(user: dict, conv: dict, presentation: dict) -> None:
     section = presentation["sections"]["document_manual_reprise"]
     st.markdown("**Documenter une reprise manuelle**")
     if not section["enabled"]:
-        render_disabled_standard_section(section["reason"])
+        preview_action = presentation.get("active_reprise") or {
+            "id": f"disabled_reprise_{conv['id']}",
+            "type": "manual_reprise_setter",
+        }
+        render_manual_reprise_documentation_form(user, preview_action, section["reason"])
         return
     render_manual_reprise_documentation_form(user, section["action"])
 
@@ -2371,7 +2447,13 @@ def render_skip_current_step_section(user: dict, presentation: dict) -> None:
     section = presentation["sections"]["skip_step"]
     st.markdown("**Ignorer l'étape de flux actuelle**")
     if not section["enabled"]:
-        render_disabled_standard_section(section["reason"])
+        preview_action = section.get("action") or {
+            "id": "disabled_skip_step",
+            "type": "follow_up",
+            "sequence_code": "preview",
+            "sequence_step_index": 1,
+        }
+        render_skip_sequence_step_control(user, preview_action, section["reason"])
         return
     render_skip_sequence_step_control(user, section["action"])
 
@@ -2386,11 +2468,11 @@ def render_stable_action_block(
     st.markdown("**Bloc standard**")
     render_schedule_call_section(user, conv, users, active_assignee_id, presentation)
     st.divider()
-    render_document_call_section(user, presentation)
+    render_document_call_section(user, conv, presentation)
     st.divider()
     render_request_manual_reprise_section(user, conv, users, active_assignee_id, presentation)
     st.divider()
-    render_document_manual_reprise_section(user, presentation)
+    render_document_manual_reprise_section(user, conv, presentation)
     st.divider()
     render_skip_current_step_section(user, presentation)
 
