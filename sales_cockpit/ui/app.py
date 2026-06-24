@@ -2155,6 +2155,12 @@ def render_templates(user: dict) -> None:
     settings = get_settings()
     twilio_mode = (settings.twilio_mode or "mock").lower()
     twilio_read_only = bool(settings.twilio_content_read_only)
+    twilio_account_sid = (settings.twilio_account_sid or "").strip()
+    twilio_account_label = (
+        f"{twilio_account_sid[:6]}...{twilio_account_sid[-4:]}"
+        if len(twilio_account_sid) > 10
+        else twilio_account_sid or "aucun compte configuré"
+    )
     request_flash = st.session_state.pop("template_page_flash", None)
     if request_flash:
         st.success(request_flash)
@@ -2166,9 +2172,11 @@ def render_templates(user: dict) -> None:
                 ok, message = sync_twilio_templates(user["id"])
                 show_result(ok, message)
                 if ok:
+                    st.session_state.template_page_flash = message
                     st.rerun()
         with sync_note_col:
             caption = "Récupère les templates Twilio, leurs ContentSid et leurs statuts d'approbation WhatsApp."
+            caption += f" Compte configuré : {twilio_account_label}."
             if twilio_read_only:
                 caption += " Mode lecture seule : aucune création ni soumission Twilio possible."
             st.caption(caption)

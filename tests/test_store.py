@@ -1249,6 +1249,8 @@ def test_only_admin_can_create_template() -> None:
 
 
 def test_sync_twilio_templates_upserts_content_sid(monkeypatch) -> None:
+    monkeypatch.setenv("SALES_COCKPIT_TWILIO_ACCOUNT_SID", "TWILIO_TEST_ACCOUNT_FOR_MASKING")
+    get_settings.cache_clear()
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
     remote = TwilioContentTemplate(
@@ -1272,6 +1274,12 @@ def test_sync_twilio_templates_upserts_content_sid(monkeypatch) -> None:
     assert len(templates) == 1
     assert templates[0]["twilio_content_sid"] == "HX1234567890abcdef1234567890abcdef"
     assert templates[0]["status"] == "approved"
+
+    ok, message = sync_twilio_templates(admin["id"])
+
+    assert ok is True
+    assert "0 créé(s), 0 modifié(s), 1 inchangé(s)" in message
+    assert "TWILIO...KING" in message
 
 
 def test_business_rule_seed_migrates_existing_sequence_rows() -> None:

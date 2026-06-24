@@ -4737,6 +4737,7 @@ def sync_twilio_templates(user_id: int) -> tuple[bool, str]:
     now = iso_utc()
     created = 0
     updated = 0
+    unchanged = 0
     with connect() as conn:
         for remote in remote_templates:
             changed = _upsert_twilio_template(conn, remote, user_id, now)
@@ -4744,6 +4745,8 @@ def sync_twilio_templates(user_id: int) -> tuple[bool, str]:
                 created += 1
             elif changed == "updated":
                 updated += 1
+            elif changed == "unchanged":
+                unchanged += 1
         unblocked = _auto_approve_linked_template_requests(conn, user_id, now)
         conn.execute(
             """
@@ -4757,15 +4760,25 @@ def sync_twilio_templates(user_id: int) -> tuple[bool, str]:
                     {
                         "created": created,
                         "updated": updated,
+                        "unchanged": unchanged,
                         "total": len(remote_templates),
                         "unblocked_template_requests": unblocked,
+                        "twilio_account_sid_masked": _masked_twilio_account_sid(),
                     },
                     ensure_ascii=False,
                 ),
                 now,
             ),
         )
-    return True, f"Synchronisation Twilio terminée : {created} créé(s), {updated} mis à jour, {unblocked} demande(s) débloquée(s)."
+    account_label = _masked_twilio_account_sid()
+    account_suffix = f" Compte : {account_label}." if account_label else ""
+    return (
+        True,
+        "Synchronisation Twilio terminée : "
+        f"{created} créé(s), {updated} modifié(s), "
+        f"{unchanged} inchangé(s), {unblocked} demande(s) débloquée(s)."
+        f"{account_suffix}",
+    )
 
 
 def create_and_submit_twilio_template(
@@ -4881,6 +4894,31 @@ def _upsert_twilio_template(
     rejection_reason = remote.rejection_reason
     if existing:
         template_id = int(existing["id"])
+        desired = {
+            "twilio_content_sid": remote.content_sid,
+            "twilio_content_type": remote.content_type,
+            "name": remote.name,
+            "language": remote.language,
+            "category": remote.category,
+            "body": remote.body,
+            "status": remote.status,
+            "rejection_reason": rejection_reason,
+        }
+        is_changed = any(
+            str(existing.get(key) or "") != str(value or "")
+            for key, value in desired.items()
+        ) or _twilio_payload_changed(existing.get("twilio_payload_json"), remote.payload or {})
+        if not is_changed:
+            conn.execute(
+                """
+                UPDATE whatsapp_templates
+                SET last_twilio_sync_at = ?
+                WHERE id = ?
+                """,
+                (now, template_id),
+            )
+            _replace_template_placeholders(conn, template_id, remote.variables)
+            return template_id if return_id else "unchanged"
         conn.execute(
             """
             UPDATE whatsapp_templates
@@ -4952,6 +4990,21 @@ def _upsert_twilio_template(
     template_id = int(cursor.lastrowid)
     _replace_template_placeholders(conn, template_id, remote.variables)
     return template_id if return_id else "created"
+
+
+def _masked_twilio_account_sid() -> str:
+    sid = (get_settings().twilio_account_sid or "").strip()
+    if len(sid) <= 10:
+        return sid
+    return f"{sid[:6]}...{sid[-4:]}"
+
+
+def _twilio_payload_changed(existing_payload_json: str | None, remote_payload: dict[str, Any]) -> bool:
+    try:
+        existing_payload = json.loads(existing_payload_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return True
+    return existing_payload != remote_payload
 
 
 def _auto_approve_linked_template_requests(conn: Any, user_id: int, now: str) -> int:
