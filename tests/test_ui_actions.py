@@ -19,6 +19,7 @@ from sales_cockpit.ui.app import (
     format_due,
     local_due_at,
     message_display_timestamp,
+    simulated_template_label,
 )
 
 
@@ -395,3 +396,46 @@ def test_pilotage_sequence_step_editor_persists_selected_step_values() -> None:
     assert updated_target["meaning"] == "Regression test event name for selected step."
     assert updated_target["offset_amount"] == 5
     assert updated_target["offset_unit"] == "days"
+
+
+def test_pilotage_flow_view_template_column_uses_twilio_template_names() -> None:
+    step = {
+        "sequence_code": "setter_no_next_step",
+        "step_index": 1,
+        "action_type": "follow_up",
+    }
+    base_mapping = {
+        "sequence_code": "setter_no_next_step",
+        "sequence_step_index": 1,
+        "course_category": "APP",
+        "template_status": "approved",
+        "twilio_content_sid": "HX_REAL_TEMPLATE",
+    }
+
+    shared = [
+        {
+            **base_mapping,
+            "lead_type": "all",
+            "template_name": "app_relance_commune",
+        }
+    ]
+    split = [
+        {
+            **base_mapping,
+            "lead_type": "lead",
+            "template_name": "app_relance_lead",
+        },
+        {
+            **base_mapping,
+            "lead_type": "presubscription",
+            "template_name": "app_relance_preinscription",
+        },
+    ]
+
+    assert simulated_template_label(shared, step, "APP") == "app_relance_commune"
+    assert (
+        simulated_template_label(split, step, "APP")
+        == "Lead : app_relance_lead · Préinscription : app_relance_preinscription"
+    )
+    assert simulated_template_label([], step, "APP") == ""
+    assert simulated_template_label(shared, {**step, "action_type": "setting_call"}, "APP") == ""

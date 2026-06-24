@@ -4345,9 +4345,10 @@ def render_pilotage_simulator() -> None:
         "closer_will_sign",
         "course_start",
     ]
+    mappings = list_sequence_template_mappings()
     for code in selected_sequences:
         st.markdown(f"#### {label_sequence_code(code)}")
-        rows = build_simulated_timeline(code, start_date)
+        rows = build_simulated_timeline(code, start_date, mappings, category)
         st.dataframe(rows, hide_index=True, use_container_width=True)
 
 
@@ -4547,9 +4548,15 @@ def parse_iso_date_or_today(value: str | None):
     return utc_now().date()
 
 
-def build_simulated_timeline(sequence_code: str, course_start_date) -> list[dict]:
+def build_simulated_timeline(
+    sequence_code: str,
+    course_start_date,
+    mappings: list[dict] | None = None,
+    category: str = "Toutes",
+) -> list[dict]:
     anchor = utc_now()
     rows = []
+    mappings = mappings or []
     for step in list_sequence_steps(sequence_code):
         due_label = simulate_due_label(step, anchor, course_start_date)
         rows.append(
@@ -4559,10 +4566,23 @@ def build_simulated_timeline(sequence_code: str, course_start_date) -> list[dict
                 "Date simulée": due_label,
                 "Type": sequence_step_action_label(step.get("action_type")),
                 "Événement": step["meaning"],
-                "Template": "Obligatoire" if step.get("action_type") == "follow_up" else "",
+                "Template": simulated_template_label(mappings, step, category),
             }
         )
     return rows
+
+
+def simulated_template_label(mappings: list[dict], step: dict, category: str) -> str:
+    if step.get("action_type") != "follow_up":
+        return ""
+
+    lead_mapping = resolve_mapping_for_step(mappings, step, "lead", category)
+    presub_mapping = resolve_mapping_for_step(mappings, step, "presubscription", category)
+    lead_name = (lead_mapping or {}).get("template_name") or ""
+    presub_name = (presub_mapping or {}).get("template_name") or ""
+    if lead_name and presub_name and lead_name != presub_name:
+        return f"Lead : {lead_name} · Préinscription : {presub_name}"
+    return lead_name or presub_name
 
 
 def simulate_due_label(step: dict, anchor: datetime, course_start_date) -> str:
