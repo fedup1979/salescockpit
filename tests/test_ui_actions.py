@@ -8,6 +8,7 @@ from sales_cockpit.store import (
     authenticate,
     assign_standard_next_action,
     get_next_action_for_lead,
+    list_sequence_steps,
     list_conversations,
     record_inbound_message,
     set_conversation_status,
@@ -225,3 +226,47 @@ def test_call_not_reached_hides_note_fields() -> None:
     assert len(app.exception) == 0
     assert "Note d'appel obligatoire" not in [item.label for item in app.text_area]
     assert "Enregistrer le résultat" in [item.label for item in app.button]
+
+
+def test_pilotage_sequence_step_editor_persists_selected_step_values() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    steps = list_sequence_steps("lead_no_reply", active_only=False)
+    first_step = steps[0]
+    target = steps[1]
+
+    app = AppTest.from_file("sales_cockpit/ui/app.py")
+    app.session_state["user"] = admin
+    for key in [
+        "active_navigation",
+        "desktop_navigation",
+        "mobile_navigation",
+        "_last_desktop_navigation",
+        "_last_mobile_navigation",
+    ]:
+        app.session_state[key] = "Pilotage"
+    app.run(timeout=10)
+
+    step_select = next(item for item in app.selectbox if item.label == "Étape à modifier")
+    step_select.set_value(target["id"])
+    app.run(timeout=10)
+
+    event_editor = next(
+        item
+        for item in app.text_area
+        if item.label == "Événement" and item.value == target["meaning"]
+    )
+    event_editor.set_value("Regression test event name for selected step.")
+    next(item for item in app.number_input if item.label == "Délai").set_value(5)
+    next(item for item in app.selectbox if item.label == "Unité").set_value("days")
+    next(item for item in app.button if item.label == "Enregistrer l'étape").click()
+    app.run(timeout=10)
+
+    assert len(app.exception) == 0
+    updated_steps = list_sequence_steps("lead_no_reply", active_only=False)
+    unchanged_first = next(item for item in updated_steps if item["id"] == first_step["id"])
+    updated_target = next(item for item in updated_steps if item["id"] == target["id"])
+    assert unchanged_first["meaning"] == first_step["meaning"]
+    assert updated_target["meaning"] == "Regression test event name for selected step."
+    assert updated_target["offset_amount"] == 5
+    assert updated_target["offset_unit"] == "days"

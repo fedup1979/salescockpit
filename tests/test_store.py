@@ -1462,6 +1462,7 @@ def test_sequence_steps_can_be_added_updated_and_deactivated() -> None:
     updated = list_sequence_steps("lead_no_reply", active_only=False)[-1]
     assert updated["delay"] == "T+7j"
     assert updated["action_type"] == "other"
+    assert updated["meaning"] == "Relance longue ajustÃ©e."
     assert updated["requires_template"] == 0
 
     ok, message = deactivate_sequence_step(admin["id"], int(updated["id"]))

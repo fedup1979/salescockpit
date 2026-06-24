@@ -2865,16 +2865,27 @@ def render_pilotage_sequence_steps(user: dict) -> None:
     with edit_col:
         st.markdown("**Modifier une étape**")
         if steps:
-            with st.form("pilotage_sequence_step_edit_form"):
-                selected = st.selectbox(
-                    "Étape",
-                    steps,
-                    format_func=lambda item: (
-                        f"Étape {item['step_index']} · "
-                        f"{'active' if item.get('active') else 'inactive'} · "
-                        f"{sequence_step_timing_label(item)}"
-                    ),
-                )
+            step_by_id = {int(item["id"]): item for item in steps}
+            selected_step_id = st.selectbox(
+                "Étape à modifier",
+                list(step_by_id.keys()),
+                format_func=lambda step_id: (
+                    f"Étape {step_by_id[int(step_id)]['step_index']} · "
+                    f"{'active' if step_by_id[int(step_id)].get('active') else 'inactive'} · "
+                    f"{sequence_step_timing_label(step_by_id[int(step_id)])}"
+                ),
+                key=f"pilotage_sequence_step_edit_select_{sequence['code']}",
+            )
+            selected = step_by_id[int(selected_step_id)]
+            edit_key_prefix = f"pilotage_sequence_step_edit_{selected['id']}"
+            edit_widget_keys = [
+                f"{edit_key_prefix}_action_type",
+                f"{edit_key_prefix}_offset_amount",
+                f"{edit_key_prefix}_offset_unit",
+                f"{edit_key_prefix}_offset_direction",
+                f"{edit_key_prefix}_meaning",
+            ]
+            with st.form(f"pilotage_sequence_step_edit_form_{selected['id']}"):
                 action_type = st.selectbox(
                     "Type d'action",
                     SEQUENCE_STEP_ACTION_TYPES,
@@ -2882,6 +2893,7 @@ def render_pilotage_sequence_steps(user: dict) -> None:
                     if (selected.get("action_type") or "follow_up") in SEQUENCE_STEP_ACTION_TYPES
                     else 0,
                     format_func=sequence_step_action_label,
+                    key=edit_widget_keys[0],
                 )
                 timing_cols = st.columns([0.8, 0.8, 1.2])
                 with timing_cols[0]:
@@ -2891,6 +2903,7 @@ def render_pilotage_sequence_steps(user: dict) -> None:
                         max_value=365,
                         value=int(selected.get("offset_amount") or 0),
                         step=1,
+                        key=edit_widget_keys[1],
                     )
                 with timing_cols[1]:
                     offset_unit = st.selectbox(
@@ -2900,6 +2913,7 @@ def render_pilotage_sequence_steps(user: dict) -> None:
                         if (selected.get("offset_unit") or "hours") in SEQUENCE_STEP_OFFSET_UNITS
                         else 0,
                         format_func=lambda value: SEQUENCE_STEP_OFFSET_UNIT_LABELS[value],
+                        key=edit_widget_keys[2],
                     )
                 with timing_cols[2]:
                     offset_direction = st.selectbox(
@@ -2909,11 +2923,13 @@ def render_pilotage_sequence_steps(user: dict) -> None:
                         if (selected.get("offset_direction") or "after") in SEQUENCE_STEP_OFFSET_DIRECTIONS
                         else 0,
                         format_func=lambda value: SEQUENCE_STEP_OFFSET_DIRECTION_LABELS[value],
+                        key=edit_widget_keys[3],
                     )
                 meaning = st.text_area(
                     "Événement",
                     value=selected.get("meaning") or "",
                     height=100,
+                    key=edit_widget_keys[4],
                 )
                 submitted = st.form_submit_button("Enregistrer l'étape")
             if submitted:
@@ -2929,6 +2945,7 @@ def render_pilotage_sequence_steps(user: dict) -> None:
                 )
                 show_result(ok, message)
                 if ok:
+                    clear_widget_keys(*edit_widget_keys)
                     st.rerun()
 
             active_steps = [item for item in steps if item.get("active")]
