@@ -357,6 +357,7 @@ DISPLAY_LABELS = {
     "pending": "En attente",
     "approved": "Approuvé",
     "rejected": "Rejeté",
+    "unavailable": "Indisponible",
     "matched": "Correspondance trouvée",
     "unmatched": "Non retrouvé",
     "ambiguous": "Ambigu",

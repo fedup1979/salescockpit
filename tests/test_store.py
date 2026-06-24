@@ -1282,6 +1282,56 @@ def test_sync_twilio_templates_upserts_content_sid(monkeypatch) -> None:
     assert "TWILIO...KING" in message
 
 
+def test_sync_twilio_templates_marks_missing_remote_templates_unavailable(monkeypatch) -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    keep_remote = TwilioContentTemplate(
+        content_sid="HXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        name="twilio_keep_available",
+        language="fr",
+        category="utility",
+        body="Bonjour {{first_name}}, template conservé.",
+        status="approved",
+        content_type="twilio/text",
+        variables={"first_name": "Camille"},
+        payload={"sid": "HXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    )
+    missing_remote = TwilioContentTemplate(
+        content_sid="HXbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        name="twilio_missing_later",
+        language="fr",
+        category="utility",
+        body="Bonjour {{first_name}}, template retiré.",
+        status="approved",
+        content_type="twilio/text",
+        variables={"first_name": "Camille"},
+        payload={"sid": "HXbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+    )
+    monkeypatch.setattr(
+        "sales_cockpit.store.list_twilio_templates",
+        lambda: [keep_remote, missing_remote],
+    )
+
+    ok, message = sync_twilio_templates(admin["id"])
+
+    assert ok is True
+    assert "2 créé(s)" in message
+    assert list_templates("twilio_missing_later")[0]["status"] == "approved"
+
+    monkeypatch.setattr("sales_cockpit.store.list_twilio_templates", lambda: [keep_remote])
+    ok, message = sync_twilio_templates(admin["id"])
+
+    assert ok is True
+    assert "1 indisponible(s)" in message
+    assert list_templates("twilio_keep_available")[0]["status"] == "approved"
+    missing = list_templates("twilio_missing_later")[0]
+    assert missing["status"] == "unavailable"
+    assert all(
+        item["name"] != "twilio_missing_later"
+        for item in list_templates(approved_only=True)
+    )
+
+
 def test_business_rule_seed_migrates_existing_sequence_rows() -> None:
     seed_initial_data()
     with connect() as conn:

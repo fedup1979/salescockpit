@@ -4738,6 +4738,11 @@ def sync_twilio_templates(user_id: int) -> tuple[bool, str]:
     created = 0
     updated = 0
     unchanged = 0
+    remote_content_sids = {
+        remote.content_sid
+        for remote in remote_templates
+        if remote.content_sid
+    }
     with connect() as conn:
         for remote in remote_templates:
             changed = _upsert_twilio_template(conn, remote, user_id, now)
@@ -4747,6 +4752,7 @@ def sync_twilio_templates(user_id: int) -> tuple[bool, str]:
                 updated += 1
             elif changed == "unchanged":
                 unchanged += 1
+        unavailable = _mark_missing_twilio_templates_unavailable(conn, remote_content_sids, now)
         unblocked = _auto_approve_linked_template_requests(conn, user_id, now)
         conn.execute(
             """
@@ -4761,6 +4767,7 @@ def sync_twilio_templates(user_id: int) -> tuple[bool, str]:
                         "created": created,
                         "updated": updated,
                         "unchanged": unchanged,
+                        "unavailable": unavailable,
                         "total": len(remote_templates),
                         "unblocked_template_requests": unblocked,
                         "twilio_account_sid_masked": _masked_twilio_account_sid(),
@@ -4776,7 +4783,8 @@ def sync_twilio_templates(user_id: int) -> tuple[bool, str]:
         True,
         "Synchronisation Twilio terminée : "
         f"{created} créé(s), {updated} modifié(s), "
-        f"{unchanged} inchangé(s), {unblocked} demande(s) débloquée(s)."
+        f"{unchanged} inchangé(s), {unavailable} indisponible(s), "
+        f"{unblocked} demande(s) débloquée(s)."
         f"{account_suffix}",
     )
 
@@ -5005,6 +5013,39 @@ def _twilio_payload_changed(existing_payload_json: str | None, remote_payload: d
     except (TypeError, json.JSONDecodeError):
         return True
     return existing_payload != remote_payload
+
+
+def _mark_missing_twilio_templates_unavailable(
+    conn: Any,
+    remote_content_sids: set[str],
+    now: str,
+) -> int:
+    params: list[Any] = [now, now]
+    missing_filter = ""
+    if remote_content_sids:
+        placeholders = ", ".join("?" for _ in remote_content_sids)
+        missing_filter = f"AND twilio_content_sid NOT IN ({placeholders})"
+        params.extend(sorted(remote_content_sids))
+
+    cursor = conn.execute(
+        f"""
+        UPDATE whatsapp_templates
+        SET status = 'unavailable',
+            rejection_reason = coalesce(
+                rejection_reason,
+                'Absent de la derniere synchronisation Twilio.'
+            ),
+            last_twilio_sync_at = ?,
+            updated_at = ?
+        WHERE twilio_content_sid IS NOT NULL
+          AND twilio_content_sid LIKE 'HX%'
+          AND twilio_content_sid NOT LIKE 'HX_MOCK_%'
+          AND status != 'unavailable'
+          {missing_filter}
+        """,
+        params,
+    )
+    return int(cursor.rowcount or 0)
 
 
 def _auto_approve_linked_template_requests(conn: Any, user_id: int, now: str) -> int:
