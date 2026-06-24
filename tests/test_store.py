@@ -3,7 +3,7 @@ from urllib.parse import unquote
 from uuid import uuid4
 
 from sales_cockpit.config import get_settings
-from sales_cockpit.db import connect, seed_initial_data
+from sales_cockpit.db import connect, init_db, seed_initial_data
 from sales_cockpit.services.twilio_content import TwilioContentTemplate
 from sales_cockpit.services.twilio_client import TwilioMessageError
 from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
@@ -206,6 +206,116 @@ def test_conversation_can_be_resolved_and_reopened() -> None:
         for item in list_messages(conversation_id)
         if item["direction"] == "manual_note"
     )
+
+
+def test_resolve_and_reopen_keep_sales_stage_coherent() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Conversation sans suite.")
+
+    ok, message = set_conversation_status(
+        result["conversation_id"],
+        admin["id"],
+        "resolved",
+        resolution_reason="sequence_completed_no_reply",
+        resolution_note="Fin de suivi sans réponse.",
+    )
+    assert ok is True, message
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["status"] == "resolved"
+    assert conversation["sales_stage"] == "lost"
+    assert conversation["lead_status"] == "eligible"
+
+    ok, message = set_conversation_status(
+        result["conversation_id"],
+        admin["id"],
+        "open",
+        reopen_action_type="reply",
+        reopen_assigned_to_user_id=admin["id"],
+        reopen_reason="Le prospect a réécrit.",
+    )
+    assert ok is True, message
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["status"] == "open"
+    assert conversation["sales_stage"] == "setting"
+    assert get_next_action_for_lead(result["lead_id"])["type"] == "reply"
+
+
+def test_init_db_normalizes_existing_terminal_workflow_states() -> None:
+    seed_initial_data()
+    phone = unique_phone()
+    with connect() as conn:
+        signed_id = conn.execute(
+            """
+            INSERT INTO leads (
+                schooldrive_lead_id, first_name, last_name, phone_e164,
+                source, lead_status, contact_status, sales_stage,
+                temperature, identity_status
+            ) VALUES ('lead:terminal-signed', 'Test', 'Signé', ?, 'schooldrive_webhook',
+                'signed', 'contact_allowed', 'setting', 'warm', 'verified')
+            """,
+            (phone,),
+        ).lastrowid
+        not_relevant_id = conn.execute(
+            """
+            INSERT INTO leads (
+                schooldrive_lead_id, first_name, last_name, phone_e164,
+                source, lead_status, contact_status, sales_stage,
+                temperature, identity_status
+            ) VALUES ('lead:terminal-not-relevant', 'Test', 'Non pertinent', ?, 'schooldrive_webhook',
+                'not_relevant', 'contact_allowed', 'setting', 'warm', 'verified')
+            """,
+            (unique_phone(),),
+        ).lastrowid
+        dnc_id = conn.execute(
+            """
+            INSERT INTO leads (
+                schooldrive_lead_id, first_name, last_name, phone_e164,
+                source, lead_status, contact_status, sales_stage,
+                temperature, identity_status
+            ) VALUES ('lead:terminal-dnc', 'Test', 'DNC', ?, 'schooldrive_webhook',
+                'eligible', 'do_not_contact', 'setting', 'warm', 'verified')
+            """,
+            (unique_phone(),),
+        ).lastrowid
+        lost_id = conn.execute(
+            """
+            INSERT INTO leads (
+                schooldrive_lead_id, first_name, last_name, phone_e164,
+                source, lead_status, contact_status, sales_stage,
+                temperature, identity_status
+            ) VALUES ('lead:terminal-lost', 'Test', 'Lost', ?, 'schooldrive_webhook',
+                'eligible', 'contact_allowed', 'setting', 'warm', 'verified')
+            """,
+            (unique_phone(),),
+        ).lastrowid
+        conn.execute(
+            """
+            INSERT INTO conversations (lead_id, recipient_phone_e164, status, resolution_reason)
+            VALUES (?, ?, 'resolved', 'sequence_completed_no_reply')
+            """,
+            (lost_id, unique_phone()),
+        )
+
+    init_db()
+
+    with connect() as conn:
+        rows = {
+            row["id"]: row
+            for row in conn.execute(
+                """
+                SELECT id, lead_status, contact_status, sales_stage
+                FROM leads
+                WHERE id IN (?, ?, ?, ?)
+                """,
+                (signed_id, not_relevant_id, dnc_id, lost_id),
+            ).fetchall()
+        }
+
+    assert rows[signed_id]["sales_stage"] == "won"
+    assert rows[not_relevant_id]["sales_stage"] == "not_interesting"
+    assert rows[dnc_id]["sales_stage"] == "blacklist"
+    assert rows[lost_id]["sales_stage"] == "lost"
 
 
 def test_resolution_requires_reason_and_reopen_requires_action() -> None:
@@ -827,6 +937,30 @@ def test_followup_send_closes_with_proof_and_creates_next_sequence_step() -> Non
         if item["type"] == "follow_up" and item["sequence_step_index"] == 1
     )
     assert completed_followup["proof_message_id"] is not None
+
+
+def test_followup_sequence_completion_sets_lost_sales_stage() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Bonjour.")
+    reply = get_next_action_for_lead(result["lead_id"])
+    ok, _ = send_freeform_message(result["conversation_id"], reply["assigned_to_user_id"], "Bonjour.")
+    assert ok is True
+    followup = get_next_action_for_lead(result["lead_id"])
+    assert followup["type"] == "follow_up"
+
+    ok, message = complete_action_with_workflow(
+        followup["id"],
+        admin["id"],
+        "sequence_completed_no_reply",
+        note="Fin de flux test.",
+    )
+    assert ok is True, message
+
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["status"] == "resolved"
+    assert conversation["sales_stage"] == "lost"
+    assert get_next_action_for_lead(result["lead_id"]) is None
 
 
 def test_call_completion_requires_note() -> None:
@@ -1568,6 +1702,124 @@ def test_stop_status_blocks_followups_and_resolves_conversation() -> None:
     assert "bloque" in message
 
 
+def test_status_tab_updates_terminal_statuses_and_sales_stage_together() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+
+    signed = record_inbound_message(unique_phone(), "Je vais signer.")
+    update_lead_qualification(
+        signed["lead_id"],
+        admin["id"],
+        "setting",
+        "signed",
+        contact_status="contact_allowed",
+        honor_sales_stage_terminal_mapping=False,
+    )
+    signed_conversation = get_conversation(signed["conversation_id"])
+    assert signed_conversation["status"] == "resolved"
+    assert signed_conversation["lead_status"] == "signed"
+    assert signed_conversation["sales_stage"] == "won"
+
+    not_relevant = record_inbound_message(unique_phone(), "Ce n'est pas pour moi.")
+    update_lead_qualification(
+        not_relevant["lead_id"],
+        admin["id"],
+        "setting",
+        "not_relevant",
+        contact_status="contact_allowed",
+        honor_sales_stage_terminal_mapping=False,
+    )
+    not_relevant_conversation = get_conversation(not_relevant["conversation_id"])
+    assert not_relevant_conversation["status"] == "resolved"
+    assert not_relevant_conversation["lead_status"] == "not_relevant"
+    assert not_relevant_conversation["sales_stage"] == "not_interesting"
+
+    do_not_contact = record_inbound_message(unique_phone(), "Stop.")
+    update_lead_qualification(
+        do_not_contact["lead_id"],
+        admin["id"],
+        "setting",
+        "eligible",
+        contact_status="do_not_contact",
+        honor_sales_stage_terminal_mapping=False,
+    )
+    do_not_contact_conversation = get_conversation(do_not_contact["conversation_id"])
+    assert do_not_contact_conversation["status"] == "resolved"
+    assert do_not_contact_conversation["contact_status"] == "do_not_contact"
+    assert do_not_contact_conversation["lead_status"] == "eligible"
+    assert do_not_contact_conversation["sales_stage"] == "blacklist"
+
+
+def test_status_tab_can_lift_do_not_contact_without_reapplying_blacklist() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    phone = unique_phone()
+    result = record_inbound_message(phone, "Ne me contactez plus.")
+
+    update_lead_qualification(
+        result["lead_id"],
+        admin["id"],
+        "setting",
+        "eligible",
+        contact_status="do_not_contact",
+        honor_sales_stage_terminal_mapping=False,
+    )
+    assert get_conversation(result["conversation_id"])["sales_stage"] == "blacklist"
+    assert get_next_action_for_lead(result["lead_id"]) is None
+
+    record_inbound_message(phone, "Finalement vous pouvez me répondre.")
+    review = get_next_action_for_lead(result["lead_id"])
+    assert review["type"] == "contact_review"
+
+    update_lead_qualification(
+        result["lead_id"],
+        admin["id"],
+        "blacklist",
+        "eligible",
+        contact_status="contact_allowed",
+        honor_sales_stage_terminal_mapping=False,
+    )
+
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["status"] == "open"
+    assert conversation["contact_status"] == "contact_allowed"
+    assert conversation["sales_stage"] == "setting"
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "reply"
+
+
+def test_contact_review_lift_do_not_contact_resets_blocked_stage() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    phone = unique_phone()
+    result = record_inbound_message(phone, "Ne me contactez plus.")
+    update_lead_qualification(
+        result["lead_id"],
+        admin["id"],
+        "setting",
+        "eligible",
+        contact_status="do_not_contact",
+        honor_sales_stage_terminal_mapping=False,
+    )
+
+    record_inbound_message(phone, "Vous pouvez me répondre.")
+    review = get_next_action_for_lead(result["lead_id"])
+    assert review["type"] == "contact_review"
+
+    ok, message = complete_action_with_workflow(
+        review["id"],
+        admin["id"],
+        "lift_do_not_contact",
+        note="Le prospect relance lui-même la conversation.",
+    )
+    assert ok is True, message
+
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["contact_status"] == "contact_allowed"
+    assert conversation["sales_stage"] == "setting"
+    assert get_next_action_for_lead(result["lead_id"])["type"] == "reply"
+
+
 def test_forced_closing_stage_updates_next_action() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
@@ -1604,6 +1856,7 @@ def test_will_sign_status_updates_next_action_to_setter2_followup() -> None:
     assert next_action["type"] == "follow_up"
     assert next_action["assigned_to_email"] == "setter2@essr.ch"
     assert next_action["sequence_code"] == "closer_will_sign"
+    assert get_conversation(result["conversation_id"])["sales_stage"] == "will_sign"
 
 
 def test_forced_stage_overrides_will_sign_next_action() -> None:
@@ -2070,6 +2323,7 @@ def test_schooldrive_business_signals_stop_or_route_work() -> None:
     signed_conversation = conversation_for_lead(signed_result["lead_id"])
     assert signed_conversation["status"] == "resolved"
     assert signed_conversation["lead_status"] == "signed"
+    assert signed_conversation["sales_stage"] == "won"
     assert get_next_action_for_lead(signed_result["lead_id"]) is None
 
     dnc_payload = schooldrive_signal_payload({"contact": {"email_opt_out": True}})
@@ -2077,6 +2331,7 @@ def test_schooldrive_business_signals_stop_or_route_work() -> None:
     dnc_conversation = conversation_for_lead(dnc_result["lead_id"])
     assert dnc_conversation["status"] == "resolved"
     assert dnc_conversation["contact_status"] == "do_not_contact"
+    assert dnc_conversation["sales_stage"] == "blacklist"
     assert get_next_action_for_lead(dnc_result["lead_id"]) is None
 
     course_full_payload = schooldrive_signal_payload({"course": {"category": "APP", "course_name": "APP TEST", "is_full": True}})

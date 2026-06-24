@@ -14,7 +14,7 @@ Latest recorded staging deployment check:
 - Twilio mode on staging: `mock`.
 - Workflow consistency: no active conversation without action, no resolved conversation with active action, no conflicting main actions.
 - API security readiness checks app API tokens and mock webhook tokens outside local tests.
-- Latest local hardening validation: `133 passed`, `compileall` OK. On Windows, run pytest with `--basetemp=.pytest-tmp\run` if `%TEMP%\pytest-current` cleanup raises a permission error after successful execution.
+- Latest local hardening validation: `156 passed`, `py_compile` OK for `db.py`, `store.py`, and `ui/app.py`. On Windows, run pytest with `--basetemp=.pytest-tmp\run` if `%TEMP%\pytest-current` cleanup raises a permission error after successful execution.
 - Staging and cold production are both deployed on `db6f03b`; staging pre-cutover is OK, and production cold pre-cutover is OK with Twilio still in `mock` mode.
 
 The canonical workflow model is now:
@@ -53,6 +53,7 @@ The canonical workflow model is now:
 - Seeded Tanjona user: `setter2@essr.ch`.
 - Demo WhatsApp templates for initial offer, 72h/7d/30d follow-ups, setting, will-sign, course-date, and out-of-hours.
 - Stop statuses `Non pertinent`, `Ne plus contacter`, and `A signé` complete open actions and resolve conversations.
+- Status / qualification / reactivation saves keep `Parcours`, contact status, conversation status, and next action coherent. Startup normalization repairs existing terminal inconsistencies in Sales Cockpit data.
 - UI simplification: `Température` hidden, `sales_stage` displayed as `Parcours`, private notes always included for future learning.
 - Global `Tâches` filters responsibility by individual people, defaults to the connected user's own queue, and persists a manual responsible-person choice during navigation.
 - SchoolDrive lead source types use `lead` and `presubscription`; inbox cards display `Lead` / `Préinscription` and use course category vs course short name accordingly.

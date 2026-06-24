@@ -1967,7 +1967,7 @@ def _apply_schooldrive_business_signals(
             outcome=f"Signature confirmée par SchoolDrive ({signed_source})",
         )
         conn.execute(
-            "UPDATE leads SET lead_status = 'signed', updated_at = ? WHERE id = ?",
+            "UPDATE leads SET lead_status = 'signed', sales_stage = 'won', updated_at = ? WHERE id = ?",
             (now, lead_id),
         )
         conn.execute(
@@ -1998,7 +1998,14 @@ def _apply_schooldrive_business_signals(
             outcome=f"Ne plus contacter confirmé par SchoolDrive ({dnc_source})",
         )
         conn.execute(
-            "UPDATE leads SET contact_status = 'do_not_contact', lead_status = 'eligible', updated_at = ? WHERE id = ?",
+            """
+            UPDATE leads
+            SET contact_status = 'do_not_contact',
+                lead_status = 'eligible',
+                sales_stage = 'blacklist',
+                updated_at = ?
+            WHERE id = ?
+            """,
             (now, lead_id),
         )
         conn.execute(
@@ -3134,19 +3141,35 @@ def set_conversation_status(
                 conn.execute(
                     """
                     UPDATE leads
-                    SET contact_status = 'do_not_contact', updated_at = ?
+                    SET contact_status = 'do_not_contact',
+                        lead_status = 'eligible',
+                        sales_stage = 'blacklist',
+                        updated_at = ?
                     WHERE id = ?
                     """,
                     (now, conv["lead_id"]),
                 )
             elif resolution_reason in {"not_relevant", "signed"}:
+                terminal_stage = "won" if resolution_reason == "signed" else "not_interesting"
                 conn.execute(
                     """
                     UPDATE leads
-                    SET lead_status = ?, updated_at = ?
+                    SET lead_status = ?,
+                        sales_stage = ?,
+                        updated_at = ?
                     WHERE id = ?
                     """,
-                    (resolution_reason, now, conv["lead_id"]),
+                    (resolution_reason, terminal_stage, now, conv["lead_id"]),
+                )
+            elif resolution_reason == "sequence_completed_no_reply":
+                conn.execute(
+                    """
+                    UPDATE leads
+                    SET sales_stage = 'lost',
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, conv["lead_id"]),
                 )
             _complete_open_actions_for_lead(
                 conn,
@@ -3205,10 +3228,29 @@ def set_conversation_status(
                     """
                     UPDATE leads
                     SET setter_user_id = coalesce(setter_user_id, ?),
+                        sales_stage = CASE
+                            WHEN sales_stage IN ('won', 'lost', 'not_interesting', 'blacklist')
+                            THEN 'setting'
+                            ELSE sales_stage
+                        END,
                         updated_at = ?
                     WHERE id = ?
                     """,
                     (assigned_to_user_id, now, conv["lead_id"]),
+                )
+            elif action_type == "follow_up":
+                conn.execute(
+                    """
+                    UPDATE leads
+                    SET sales_stage = CASE
+                            WHEN sales_stage IN ('won', 'lost', 'not_interesting', 'blacklist')
+                            THEN 'setting'
+                            ELSE sales_stage
+                        END,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, conv["lead_id"]),
                 )
             elif action_type == "setting_call":
                 conn.execute(
@@ -3851,12 +3893,25 @@ def _close_outbound_action_and_chain(
         if action_outcome in {"not_relevant", "do_not_contact"}:
             if action_outcome == "do_not_contact":
                 conn.execute(
-                    "UPDATE leads SET contact_status = 'do_not_contact', updated_at = ? WHERE id = ?",
+                    """
+                    UPDATE leads
+                    SET contact_status = 'do_not_contact',
+                        lead_status = 'eligible',
+                        sales_stage = 'blacklist',
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
                     (sent_at, conv["lead_id"]),
                 )
             else:
                 conn.execute(
-                    "UPDATE leads SET lead_status = 'not_relevant', updated_at = ? WHERE id = ?",
+                    """
+                    UPDATE leads
+                    SET lead_status = 'not_relevant',
+                        sales_stage = 'not_interesting',
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
                     (sent_at, conv["lead_id"]),
                 )
             _complete_open_actions_for_lead(
@@ -3933,6 +3988,15 @@ def _close_outbound_action_and_chain(
             action.get("sequence_step_index"),
         )
         if not next_step:
+            conn.execute(
+                """
+                UPDATE leads
+                SET sales_stage = 'lost',
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (sent_at, conv["lead_id"]),
+            )
             conn.execute(
                 """
                 UPDATE conversations
@@ -6224,18 +6288,12 @@ def update_lead_qualification(
     lead_status: str,
     temperature: str | None = None,
     contact_status: str | None = None,
+    honor_sales_stage_terminal_mapping: bool = True,
 ) -> None:
     now = iso_utc()
-    if sales_stage == "won":
-        lead_status = "signed"
-    elif sales_stage in {"lost", "not_interesting"}:
-        lead_status = "not_relevant"
-    elif sales_stage == "blacklist":
-        contact_status = "do_not_contact"
-        lead_status = "eligible"
-    if lead_status == "do_not_contact":
-        contact_status = "do_not_contact"
-        lead_status = "eligible"
+    requested_sales_stage = (sales_stage or "").strip()
+    lead_status = (lead_status or "").strip()
+    contact_status = (contact_status or "").strip() or None
     with connect() as conn:
         previous = row_to_dict(
             conn.execute(
@@ -6243,10 +6301,43 @@ def update_lead_qualification(
                 (lead_id,),
             ).fetchone()
         )
-        stage_changed = sales_stage != previous["sales_stage"]
-        lead_status_changed = lead_status != previous["lead_status"]
+        if not previous:
+            return
         effective_temperature = temperature or previous["temperature"]
         effective_contact_status = contact_status or previous.get("contact_status") or "contact_allowed"
+        effective_sales_stage = requested_sales_stage or previous.get("sales_stage") or "new"
+
+        if lead_status == "do_not_contact":
+            effective_contact_status = "do_not_contact"
+            lead_status = "eligible"
+
+        if honor_sales_stage_terminal_mapping:
+            if effective_sales_stage == "won":
+                lead_status = "signed"
+            elif effective_sales_stage in {"lost", "not_interesting"}:
+                lead_status = "not_relevant"
+            elif effective_sales_stage == "blacklist":
+                effective_contact_status = "do_not_contact"
+                lead_status = "eligible"
+
+        if effective_contact_status in STOP_CONTACT_STATUSES:
+            effective_sales_stage = "blacklist"
+            lead_status = "eligible"
+        elif lead_status == "signed":
+            effective_sales_stage = "won"
+        elif lead_status == "not_relevant":
+            effective_sales_stage = (
+                effective_sales_stage
+                if effective_sales_stage in {"lost", "not_interesting"}
+                else "not_interesting"
+            )
+        elif lead_status == "will_sign" and effective_sales_stage != "appointment_booked":
+            effective_sales_stage = "will_sign"
+        elif effective_sales_stage in {"won", "lost", "not_interesting", "blacklist"}:
+            effective_sales_stage = "setting"
+
+        stage_changed = effective_sales_stage != previous["sales_stage"]
+        lead_status_changed = lead_status != previous["lead_status"]
         conn.execute(
             """
             UPDATE leads
@@ -6255,7 +6346,7 @@ def update_lead_qualification(
             WHERE id = ?
             """,
             (
-                sales_stage,
+                effective_sales_stage,
                 effective_temperature,
                 lead_status,
                 effective_contact_status,
@@ -6289,8 +6380,8 @@ def update_lead_qualification(
                 """,
                 (resolution_reason, now, now, lead_id),
             )
-        elif stage_changed and sales_stage == "appointment_booked":
-            _sync_next_action_for_sales_stage(conn, lead_id, user_id, sales_stage, now)
+        elif stage_changed and effective_sales_stage == "appointment_booked":
+            _sync_next_action_for_sales_stage(conn, lead_id, user_id, effective_sales_stage, now)
         elif lead_status == "will_sign" and lead_status_changed:
             _sync_next_action_for_lead_status(conn, lead_id, user_id, lead_status, now)
         elif (
@@ -6363,7 +6454,7 @@ def update_lead_qualification(
                     "terminal_status_lifted_with_unanswered_inbound",
                 )
         elif stage_changed:
-            _sync_next_action_for_sales_stage(conn, lead_id, user_id, sales_stage, now)
+            _sync_next_action_for_sales_stage(conn, lead_id, user_id, effective_sales_stage, now)
         insert_event(
             conn,
             lead_id,
@@ -6371,7 +6462,7 @@ def update_lead_qualification(
             user_id=user_id,
             previous=previous,
             new={
-                "sales_stage": sales_stage,
+                "sales_stage": effective_sales_stage,
                 "temperature": effective_temperature,
                 "lead_status": lead_status,
                 "contact_status": effective_contact_status,
@@ -7646,13 +7737,37 @@ def complete_action_with_workflow(
         def resolve(reason: str) -> None:
             if reason == "do_not_contact":
                 conn.execute(
-                    "UPDATE leads SET contact_status = 'do_not_contact', updated_at = ? WHERE id = ?",
+                    """
+                    UPDATE leads
+                    SET contact_status = 'do_not_contact',
+                        lead_status = 'eligible',
+                        sales_stage = 'blacklist',
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
                     (now, task["lead_id"]),
                 )
             elif reason in {"not_relevant", "signed"}:
+                terminal_stage = "won" if reason == "signed" else "not_interesting"
                 conn.execute(
-                    "UPDATE leads SET lead_status = ?, updated_at = ? WHERE id = ?",
-                    (reason, now, task["lead_id"]),
+                    """
+                    UPDATE leads
+                    SET lead_status = ?,
+                        sales_stage = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (reason, terminal_stage, now, task["lead_id"]),
+                )
+            elif reason == "sequence_completed_no_reply":
+                conn.execute(
+                    """
+                    UPDATE leads
+                    SET sales_stage = 'lost',
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, task["lead_id"]),
                 )
             _complete_open_actions_for_lead(
                 conn,
@@ -7910,7 +8025,7 @@ def complete_action_with_workflow(
                 resolve("signed")
             elif outcome == "will_sign":
                 conn.execute(
-                    "UPDATE leads SET lead_status = 'will_sign', updated_at = ? WHERE id = ?",
+                    "UPDATE leads SET lead_status = 'will_sign', sales_stage = 'will_sign', updated_at = ? WHERE id = ?",
                     (now, task["lead_id"]),
                 )
                 first_step = _get_sequence_step(conn, "closer_will_sign", 1)
@@ -8041,7 +8156,12 @@ def complete_action_with_workflow(
                 conn.execute(
                     """
                     UPDATE leads
-                    SET contact_status = 'contact_allowed', updated_at = ?
+                    SET contact_status = 'contact_allowed',
+                        sales_stage = CASE
+                            WHEN sales_stage = 'blacklist' THEN 'setting'
+                            ELSE sales_stage
+                        END,
+                        updated_at = ?
                     WHERE id = ?
                     """,
                     (now, task["lead_id"]),

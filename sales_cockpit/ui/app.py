@@ -798,32 +798,37 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
     if conv["status"] == "resolved":
         with st.popover("Réactiver", use_container_width=True):
             users = list_users()
+            reopen_action_type_key = f"reopen_action_type_{conv['id']}"
+            reopen_assignee_key = f"reopen_assignee_{conv['id']}"
+            reopen_date_key = f"reopen_date_{conv['id']}"
+            reopen_time_key = f"reopen_time_{conv['id']}"
+            reopen_reason_key = f"reopen_reason_{conv['id']}"
             action_type = st.selectbox(
                 "Prochaine action",
                 ["reply", "follow_up", "setting_call", "closing_call"],
                 format_func=labelize,
-                key=f"reopen_action_type_{conv['id']}",
+                key=reopen_action_type_key,
             )
             assignee = st.selectbox(
                 "Responsable",
                 users,
                 index=safe_user_index(users, user["id"]),
                 format_func=format_user,
-                key=f"reopen_assignee_{conv['id']}",
+                key=reopen_assignee_key,
             )
             reopen_date = st.date_input(
                 "Date",
                 value=local_today(),
-                key=f"reopen_date_{conv['id']}",
+                key=reopen_date_key,
                 format=DATE_INPUT_FORMAT,
             )
             reopen_time = st.time_input(
                 "Heure",
                 value=time(9, 0),
                 step=timedelta(minutes=1),
-                key=f"reopen_time_{conv['id']}",
+                key=reopen_time_key,
             )
-            reason = st.text_area("Raison de réactivation", height=80, key=f"reopen_reason_{conv['id']}")
+            reason = st.text_area("Raison de réactivation", height=80, key=reopen_reason_key)
             submitted = st.button(
                 "Réactiver",
                 key=f"submit_reopen_{conv['id']}",
@@ -842,20 +847,24 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
             show_result(ok, message)
             if ok:
                 clear_widget_keys(
-                    f"reopen_reason_{conv['id']}",
-                    f"reopen_date_{conv['id']}",
-                    f"reopen_time_{conv['id']}",
+                    reopen_action_type_key,
+                    reopen_assignee_key,
+                    reopen_reason_key,
+                    reopen_date_key,
+                    reopen_time_key,
                 )
                 st.rerun()
     else:
         with st.popover("Clore la conversation", use_container_width=True):
+            resolve_reason_key = f"resolve_reason_header_{conv['id']}"
+            resolve_note_key = f"resolve_note_header_{conv['id']}"
             reason = st.selectbox(
                 "Motif",
                 RESOLUTION_REASON_VALUES,
                 format_func=labelize,
-                key=f"resolve_reason_header_{conv['id']}",
+                key=resolve_reason_key,
             )
-            note = st.text_area("Note", height=80, key=f"resolve_note_header_{conv['id']}")
+            note = st.text_area("Note", height=80, key=resolve_note_key)
             submitted = st.button(
                 "Clore la conversation",
                 key=f"submit_resolve_header_{conv['id']}",
@@ -871,7 +880,7 @@ def render_conversation_status_button(user: dict, conv: dict) -> None:
             )
             show_result(ok, message)
             if ok:
-                clear_widget_keys(f"resolve_note_header_{conv['id']}")
+                clear_widget_keys(resolve_reason_key, resolve_note_key)
                 st.rerun()
 
 
@@ -1437,6 +1446,8 @@ def identity_candidates(conv: dict) -> list[dict]:
 
 def render_qualification(user: dict, conv: dict) -> None:
     render_identity_review(user, conv)
+    lead_status_key = f"qualification_lead_status_{conv['lead_id']}"
+    contact_status_key = f"qualification_contact_status_{conv['lead_id']}"
     with st.form(f"qualification_{conv['lead_id']}"):
         lead_status = st.selectbox(
             "Qualification (probabilité que le client s'inscrive)",
@@ -1444,6 +1455,7 @@ def render_qualification(user: dict, conv: dict) -> None:
             index=safe_index(LEAD_STATUSES, conv["lead_status"]),
             format_func=labelize,
             help=HELP_TEXTS["lead_status"],
+            key=lead_status_key,
         )
         contact_status = st.selectbox(
             "Statut de contact (le prospect refuse-t-il qu'on lui écrive ?)",
@@ -1451,6 +1463,7 @@ def render_qualification(user: dict, conv: dict) -> None:
             index=safe_index(CONTACT_STATUS_VALUES, conv.get("contact_status")),
             format_func=labelize,
             help=HELP_TEXTS["contact_status"],
+            key=contact_status_key,
         )
         submitted = st.form_submit_button("Mettre à jour")
     if submitted:
@@ -1460,8 +1473,10 @@ def render_qualification(user: dict, conv: dict) -> None:
             conv["sales_stage"],
             lead_status,
             contact_status=contact_status,
+            honor_sales_stage_terminal_mapping=False,
         )
         st.success("Qualification mise à jour.")
+        clear_widget_keys(lead_status_key, contact_status_key)
         st.rerun()
 
 

@@ -49,7 +49,8 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 
 ## Important Recent Decisions
 
-- Latest local hardening validation: `133 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\run`, plus `compileall` OK.
+- Latest local hardening validation: `156 passed` with `.\.venv\Scripts\python.exe -m pytest`, plus `py_compile` OK for `db.py`, `store.py`, and `ui/app.py`.
+- Status / qualification / reactivation saves were hardened: terminal qualifications and contact statuses now keep `Parcours`, conversation status, and next action aligned. `init_db()` also normalizes existing impossible terminal combinations, such as signed leads not shown as `won`, `Ne plus contacter` leads not shown as `blacklist`, and sequence-completed conversations not shown as `lost`.
 - Use `--basetemp=.pytest-tmp\run` on Windows if Pytest fails after successful test execution because it cannot clean `pytest-current` in `%TEMP%`.
 - Workflow reconciliation after the latest review: a terminal qualification or `Ne plus contacter` can no longer silently coexist with ordinary commercial sends/actions; inbound on those states creates a human review; manually lifting `Ne plus contacter` closes the stale review and recreates `reply` only if the last inbound is unanswered; template requests/admin actions linked to obsolete follow-ups are cancelled.
 - The action is now explicitly validated as the central operational unit of the system.

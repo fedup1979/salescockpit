@@ -780,6 +780,7 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
         """
     )
     _backfill_sequence_step_offsets(conn)
+    _normalize_terminal_workflow_states(conn)
 
 
 def add_missing_columns(
@@ -1296,6 +1297,48 @@ def _normalize_lead_business_fields(conn: sqlite3.Connection) -> None:
                 WHEN lead_type = 'lead' THEN 'paid_ads'
                 ELSE 'unknown'
             END
+        """
+    )
+
+
+def _normalize_terminal_workflow_states(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        UPDATE leads
+        SET sales_stage = 'won'
+        WHERE lead_status = 'signed'
+          AND sales_stage != 'won'
+        """
+    )
+    conn.execute(
+        """
+        UPDATE leads
+        SET sales_stage = 'not_interesting'
+        WHERE lead_status = 'not_relevant'
+          AND sales_stage NOT IN ('lost', 'not_interesting')
+        """
+    )
+    conn.execute(
+        """
+        UPDATE leads
+        SET sales_stage = 'blacklist'
+        WHERE contact_status = 'do_not_contact'
+          AND lead_status != 'signed'
+          AND sales_stage != 'blacklist'
+        """
+    )
+    conn.execute(
+        """
+        UPDATE leads
+        SET sales_stage = 'lost'
+        WHERE sales_stage NOT IN ('won', 'not_interesting', 'blacklist', 'lost')
+          AND id IN (
+            SELECT l.id
+            FROM leads l
+            JOIN conversations c ON c.lead_id = l.id
+            WHERE c.status = 'resolved'
+              AND c.resolution_reason = 'sequence_completed_no_reply'
+          )
         """
     )
 
