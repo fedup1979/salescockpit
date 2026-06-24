@@ -182,6 +182,27 @@ h1, h2, h3 {
   font-weight: 650;
 }
 
+.st-key-lead_state_header [data-testid="stPopover"] {
+  margin: .35rem 0 .7rem 0;
+}
+
+.st-key-lead_state_header [data-testid="stPopover"] button {
+  min-height: 1.65rem;
+  padding: .18rem .5rem;
+  border: 1px solid var(--sc-border) !important;
+  border-radius: 6px;
+  background: oklch(0.99 0.004 250) !important;
+  color: var(--sc-muted) !important;
+  font-size: .78rem;
+  line-height: 1.15;
+  box-shadow: none !important;
+}
+
+.st-key-lead_state_header [data-testid="stPopover"] button:hover {
+  border-color: oklch(0.68 0.05 250) !important;
+  color: var(--sc-text) !important;
+}
+
 .sc-planned-call-notice {
   display: flex;
   justify-content: space-between;

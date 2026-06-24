@@ -909,36 +909,37 @@ def state_chip_html(label: str, value: str) -> str:
 
 
 def render_compact_lead_state(user: dict, conv: dict) -> None:
-    stage_html = state_chip_html(
-        "Parcours",
-        labelize(conv["sales_stage"]),
-    )
-    state_cols = st.columns([0.24, 0.28, 0.28, 0.2], vertical_alignment="center")
-    with state_cols[0]:
-        st.markdown(
-            f'<div class="sc-compact-state">{stage_html}</div>',
-            unsafe_allow_html=True,
+    with st.container(key="lead_state_header"):
+        stage_html = state_chip_html(
+            "Parcours",
+            labelize(conv["sales_stage"]),
         )
-    with state_cols[1]:
-        render_status_edit_popover(
-            user,
-            conv,
-            f"Qualification · {labelize(conv['lead_status'])} ▾",
-            "qualification",
-        )
-    with state_cols[2]:
-        render_status_edit_popover(
-            user,
-            conv,
-            f"Contact · {labelize(conv.get('contact_status') or 'contact_allowed')} ▾",
-            "contact",
-        )
-    with state_cols[3]:
-        if identity_needs_review(conv):
+        state_cols = st.columns([0.24, 0.28, 0.28, 0.2], vertical_alignment="center")
+        with state_cols[0]:
             st.markdown(
-                f'<div class="sc-compact-state">{state_chip_html("Identification", "À identifier")}</div>',
+                f'<div class="sc-compact-state">{stage_html}</div>',
                 unsafe_allow_html=True,
             )
+        with state_cols[1]:
+            render_status_edit_popover(
+                user,
+                conv,
+                f"Qualification · {labelize(conv['lead_status'])} ▾",
+                "qualification",
+            )
+        with state_cols[2]:
+            render_status_edit_popover(
+                user,
+                conv,
+                f"Contact · {labelize(conv.get('contact_status') or 'contact_allowed')} ▾",
+                "contact",
+            )
+        with state_cols[3]:
+            if identity_needs_review(conv):
+                st.markdown(
+                    f'<div class="sc-compact-state">{state_chip_html("Identification", "À identifier")}</div>',
+                    unsafe_allow_html=True,
+                )
 
 
 def render_status_edit_popover(user: dict, conv: dict, trigger_label: str, key_suffix: str) -> None:
