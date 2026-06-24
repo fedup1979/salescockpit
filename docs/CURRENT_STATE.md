@@ -343,13 +343,7 @@ Inbound WhatsApp matching is now conservative:
 - zero phone matches: create a temporary `Inconnu(e)` record marked `À identifier`;
 - multiple phone matches: create a temporary `Inconnu(e)` record marked `À identifier`, with candidate leads stored for review.
 
-Users can fill temporary identity fields in `Statuts`:
-
-- first name;
-- last name;
-- course category;
-- course/session;
-- identification note.
+The compact status chips show `Parcours`, `Qualification`, `Contact`, and `À identifier` when identity review is needed. `Qualification` and `Contact` are editable from the icon beside the chips; `Parcours` stays read-only.
 
 This data is operational only. SchoolDrive remains the source of truth.
 

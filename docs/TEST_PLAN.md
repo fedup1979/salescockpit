@@ -12,7 +12,7 @@ Mot de passe local : `ChangeMe!2026`.
 
 ## Validation Automatisée Courante
 
-Dernière validation locale : `174 passed`, `compileall` OK.
+Dernière validation locale : `176 passed`, `compileall` OK.
 
 La suite automatisée couvre notamment :
 

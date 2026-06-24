@@ -173,7 +173,7 @@ def test_admin_users_table_formats_setter2_role() -> None:
     assert row["Rôle"] == "Setter II"
 
 
-def test_status_tab_no_longer_exposes_parcours_selector() -> None:
+def test_statuses_are_edited_from_header_bubbles_without_status_tab() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
     result = record_inbound_message(unique_phone(), "Je veux des informations.")
@@ -187,9 +187,15 @@ def test_status_tab_no_longer_exposes_parcours_selector() -> None:
 
     assert len(app.exception) == 0
     selectbox_labels = [item.label for item in app.selectbox]
+    text_area_labels = [item.label for item in app.text_area]
     markup = "\n".join(item.value for item in app.markdown)
-    assert "Qualification (probabilité que le client s'inscrive)" in selectbox_labels
-    assert "Statut de contact (le prospect refuse-t-il qu'on lui écrive ?)" in selectbox_labels
+    tab_labels = [item.label for item in app.tabs]
+
+    assert "Statuts" not in tab_labels
+    assert "Qualification" in selectbox_labels
+    assert "Contact" in selectbox_labels
+    assert "Note facultative" in text_area_labels
+    assert "Contact" in markup
     assert all("parcours" not in label.lower() for label in selectbox_labels)
     assert "Forçage admin du parcours" not in markup
 
@@ -310,6 +316,22 @@ def test_disabled_sections_without_active_action_keep_controls_visible() -> None
     assert skip_confirm.disabled is True
     assert disabled_buttons["Enregistrer le résultat"] is True
     assert disabled_buttons["Ignorer cette étape"] is True
+
+
+def test_action_tab_hides_standard_block_label_and_adds_now_shortcut_for_calls() -> None:
+    seed_initial_data()
+    user = authenticate("service.etudiants@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je veux des informations.")
+    action = get_next_action_for_lead(result["lead_id"])
+
+    app = render_selected_action(action["id"])
+
+    assert len(app.exception) == 0
+    markup = "\n".join(item.value for item in app.markdown)
+    checkbox_keys = [item.key for item in app.checkbox]
+    assert "Bloc standard" not in markup
+    assert any("schedule_setting_call_now" in key for key in checkbox_keys)
+    assert any("schedule_closing_call_now" in key for key in checkbox_keys)
 
 
 def test_manual_reprise_documentation_has_no_duplicate_info_box() -> None:

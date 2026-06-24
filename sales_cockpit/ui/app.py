@@ -727,11 +727,11 @@ def render_conversation_detail(user: dict, conversation_id: int) -> None:
         return
 
     render_conversation_context(conv)
-    render_compact_lead_state(conv)
+    render_compact_lead_state(user, conv)
     render_next_action_summary(conv)
     render_planned_call_notice(conv)
 
-    tabs = st.tabs(["Conversation", "Actions", "Statuts", "Notes privées"])
+    tabs = st.tabs(["Conversation", "Actions", "Notes privées"])
     with tabs[0]:
         show_internal_notes = st.checkbox(
             "Afficher les notes internes",
@@ -744,8 +744,6 @@ def render_conversation_detail(user: dict, conversation_id: int) -> None:
     with tabs[1]:
         render_next_action_box(user, conv)
     with tabs[2]:
-        render_qualification(user, conv)
-    with tabs[3]:
         render_manual_note_box(user, conv)
 
 
@@ -910,15 +908,11 @@ def state_chip_html(label: str, value: str) -> str:
     )
 
 
-def render_compact_lead_state(conv: dict) -> None:
-    contact_html = ""
-    if conv.get("contact_status") == "do_not_contact":
-        contact_html = (
-            state_chip_html(
-                "Contact",
-                labelize(conv["contact_status"]),
-            )
-        )
+def render_compact_lead_state(user: dict, conv: dict) -> None:
+    contact_html = state_chip_html(
+        "Contact",
+        labelize(conv.get("contact_status") or "contact_allowed"),
+    )
     stage_html = state_chip_html(
         "Parcours",
         labelize(conv["sales_stage"]),
@@ -930,17 +924,61 @@ def render_compact_lead_state(conv: dict) -> None:
     identity_html = ""
     if identity_needs_review(conv):
         identity_html = state_chip_html("Identification", "À identifier")
-    st.markdown(
-        f"""
-        <div class="sc-compact-state">
-          {stage_html}
-          {qualification_html}
-          {identity_html}
-          {contact_html}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    state_col, edit_col = st.columns([0.92, 0.08], vertical_alignment="center")
+    with state_col:
+        st.markdown(
+            f"""
+            <div class="sc-compact-state">
+              {stage_html}
+              {qualification_html}
+              {contact_html}
+              {identity_html}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with edit_col:
+        render_status_edit_popover(user, conv)
+
+
+def render_status_edit_popover(user: dict, conv: dict) -> None:
+    with st.popover("✎", help="Modifier qualification et contact"):
+        lead_status_key = f"quick_lead_status_{conv['lead_id']}"
+        contact_status_key = f"quick_contact_status_{conv['lead_id']}"
+        note_key = f"quick_status_note_{conv['lead_id']}"
+        with st.form(f"quick_status_edit_{conv['lead_id']}"):
+            lead_status = st.selectbox(
+                "Qualification",
+                LEAD_STATUSES,
+                index=safe_index(LEAD_STATUSES, conv["lead_status"]),
+                format_func=labelize,
+                help=HELP_TEXTS["lead_status"],
+                key=lead_status_key,
+            )
+            contact_status = st.selectbox(
+                "Contact",
+                CONTACT_STATUS_VALUES,
+                index=safe_index(CONTACT_STATUS_VALUES, conv.get("contact_status")),
+                format_func=labelize,
+                help=HELP_TEXTS["contact_status"],
+                key=contact_status_key,
+            )
+            note = st.text_area("Note facultative", height=70, key=note_key)
+            submitted = st.form_submit_button("Mettre à jour")
+        if submitted:
+            update_lead_qualification(
+                conv["lead_id"],
+                user["id"],
+                conv["sales_stage"],
+                lead_status,
+                contact_status=contact_status,
+                honor_sales_stage_terminal_mapping=False,
+            )
+            if note.strip():
+                add_manual_note(conv["id"], user["id"], f"Note statuts : {note.strip()}", True)
+            st.success("Mise à jour enregistrée.")
+            clear_widget_keys(lead_status_key, contact_status_key, note_key)
+            st.rerun()
 
 
 def render_messages(conversation_id: int, show_internal_notes: bool = True) -> None:
@@ -1080,7 +1118,7 @@ def active_planned_call_for_lead(lead_id: int | None) -> dict | None:
 def render_composer(user: dict, conv: dict) -> None:
     action = next_action_context(conv)
     if conv.get("contact_status") == "do_not_contact":
-        st.error("Contact bloqué : le prospect est marqué Ne plus contacter. Le statut doit être levé dans Statuts avant tout envoi.")
+        st.error("Contact bloqué : le prospect est marqué Ne plus contacter. Modifiez la bulle Contact en haut de la fiche avant tout envoi.")
         return
     if conv.get("status") == "resolved":
         st.info("Conversation terminée : réactivez la conversation avant tout nouvel envoi.")
@@ -1329,42 +1367,6 @@ def identity_candidates(conv: dict) -> list[dict]:
     if not isinstance(parsed, list):
         return []
     return [item for item in parsed if isinstance(item, dict)]
-
-
-def render_qualification(user: dict, conv: dict) -> None:
-    render_identity_review(user, conv)
-    lead_status_key = f"qualification_lead_status_{conv['lead_id']}"
-    contact_status_key = f"qualification_contact_status_{conv['lead_id']}"
-    with st.form(f"qualification_{conv['lead_id']}"):
-        lead_status = st.selectbox(
-            "Qualification (probabilité que le client s'inscrive)",
-            LEAD_STATUSES,
-            index=safe_index(LEAD_STATUSES, conv["lead_status"]),
-            format_func=labelize,
-            help=HELP_TEXTS["lead_status"],
-            key=lead_status_key,
-        )
-        contact_status = st.selectbox(
-            "Statut de contact (le prospect refuse-t-il qu'on lui écrive ?)",
-            CONTACT_STATUS_VALUES,
-            index=safe_index(CONTACT_STATUS_VALUES, conv.get("contact_status")),
-            format_func=labelize,
-            help=HELP_TEXTS["contact_status"],
-            key=contact_status_key,
-        )
-        submitted = st.form_submit_button("Mettre à jour")
-    if submitted:
-        update_lead_qualification(
-            conv["lead_id"],
-            user["id"],
-            conv["sales_stage"],
-            lead_status,
-            contact_status=contact_status,
-            honor_sales_stage_terminal_mapping=False,
-        )
-        st.success("Qualification mise à jour.")
-        clear_widget_keys(lead_status_key, contact_status_key)
-        st.rerun()
 
 
 def render_next_action_summary(conv: dict) -> None:
@@ -2074,6 +2076,12 @@ def render_call_schedule_form(
     default_assignee = active_assignee_id
     if not any(item["id"] == default_assignee for item in assignee_options):
         default_assignee = assignee_options[0]["id"]
+    now_selected = st.checkbox(
+        "Maintenant",
+        value=False,
+        key=f"schedule_{action_type}_now_{conv['id']}",
+        disabled=disabled,
+    )
     with st.form(f"schedule_{action_type}_{conv['id']}"):
         assignee = st.selectbox(
             "Responsable",
@@ -2083,20 +2091,23 @@ def render_call_schedule_form(
             key=f"schedule_{action_type}_assignee_{conv['id']}",
             disabled=disabled,
         )
-        action_date = st.date_input(
-            "Date",
-            value=local_today(),
-            key=f"schedule_{action_type}_date_{conv['id']}",
-            format=DATE_INPUT_FORMAT,
-            disabled=disabled,
-        )
-        action_time = st.time_input(
-            "Heure",
-            value=time(9, 0),
-            step=timedelta(minutes=1),
-            key=f"schedule_{action_type}_time_{conv['id']}",
-            disabled=disabled,
-        )
+        due_at = iso_utc(utc_now())
+        if not now_selected:
+            action_date = st.date_input(
+                "Date",
+                value=local_today(),
+                key=f"schedule_{action_type}_date_{conv['id']}",
+                format=DATE_INPUT_FORMAT,
+                disabled=disabled,
+            )
+            action_time = st.time_input(
+                "Heure",
+                value=time(9, 0),
+                step=timedelta(minutes=1),
+                key=f"schedule_{action_type}_time_{conv['id']}",
+                disabled=disabled,
+            )
+            due_at = local_due_at(action_date, action_time)
         note = st.text_area(
             "Note obligatoire",
             height=80,
@@ -2110,7 +2121,7 @@ def render_call_schedule_form(
             user["id"],
             action_type,
             assignee["id"],
-            local_due_at(action_date, action_time),
+            due_at,
             note,
         )
         show_result(ok, message)
@@ -2119,6 +2130,7 @@ def render_call_schedule_form(
                 f"schedule_{action_type}_note_{conv['id']}",
                 f"schedule_{action_type}_date_{conv['id']}",
                 f"schedule_{action_type}_time_{conv['id']}",
+                f"schedule_{action_type}_now_{conv['id']}",
             )
             st.rerun()
 
@@ -2329,7 +2341,6 @@ def render_stable_action_block(
     active_assignee_id: int,
     presentation: dict,
 ) -> None:
-    st.markdown("**Bloc standard**")
     render_schedule_call_section(user, conv, users, active_assignee_id, presentation)
     st.divider()
     render_document_call_section(user, conv, presentation)
@@ -2371,7 +2382,7 @@ def render_next_action_box(user: dict, conv: dict) -> None:
         st.divider()
         render_stable_action_block(user, conv, users, active_assignee_id, presentation)
     else:
-        st.caption("Bloc standard masqué : réactivez la conversation pour créer une nouvelle action.")
+        st.caption("Réactivez la conversation pour créer une nouvelle action.")
 
     render_action_history(actions)
 
@@ -3730,7 +3741,7 @@ VALIDATION_CASE_NATURAL_LANGUAGE = {
         "Aucune fiche SchoolDrive/Cockpit ne correspond au numéro.",
     ): (
         "Lorsqu'un message WhatsApp arrive depuis un numéro que Sales Cockpit ne connaît pas, le système crée une fiche temporaire Inconnu(e) à identifier. "
-        "L'équipe peut répondre pour ne pas perdre le prospect, puis renseigner provisoirement le prénom, le nom, le cours et une note dans Statuts. "
+        "L'équipe peut répondre pour ne pas perdre le prospect, puis renseigner provisoirement le prénom, le nom, le cours et une note dans la fiche. "
         "Cette fiche reste à vérifier dans SchoolDrive."
     ),
     (

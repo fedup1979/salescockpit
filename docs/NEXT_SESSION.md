@@ -90,7 +90,7 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - The old technical `tasks` table remains, but the UI should call these `actions` or `prochaines actions`.
 - Business rules are centralized in `sales_cockpit/business_rules.py` and shown in Admin.
 - `Température` is no longer shown in the UI. Keep the DB field for compatibility, but do not reintroduce it as a visible qualification field unless François explicitly asks.
-- `sales_stage` is displayed as `Parcours` only in compact status chips. It must not appear as an editable field in `Statuts`.
+- `sales_stage` is displayed as `Parcours` only in compact status chips. It must not be editable from the UI.
 - `Parcours` is operationally dangerous because it can force the next action. In V1 it is not user-editable; if a case is missing, add a real workflow path instead of restoring manual forçage.
 - Updating qualification/contact status without changing `Parcours` must not replace the current next action. If `Parcours` is forced to `appointment_booked`, it creates a `setting_call`. If qualification changes to `will_sign` without that force, it creates a Setter II follow-up.
 - Private notes are always included in the future learning base; there is no checkbox in the UI.
@@ -144,7 +144,7 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
   - one phone match attaches automatically;
   - zero phone match creates a temporary `À identifier` record;
   - multiple phone matches create a temporary `À identifier` record with candidate leads stored for review.
-- Users can temporarily fill name, course/category, and identification note in the `Statuts` tab. This is operational data only, not a SchoolDrive replacement.
+- Qualification and contact status are edited from the icon next to the compact status chips. The note is optional.
 - V2 debt for identity resolution and merging temporary records is documented in `docs/TECHNICAL_DEBT.md`.
 - Front dry-run pagination now respects the requested `limit` before following next-page cursors. This was fixed after a supposedly tiny `limit=1` dry-run kept running too long.
 - Front historical import now has a safe pilot foundation:
@@ -187,7 +187,7 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - Mock seed creates at least one open task per active user so every responsible-person queue can be inspected.
 - Inbound unanswered prospects show a restrained hot signal in Inbox and `Tâches`, sort above ordinary due actions, and the mock seed includes `Léa Martin` as a waiting-reply example.
 - Inbox and `Tâches` auto-refresh every 10 seconds while visible.
-- The right-side detail tabs use the same order in `Tâches` and Inbox: `Conversation`, `Actions`, `Statuts`, `Notes privées`.
+- The right-side detail tabs use the same order in `Tâches` and Inbox: `Conversation`, `Actions`, `Notes privées`.
 - Inbox and `Tâches` use `Toutes` for the all-items tab.
 - Left split-screen cards use `Voir`, not `Ouvrir`.
 - The `Prochaine action` card shows only the action type, due date/time, and responsible-person badge.

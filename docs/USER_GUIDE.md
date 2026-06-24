@@ -50,7 +50,7 @@ La conversation active ou terminée est différente de la fenêtre WhatsApp ouve
 
 Quand un message WhatsApp arrive d'un numéro que le cockpit ne sait pas rattacher avec certitude, la fiche affiche **À identifier**. Cela veut dire soit qu'aucune fiche SchoolDrive connue ne correspond au numéro, soit que plusieurs fiches correspondent.
 
-Dans ce cas, l'équipe peut répondre au message, mais elle doit compléter les informations temporaires dans **Statuts** : prénom, nom, cours ou catégorie, et une note d'identification. Ces informations servent à travailler tout de suite. Elles doivent rester à vérifier dans SchoolDrive.
+Dans ce cas, l'équipe peut répondre au message, mais les informations temporaires restent à vérifier dans SchoolDrive.
 
 ## Actions, statuts et preuves
 
@@ -62,7 +62,7 @@ Quand un appel est fixé, le cockpit crée une action future à l'heure du rende
 
 Dans l'onglet **Actions**, utilisez **Programmer / attribuer une action** pour créer une prochaine action standard : répondre, relancer, planifier un appel setting ou planifier un appel closing. Le cockpit demande toujours l'action concernée, le responsable, la date et une note. Le parcours affiché en haut de la fiche est mis à jour par ces actions et ne se modifie pas manuellement.
 
-Dans l'onglet **Statuts**, vous pouvez modifier la qualification commerciale et le statut de contact. La qualification répond à la question : ce prospect a-t-il une chance de s'inscrire ? Le statut de contact répond à la question : avons-nous encore le droit de lui écrire ?
+Dans les bulles en haut de fiche, l'icône de modification permet d'ajuster la qualification commerciale et le statut de contact. La qualification répond à la question : ce prospect a-t-il une chance de s'inscrire ? Le statut de contact répond à la question : avons-nous encore le droit de lui écrire ?
 
 La qualification **Non pertinent** veut dire que le prospect n'est pas un client potentiel. Lorsque cette qualification est attribuée à un prospect, tous les flux s'arrêtent et il ne sera plus contacté.
 
