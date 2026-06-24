@@ -761,24 +761,35 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
         END
         """
     )
-    conn.execute(
-        """
-        UPDATE sequence_steps
-        SET action_type = 'setting_call',
-            requires_template = 0
-        WHERE sequence_code = 'setting_call_not_reached'
-          AND step_index IN (1, 2)
-        """
-    )
-    conn.execute(
-        """
-        UPDATE sequence_steps
-        SET action_type = 'closing_call',
-            requires_template = 0
-        WHERE sequence_code = 'closing_call_not_reached'
-          AND step_index IN (1, 2)
-        """
-    )
+    no_show_migration_row = conn.execute(
+        "SELECT value FROM app_metadata WHERE key = 'no_show_call_steps_migrated'"
+    ).fetchone()
+    if no_show_migration_row is None:
+        conn.execute(
+            """
+            UPDATE sequence_steps
+            SET action_type = 'setting_call',
+                requires_template = 0
+            WHERE sequence_code = 'setting_call_not_reached'
+              AND step_index IN (1, 2)
+            """
+        )
+        conn.execute(
+            """
+            UPDATE sequence_steps
+            SET action_type = 'closing_call',
+                requires_template = 0
+            WHERE sequence_code = 'closing_call_not_reached'
+              AND step_index IN (1, 2)
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO app_metadata (key, value, updated_at)
+            VALUES ('no_show_call_steps_migrated', '1', CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO NOTHING
+            """
+        )
     _backfill_sequence_step_offsets(conn)
     _normalize_terminal_workflow_states(conn)
 
@@ -1098,7 +1109,7 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
     current_version_row = conn.execute(
         "SELECT value FROM app_metadata WHERE key = 'business_rules_version'"
     ).fetchone()
-    apply_canonical_steps = (
+    business_rules_changed = (
         current_version_row is None
         or current_version_row["value"] != BUSINESS_RULES_VERSION
     )
@@ -1108,14 +1119,7 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
             INSERT INTO sequences (
                 code, label, timeline, trigger, owner, stop_when, active, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
-            ON CONFLICT(code) DO UPDATE SET
-                label = excluded.label,
-                timeline = excluded.timeline,
-                trigger = excluded.trigger,
-                owner = excluded.owner,
-                stop_when = excluded.stop_when,
-                active = 1,
-                updated_at = excluded.updated_at
+            ON CONFLICT(code) DO NOTHING
             """,
             (
                 sequence["code"],
@@ -1150,35 +1154,15 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
         offset_minutes = abs(delta_minutes)
         offset_amount, offset_unit = _minutes_to_sequence_offset(offset_minutes)
         delay = _format_sequence_delay(direction, offset_amount, offset_unit)
-        conflict_update = (
-            """
-                sequence_id = excluded.sequence_id,
-                delay = excluded.delay,
-                action_type = excluded.action_type,
-                offset_direction = excluded.offset_direction,
-                offset_amount = excluded.offset_amount,
-                offset_unit = excluded.offset_unit,
-                template_name = coalesce(sequence_steps.template_name, excluded.template_name),
-                requires_template = excluded.requires_template,
-                meaning = excluded.meaning,
-                active = 1,
-                updated_at = excluded.updated_at
-            """
-            if apply_canonical_steps
-            else """
-                sequence_id = excluded.sequence_id,
-                updated_at = excluded.updated_at
-            """
-        )
         conn.execute(
-            f"""
+            """
             INSERT INTO sequence_steps (
                 sequence_id, sequence_code, step_index, delay, action_type,
                 offset_direction, offset_amount, offset_unit, template_name,
                 requires_template, meaning, active, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
             ON CONFLICT(sequence_code, step_index) DO UPDATE SET
-                {conflict_update}
+                sequence_id = excluded.sequence_id
             """,
             (
                 sequence_id,
@@ -1195,7 +1179,7 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
                 current_time,
             ),
         )
-    if apply_canonical_steps:
+    if business_rules_changed:
         for target_sequence_code in ("post_setting_undecided", "post_closing_undecided"):
             conn.execute(
                 """
@@ -1213,10 +1197,17 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
                 FROM sequence_template_mappings
                 WHERE sequence_code = 'post_call_undecided'
                   AND active = 1
+                  AND EXISTS (
+                      SELECT 1
+                      FROM sequence_steps ss
+                      WHERE ss.sequence_code = ?
+                        AND ss.step_index = sequence_template_mappings.sequence_step_index
+                        AND ss.action_type = 'follow_up'
+                  )
                 ON CONFLICT(sequence_code, sequence_step_index, lead_type, course_category)
                 DO NOTHING
                 """,
-                (target_sequence_code, current_time),
+                (target_sequence_code, current_time, target_sequence_code),
             )
         conn.execute(
             """
@@ -1231,21 +1222,6 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
             UPDATE sequence_steps
             SET active = 0, updated_at = ?
             WHERE sequence_code = 'post_call_undecided'
-            """,
-            (current_time,),
-        )
-        conn.execute(
-            """
-            UPDATE sequence_template_mappings
-            SET active = 0, updated_at = ?
-            WHERE active = 1
-              AND EXISTS (
-                  SELECT 1
-                  FROM sequence_steps ss
-                  WHERE ss.sequence_code = sequence_template_mappings.sequence_code
-                    AND ss.step_index = sequence_template_mappings.sequence_step_index
-                    AND ss.action_type != 'follow_up'
-              )
             """,
             (current_time,),
         )

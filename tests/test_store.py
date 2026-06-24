@@ -1333,11 +1333,39 @@ def test_sync_twilio_templates_marks_missing_remote_templates_unavailable(monkey
     )
 
 
-def test_business_rule_seed_migrates_existing_sequence_rows() -> None:
+def test_business_rule_seed_preserves_pilotage_settings_on_version_change() -> None:
     seed_initial_data()
     with connect() as conn:
         conn.execute(
-            "UPDATE sequence_steps SET delay = '+999h', offset_amount = 999 WHERE sequence_code = 'lead_no_reply' AND step_index = 2"
+            """
+            UPDATE sequences
+            SET owner = 'Setter II personnalisé'
+            WHERE code = 'post_setting_undecided'
+            """
+        )
+        conn.execute(
+            """
+            UPDATE sequence_steps
+            SET delay = 'T+999h',
+                offset_amount = 999,
+                offset_unit = 'hours',
+                meaning = 'Réglage Laura',
+                action_type = 'other',
+                requires_template = 0,
+                active = 0
+            WHERE sequence_code = 'lead_no_reply'
+              AND step_index = 2
+            """
+        )
+        conn.execute(
+            """
+            UPDATE sequence_steps
+            SET action_type = 'follow_up',
+                requires_template = 1,
+                meaning = 'Relance post-setting personnalisée'
+            WHERE sequence_code = 'post_setting_undecided'
+              AND step_index = 1
+            """
         )
         conn.execute(
             """
@@ -1389,17 +1417,25 @@ def test_business_rule_seed_migrates_existing_sequence_rows() -> None:
 
     lead_steps = list_sequence_steps("lead_no_reply", active_only=False)
     step_2 = next(step for step in lead_steps if step["step_index"] == 2)
-    assert step_2["delay"] == "T+6j"
-    assert step_2["offset_amount"] == 6
-    assert step_2["offset_unit"] == "days"
+    assert step_2["delay"] == "T+999h"
+    assert step_2["offset_amount"] == 999
+    assert step_2["offset_unit"] == "hours"
+    assert step_2["meaning"] == "Réglage Laura"
+    assert step_2["action_type"] == "other"
+    assert step_2["active"] == 0
     old_steps = list_sequence_steps("post_call_undecided", active_only=False)
     assert old_steps
     assert all(step["active"] == 0 for step in old_steps)
     post_setting_step = list_sequence_steps("post_setting_undecided", active_only=False)[0]
     post_closing_step = list_sequence_steps("post_closing_undecided", active_only=False)[0]
-    assert post_setting_step["action_type"] == "manual_reprise_setter"
+    assert post_setting_step["action_type"] == "follow_up"
+    assert post_setting_step["meaning"] == "Relance post-setting personnalisée"
     assert post_closing_step["action_type"] == "manual_reprise_closer"
     with connect() as conn:
+        post_setting_sequence = conn.execute(
+            "SELECT owner FROM sequences WHERE code = 'post_setting_undecided'"
+        ).fetchone()
+        assert post_setting_sequence["owner"] == "Setter II personnalisé"
         old_mapping_count = conn.execute(
             "SELECT COUNT(*) AS count FROM sequence_template_mappings WHERE sequence_code = 'post_call_undecided' AND active = 1"
         ).fetchone()["count"]
@@ -1414,7 +1450,7 @@ def test_business_rule_seed_migrates_existing_sequence_rows() -> None:
             """
         ).fetchone()["count"]
     assert old_mapping_count == 0
-    assert migrated_mapping_count == 0
+    assert migrated_mapping_count == 1
 
 
 def test_sync_twilio_templates_auto_unblocks_linked_template_request(monkeypatch) -> None:
