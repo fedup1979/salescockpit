@@ -47,6 +47,7 @@ from sales_cockpit.store import (
     send_freeform_message,
     send_template_message,
     set_conversation_status,
+    skip_sequence_step_action,
     sync_twilio_templates,
     upsert_course_default_session,
     update_lead_qualification,
@@ -1394,6 +1395,10 @@ def test_business_rule_seed_migrates_existing_sequence_rows() -> None:
     old_steps = list_sequence_steps("post_call_undecided", active_only=False)
     assert old_steps
     assert all(step["active"] == 0 for step in old_steps)
+    post_setting_step = list_sequence_steps("post_setting_undecided", active_only=False)[0]
+    post_closing_step = list_sequence_steps("post_closing_undecided", active_only=False)[0]
+    assert post_setting_step["action_type"] == "manual_reprise_setter"
+    assert post_closing_step["action_type"] == "manual_reprise_closer"
     with connect() as conn:
         old_mapping_count = conn.execute(
             "SELECT COUNT(*) AS count FROM sequence_template_mappings WHERE sequence_code = 'post_call_undecided' AND active = 1"
@@ -1409,7 +1414,7 @@ def test_business_rule_seed_migrates_existing_sequence_rows() -> None:
             """
         ).fetchone()["count"]
     assert old_mapping_count == 0
-    assert migrated_mapping_count == 2
+    assert migrated_mapping_count == 0
 
 
 def test_sync_twilio_templates_auto_unblocks_linked_template_request(monkeypatch) -> None:
@@ -1962,6 +1967,34 @@ def test_forced_appointment_stage_wins_when_will_sign_changes_same_update() -> N
     assert next_action["sequence_code"] is None
 
 
+def test_will_sign_reply_without_appointment_keeps_will_sign_flow() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    phone = unique_phone()
+    result = record_inbound_message(phone, "Je pense signer.")
+
+    update_lead_qualification(
+        result["lead_id"],
+        admin["id"],
+        "closing",
+        "will_sign",
+        contact_status="contact_allowed",
+    )
+    assert get_next_action_for_lead(result["lead_id"])["sequence_code"] == "closer_will_sign"
+
+    record_inbound_message(phone, "J'ai une question avant de signer.")
+    reply = get_next_action_for_lead(result["lead_id"])
+    assert reply["type"] == "reply"
+
+    ok, message = send_freeform_message(result["conversation_id"], reply["assigned_to_user_id"], "Je vous réponds.")
+
+    assert ok is True, message
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "follow_up"
+    assert next_action["sequence_code"] == "closer_will_sign"
+    assert get_conversation(result["conversation_id"])["lead_status"] == "will_sign"
+
+
 def test_do_not_contact_blocks_freeform_and_template_send() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
@@ -2260,9 +2293,9 @@ def test_call_completion_note_is_visible_in_conversation() -> None:
         note="Client joint, pas prÃªt Ã  dÃ©cider.",
     )
     assert ok is True
-    followup = get_next_action_for_lead(result["lead_id"])
-    assert followup["type"] == "follow_up"
-    assert followup["sequence_code"] == "post_setting_undecided"
+    reprise = get_next_action_for_lead(result["lead_id"])
+    assert reprise["type"] == "manual_reprise_setter"
+    assert reprise["sequence_code"] == "post_setting_undecided"
 
     notes = [
         item["body"]
@@ -2316,7 +2349,7 @@ def test_call_can_be_rescheduled_then_cancelled_into_indecis_flow() -> None:
     ok, _ = cancel_call_action_without_replacement(call["id"], admin["id"], "Prospect annule sans nouveau creneau.")
     assert ok is True
     followup = get_next_action_for_lead(result["lead_id"])
-    assert followup["type"] == "follow_up"
+    assert followup["type"] == "manual_reprise_setter"
     assert followup["sequence_code"] == "post_setting_undecided"
     notes = [item["body"] for item in list_messages(result["conversation_id"]) if item["direction"] == "manual_note"]
     assert any("RDV annul" in body for body in notes)
@@ -2347,7 +2380,7 @@ def test_closing_undecided_uses_dedicated_flow_and_do_not_contact_resolves() -> 
     )
     assert ok is True
     followup = get_next_action_for_lead(result["lead_id"])
-    assert followup["type"] == "follow_up"
+    assert followup["type"] == "manual_reprise_closer"
     assert followup["sequence_code"] == "post_closing_undecided"
 
     result = record_inbound_message(unique_phone(), "Ne me contactez plus.")
@@ -2372,6 +2405,92 @@ def test_closing_undecided_uses_dedicated_flow_and_do_not_contact_resolves() -> 
     conversation = get_conversation(result["conversation_id"])
     assert conversation["status"] == "resolved"
     assert conversation["contact_status"] == "do_not_contact"
+
+
+def test_manual_reprise_step_requires_note_and_continues_sequence() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    closer = next(user for user in list_users() if user["role"] == "closer")
+    ok, message = add_sequence_step(
+        admin["id"],
+        "post_closing_undecided",
+        "Relance après reprise closer.",
+        action_type="follow_up",
+        offset_amount=96,
+        offset_unit="hours",
+    )
+    assert ok is True, message
+    result = record_inbound_message(unique_phone(), "Je veux parler au closer.")
+    reply = get_next_action_for_lead(result["lead_id"])
+    ok, _ = complete_action_with_workflow(
+        reply["id"],
+        admin["id"],
+        "closing_booked",
+        note="RDV closing fixe.",
+        next_due_at=iso_utc(utc_now()),
+        assigned_to_user_id=closer["id"],
+    )
+    assert ok is True
+    closing_call = get_next_action_for_lead(result["lead_id"])
+    ok, _ = complete_action_with_workflow(
+        closing_call["id"],
+        admin["id"],
+        "undecided",
+        note="Prospect joint mais sans décision claire.",
+    )
+    assert ok is True
+    reprise = get_next_action_for_lead(result["lead_id"])
+    assert reprise["type"] == "manual_reprise_closer"
+    assert reprise["assigned_to_role"] == "closer"
+
+    ok, message = complete_action_with_workflow(reprise["id"], admin["id"], "done")
+    assert ok is False
+    assert "note" in message.lower()
+
+    ok, message = complete_action_with_workflow(
+        reprise["id"],
+        admin["id"],
+        "done",
+        note="Conversation revue, relance standard ensuite.",
+    )
+
+    assert ok is True, message
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "follow_up"
+    assert next_action["sequence_code"] == "post_closing_undecided"
+    assert next_action["sequence_step_index"] == 2
+
+
+def test_skip_sequence_step_requires_note_and_continues_flow() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Bonjour.")
+    reply = get_next_action_for_lead(result["lead_id"])
+    ok, message = send_freeform_message(result["conversation_id"], admin["id"], "Je reviens vers vous.")
+    assert ok is True, message
+    followup = get_next_action_for_lead(result["lead_id"])
+    assert followup["type"] == "follow_up"
+    assert followup["sequence_code"] == "setter_no_next_step"
+    assert followup["sequence_step_index"] == 1
+
+    ok, message = skip_sequence_step_action(followup["id"], admin["id"], "")
+    assert ok is False
+    assert "note" in message.lower()
+
+    ok, message = skip_sequence_step_action(
+        followup["id"],
+        admin["id"],
+        "Relance ignorée volontairement pour éviter une redite.",
+    )
+
+    assert ok is True, message
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "follow_up"
+    assert next_action["sequence_code"] == "setter_no_next_step"
+    assert next_action["sequence_step_index"] == 2
+    actions = list_actions_for_lead(result["lead_id"], "all")
+    skipped = next(item for item in actions if item["id"] == followup["id"])
+    assert skipped["outcome"] == "sequence_step_skipped"
 
 
 def test_schooldrive_business_signals_stop_or_route_work() -> None:

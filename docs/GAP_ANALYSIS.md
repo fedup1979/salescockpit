@@ -162,16 +162,21 @@ Current mitigation:
 - only approved real Twilio templates can be assigned operationally;
 - Laura validation remains required.
 
-### Will-Sign And Personalized Follow-Up Semantics
+### Will-Sign And Manual Reprise Semantics
 
-Open design point from the Laura workflow review:
+Implemented V1 decisions from the Laura workflow review:
 
-- after a closer marks a prospect as `will_sign`, the prospect should not silently downgrade to an earlier generic flux such as `setter_no_next_step`;
+- after a closer marks a prospect as `will_sign`, simple reply completion must keep the follow-up context in `closer_will_sign`, not silently downgrade to `setter_no_next_step`;
 - `course_start` remains higher priority than `closer_will_sign`, with the 24h spacing rule, but a planned setting/closing call still stays primary;
+- `post_setting_undecided` creates `manual_reprise_setter`, assigned to Setter I;
+- `post_closing_undecided` creates `manual_reprise_closer`, assigned to the closer;
+- manual reprise actions require a note and then continue the flux if another active step exists;
+- sequence steps can be skipped with a mandatory note; skip means "do not do this step and continue to the next active step".
+
+Remaining debt:
+
 - before sending a course-start message, Sales Cockpit should rely on a fresh SchoolDrive course-full signal, or later add a pre-send SchoolDrive check;
-- `other` / human review should not be used as a workaround for personalized WhatsApp follow-ups, because it does not represent an outbound-message proof;
-- likely V1/V2 candidate: add a dedicated personalized follow-up action or owner-per-step model so Setter I or Closer can review the conversation and send a tailored message;
-- follow-up actions need an explicit "do not do this action" path with mandatory note and a deliberate next step: skip to next flux step, stop the flux, program another action, or close the conversation.
+- richer owner-per-step tuning is still a V2 candidate if Laura needs per-step assignee control beyond the two explicit manual reprise action types.
 
 ## Recommendation
 

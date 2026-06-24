@@ -236,7 +236,9 @@ Les rappels sont comptés par rendez-vous, pas globalement par prospect. Si le p
 
 ### Règle 16 : appel de setting sans suite claire
 
-Lorsque Setter I joint le prospect mais qu'aucun rendez-vous de closing n'est fixé et que le prospect n'est pas disqualifié, alors le cockpit crée une relance Setter II dans le flux `post_setting_undecided`.
+Lorsque Setter I joint le prospect mais qu'aucun rendez-vous de closing n'est fixé et que le prospect n'est pas disqualifié, alors le cockpit crée une reprise manuelle Setter I dans le flux `post_setting_undecided`.
+
+Setter I doit relire la conversation, décider si une réponse personnalisée, un nouvel appel ou une autre suite est pertinente, puis terminer l'action avec une note obligatoire. Si le flux contient une étape suivante, le cockpit la crée ensuite.
 
 ### Règle 17 : appel de setting terminal
 
@@ -258,7 +260,9 @@ Comme pour le setting, le compteur de rappels closing est scoped par rendez-vous
 
 ### Règle 21 : closing indécis
 
-Lorsque le closer joint le prospect mais qu'aucune décision claire n'est prise, alors le cockpit crée une relance Setter II dans le flux `post_closing_undecided`.
+Lorsque le closer joint le prospect mais qu'aucune décision claire n'est prise, alors le cockpit crée une reprise manuelle closer dans le flux `post_closing_undecided`.
+
+Le closer doit relire la conversation et les éléments envoyés, décider si une reprise personnalisée peut réchauffer le prospect, puis terminer l'action avec une note obligatoire. Si le flux contient une étape suivante, le cockpit la crée ensuite.
 
 ### Règle 22 : closing non pertinent
 
@@ -275,6 +279,8 @@ Si la session de référence d'une catégorie est dépassée, le cockpit crée u
 ### Règle 23 bis : cours complet dans SchoolDrive
 
 Lorsque SchoolDrive indique que le cours ou la session est complet, Sales Cockpit annule les relances commerciales ouvertes et rend le cas très visible. Si aucun appel n'est planifié, Setter I reçoit une action pour proposer une autre session. Si un appel setting ou closing est déjà planifié, cet appel reste l'action principale et reçoit une note visible indiquant que la session est complète.
+
+Limite V1 : Sales Cockpit dépend du dernier webhook SchoolDrive reçu. Il ne vérifie pas encore en live la capacité du cours juste avant l'envoi d'une relance Début de cours.
 
 ### Règle 23 ter : signaux terminaux SchoolDrive
 

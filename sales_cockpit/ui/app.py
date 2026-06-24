@@ -80,6 +80,7 @@ from sales_cockpit.store import (
     send_freeform_message,
     send_template_message,
     set_conversation_status,
+    skip_sequence_step_action,
     sync_twilio_templates,
     upsert_course_category,
     upsert_course_default_session,
@@ -117,6 +118,8 @@ ACTION_OUTCOMES = {
         "requalify_and_reply",
     ],
     "other": ["done"],
+    "manual_reprise_setter": ["done"],
+    "manual_reprise_closer": ["done"],
 }
 REPLY_SEND_OUTCOMES = ["reply_no_appointment", "setting_booked", "closing_booked", "not_relevant", "do_not_contact"]
 REPLY_SEND_OUTCOME_LABELS = {
@@ -128,11 +131,20 @@ REPLY_SEND_OUTCOME_LABELS = {
 }
 CALL_ACTION_TYPES = {"setting_call", "closing_call"}
 PILOTAGE_SUPPORTED_CATEGORIES = ["FSM", "APP", "AS"]
-SEQUENCE_STEP_ACTION_TYPES = ["follow_up", "setting_call", "closing_call", "other"]
+SEQUENCE_STEP_ACTION_TYPES = [
+    "follow_up",
+    "setting_call",
+    "closing_call",
+    "manual_reprise_setter",
+    "manual_reprise_closer",
+    "other",
+]
 SEQUENCE_STEP_ACTION_LABELS = {
     "follow_up": "Relance WhatsApp",
     "setting_call": "Appeler et documenter appel setting",
     "closing_call": "Appeler et documenter appel closing",
+    "manual_reprise_setter": "Reprise manuelle setter",
+    "manual_reprise_closer": "Reprise manuelle closer",
     "other": "Revue humaine",
 }
 SEQUENCE_STEP_OFFSET_UNITS = ["hours", "days"]
@@ -158,9 +170,9 @@ PILOTAGE_SEQUENCE_ORDER = {
 PILOTAGE_SEQUENCE_OWNER_LABELS = {
     "lead_no_reply": "Setter II",
     "setter_no_next_step": "Setter II",
-    "post_setting_undecided": "Setter II",
+    "post_setting_undecided": "Setter I",
     "setting_call_not_reached": "Setter I, puis Setter II",
-    "post_closing_undecided": "Setter II",
+    "post_closing_undecided": "Closer",
     "closing_call_not_reached": "Closer, puis Setter II",
     "closer_will_sign": "Setter II",
     "course_start": "Setter II",
@@ -345,6 +357,8 @@ DISPLAY_LABELS = {
     "not_ready": "Indécis après setting",
     "undecided": "Indécis",
     "contact_review": "Revue contact",
+    "manual_reprise_setter": "Reprise manuelle setter",
+    "manual_reprise_closer": "Reprise manuelle closer",
     "other": "Autre",
     "assignee_name": "Responsable",
     "lead_name": "Prospect",
@@ -399,6 +413,7 @@ DISPLAY_LABELS = {
     "maintain_do_not_contact": "Maintenir Ne plus contacter",
     "lift_do_not_contact": "Lever Ne plus contacter",
     "done": "Terminé",
+    "sequence_step_skipped": "Étape ignorée",
     "to_create": "À créer",
     "submitted": "Soumis",
     "rejected": "Rejeté",
@@ -1568,6 +1583,41 @@ def render_blocked_action(user: dict, conv: dict, action: dict) -> None:
     st.info("La demande de nouveau modèle se fait dans l'onglet Conversation, sous Envoyer un modèle.")
 
 
+def render_skip_sequence_step_control(user: dict, action: dict) -> None:
+    if action.get("type") not in {"follow_up", "manual_reprise_setter", "manual_reprise_closer", "other"}:
+        return
+    if not action.get("sequence_code") or not action.get("sequence_step_index"):
+        return
+    with st.expander("Ne pas faire cette étape", expanded=False):
+        st.caption("Ignore cette étape uniquement. Le flux continue à l'étape suivante s'il en existe une.")
+        with st.form(f"skip_sequence_step_form_{action['id']}"):
+            note = st.text_area(
+                "Mini note obligatoire",
+                height=80,
+                key=f"skip_sequence_step_note_{action['id']}",
+            )
+            confirm = st.checkbox(
+                "Je confirme que cette étape ne doit pas être faite.",
+                key=f"skip_sequence_step_confirm_{action['id']}",
+            )
+            submitted = st.form_submit_button("Ignorer cette étape")
+        if submitted:
+            if not confirm:
+                st.error("Confirme l'abandon de cette étape.")
+                return
+            if not note.strip():
+                st.error("Ajoute une mini note pour expliquer pourquoi cette étape est ignorée.")
+                return
+            ok, message = skip_sequence_step_action(action["id"], user["id"], note.strip())
+            show_result(ok, message)
+            if ok:
+                clear_widget_keys(
+                    f"skip_sequence_step_note_{action['id']}",
+                    f"skip_sequence_step_confirm_{action['id']}",
+                )
+                st.rerun()
+
+
 def render_whatsapp_action_guidance(user: dict, conv: dict, action: dict) -> None:
     if action["type"] == "reply":
         st.info("Le client attend une réponse. Cette action sera clôturée quand le message sera envoyé dans l'onglet Conversation.")
@@ -1578,12 +1628,14 @@ def render_whatsapp_action_guidance(user: dict, conv: dict, action: dict) -> Non
     if action["type"] == "follow_up":
         if action.get("status") == "blocked":
             render_blocked_action(user, conv, action)
+            render_skip_sequence_step_control(user, action)
             return
         if conv["window_is_open"]:
             st.info("Relance à envoyer. La fenêtre WhatsApp est ouverte : message libre ou modèle approuvé possible.")
         else:
             st.warning("Relance à envoyer. Fenêtre WhatsApp fermée : modèle approuvé obligatoire.")
         st.caption("L'action sera clôturée uniquement quand le message ou le modèle aura été envoyé dans l'onglet Conversation.")
+        render_skip_sequence_step_control(user, action)
 
 
 def render_call_action_form(user: dict, action: dict) -> None:
@@ -1805,6 +1857,32 @@ def render_other_action_form(user: dict, action: dict) -> None:
         if ok:
             clear_widget_keys(f"other_action_note_{action['id']}")
             st.rerun()
+    render_skip_sequence_step_control(user, action)
+
+
+def render_manual_reprise_action_form(user: dict, action: dict) -> None:
+    if action["type"] == "manual_reprise_setter":
+        st.info("Reprise manuelle setter : relisez la conversation, décidez si un message, un appel ou une autre suite est utile, puis terminez l'action avec une note.")
+    else:
+        st.info("Reprise manuelle closer : relisez la conversation et les éléments envoyés, décidez si une reprise personnalisée est utile, puis terminez l'action avec une note.")
+    with st.form(f"manual_reprise_action_form_{action['id']}"):
+        note = st.text_area("Note obligatoire", height=100, key=f"manual_reprise_note_{action['id']}")
+        submitted = st.form_submit_button("Marquer la reprise terminée")
+    if submitted:
+        if not note.strip():
+            st.error("Ajoute une note pour terminer cette reprise.")
+            return
+        ok, message = complete_action_with_workflow(
+            action["id"],
+            user["id"],
+            "done",
+            note=note,
+        )
+        show_result(ok, message)
+        if ok:
+            clear_widget_keys(f"manual_reprise_note_{action['id']}")
+            st.rerun()
+    render_skip_sequence_step_control(user, action)
 
 
 def render_standard_action_planner(user: dict, conv: dict, users: list[dict], active_assignee_id: int) -> None:
@@ -1897,6 +1975,8 @@ def render_next_action_box(user: dict, conv: dict) -> None:
             render_call_action_form(user, action)
         elif action["type"] == "contact_review":
             render_contact_review_action(user, action)
+        elif action["type"] in {"manual_reprise_setter", "manual_reprise_closer"}:
+            render_manual_reprise_action_form(user, action)
         else:
             render_other_action_form(user, action)
     elif conv["status"] == "open":

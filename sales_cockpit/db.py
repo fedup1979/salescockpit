@@ -13,7 +13,7 @@ from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
 
 
 DEMO_SEED_VERSION = "2026-06-23-demo-admin-template-action"
-BUSINESS_RULES_VERSION = "2026-06-22-workflow-v1-hardening-2"
+BUSINESS_RULES_VERSION = "2026-06-24-manual-reprise-and-skip"
 
 
 SCHEMA = """
@@ -1236,6 +1236,21 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
         )
         conn.execute(
             """
+            UPDATE sequence_template_mappings
+            SET active = 0, updated_at = ?
+            WHERE active = 1
+              AND EXISTS (
+                  SELECT 1
+                  FROM sequence_steps ss
+                  WHERE ss.sequence_code = sequence_template_mappings.sequence_code
+                    AND ss.step_index = sequence_template_mappings.sequence_step_index
+                    AND ss.action_type != 'follow_up'
+              )
+            """,
+            (current_time,),
+        )
+        conn.execute(
+            """
             INSERT INTO app_metadata (key, value, updated_at)
             VALUES ('business_rules_version', ?, ?)
             ON CONFLICT(key) DO UPDATE SET
@@ -1263,6 +1278,8 @@ def _seed_business_rule_tables(conn: sqlite3.Connection, now) -> None:
 
 
 def _sequence_step_action_type(step: dict) -> str:
+    if step.get("action_type"):
+        return step["action_type"]
     if step["sequence_code"] == "setting_call_not_reached" and step["step_index"] in {1, 2}:
         return "setting_call"
     if step["sequence_code"] == "closing_call_not_reached" and step["step_index"] in {1, 2}:

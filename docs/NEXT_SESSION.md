@@ -105,6 +105,10 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - For lead-relative fluxes, `T` is the event that opened the flux, for example first SchoolDrive WhatsApp sent, reply sent with no appointment, call ended undecided, or closing marked will sign.
 - For course-start flows, `T` is the course start date, so steps are usually before the trigger.
 - Relance WhatsApp steps are `action_type='follow_up'` and must have a recommended approved real Twilio template for each operational category.
+- Manual reprise steps are explicit action types: `manual_reprise_setter` for Setter I and `manual_reprise_closer` for the closer. They require a note and continue the flux if a next active step exists.
+- `post_setting_undecided` is now a Setter I manual reprise by default. `post_closing_undecided` is now a closer manual reprise by default.
+- If a prospect is `will_sign`, a simple reply without appointment must keep the follow-up context in `closer_will_sign`; it must not fall back to `setter_no_next_step`.
+- A sequence step can be skipped with mandatory note. Skipping means only "do not do this step"; the system advances to the next active step or resolves the sequence if none exists.
 - Pilotage lets admins assign approved real Twilio templates by flow, step, lead type and course category.
 - Pilotage > Règles de conflit includes a full business validation matrix from `PILOTAGE_VALIDATION_CASES` in `sales_cockpit/business_rules.py`: starting state, event, system response, user action, action resolution, and next action. Keep this matrix aligned with `WORKFLOW_TRANSITIONS` whenever workflow logic changes.
 - Template mappings must only use real Twilio templates approved by WhatsApp. Draft, pending, rejected, local demo, and `HX_MOCK_*` templates are deliberately ignored/rejected for operational recommendations.
@@ -126,6 +130,7 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - Outbound WhatsApp sends now create a pending local message before calling Twilio; if Twilio fails, the message remains in the thread with `twilio_status='send_error'`.
 - Follow-up quotas apply to relances, not to urgent human replies. The global kill switch and `do_not_contact` still block all sends.
 - SchoolDrive signals now handled: signed, do-not-contact/opt-outs, course/session full, stale default session date.
+- Course/session-full handling depends on the latest SchoolDrive webhook. There is not yet a live pre-send capacity check before course-start follow-ups; this is tracked in `docs/TECHNICAL_DEBT.md`.
 - `scripts/pre_cutover_check.py --strict-prod` is the mandatory final gate before routing real production WhatsApp traffic to Sales Cockpit.
 - Only admins can create, synchronize, or submit WhatsApp templates to Twilio.
 - Non-admin users can search templates and create template requests only.

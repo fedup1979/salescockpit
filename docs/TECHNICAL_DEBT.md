@@ -116,6 +116,17 @@ Add a global scheduling/recalculation workflow:
 
 Also add a periodic check for default sessions that have passed, even if no new SchoolDrive event arrives that day. V1 creates an admin action when such a stale default session is encountered during ingestion; V2 should find it proactively.
 
+### Course Capacity Freshness
+
+V1 reacts to the latest SchoolDrive webhook fields for course/session capacity (`course_full`, `session_full`, `is_full`, `available_seats`, or equivalent normalized signals). If SchoolDrive marks a course full, Sales Cockpit stops open follow-ups and routes the case to Setter I, or annotates the planned call if one exists.
+
+Known debt: before sending a course-start follow-up, Sales Cockpit does not yet perform a live SchoolDrive capacity check. It assumes the latest webhook is current. Before automating course-start sends, add one of these safeguards:
+
+- SchoolDrive emits a webhook every time course/session capacity changes;
+- or Sales Cockpit performs a pre-send SchoolDrive capacity lookup immediately before the message is sent.
+
+Without this, a course could become full after a follow-up was scheduled but before Setter II sends it.
+
 ## Admin Work Queues
 
 ### V1 Implemented Guardrail

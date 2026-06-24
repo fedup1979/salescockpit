@@ -47,6 +47,8 @@ Actions principales V1 :
 | `follow_up` | Relancer | Relancer le prospect, souvent via template WhatsApp | Setter II, puis IA |
 | `setting_call` | Appel de setting | Appeler pour qualifier et obtenir la suite commerciale | Setter I |
 | `closing_call` | Appel de closing | Appeler pour vendre, finaliser ou trancher | Closer |
+| `manual_reprise_setter` | Reprise manuelle setter | Relire une conversation indécise et décider d'une reprise personnalisée | Setter I |
+| `manual_reprise_closer` | Reprise manuelle closer | Relire un closing indécis et décider d'une reprise personnalisée | Closer |
 
 `setting_call` et `closing_call` représentent l'action à documenter au moment de l'appel : résultat d'appel, note obligatoire et suite métier. L'appel planifié doit rester visible dans la conversation avant son échéance.
 
@@ -77,6 +79,8 @@ Exemples :
 | `follow_up` | Template ou message de relance envoyé |
 | `setting_call` | Résultat d'appel + mini note + qualification setter |
 | `closing_call` | Résultat d'appel + mini note + qualification closer |
+| `manual_reprise_setter` | Note obligatoire décrivant la reprise et la décision |
+| `manual_reprise_closer` | Note obligatoire décrivant la reprise et la décision |
 | Qualification support | Changement de qualification historisé |
 | Note support | Message `manual_note` ou note privée enregistrée |
 | Template support | Template créé, soumis, approuvé ou refusé |
@@ -140,7 +144,7 @@ Les champs actuels de `tasks` couvrent une partie du besoin. Le modèle cible de
 
 | Champ | Rôle |
 |---|---|
-| `type` | Action principale : `reply`, `follow_up`, `setting_call`, `closing_call` |
+| `type` | Action principale : `reply`, `follow_up`, `setting_call`, `closing_call`, `manual_reprise_setter`, `manual_reprise_closer` |
 | `status` | Cycle de vie : `planned`, `open`, `in_progress`, `done`, `cancelled`, `blocked` |
 | `assigned_to_user_id` | Responsable actuel |
 | `due_at` | Quand l'action doit être effectuée |
@@ -162,6 +166,7 @@ Les champs actuels de `tasks` couvrent une partie du besoin. Le modèle cible de
 - Si un appel setting ou closing est déjà planifié, le message entrant ne l'annule pas. Le système crée une interruption `reply`; après réponse simple, l'appel planifié redevient la prochaine action.
 - Un message sortant envoyé en réponse clôt le `reply` actif.
 - Une relance envoyée clôt le `follow_up` actif.
+- Une étape de flux peut être ignorée volontairement avec note obligatoire ; le flux continue alors à l'étape suivante si elle existe.
 - Un appel terminé clôt le `setting_call` ou `closing_call` actif.
 - Un statut stop (`not_relevant`, `do_not_contact`, `signed`) clôt les actions ouvertes et termine la conversation.
 - `do_not_contact` est strict : aucune relance ne doit être créée ensuite.
@@ -193,7 +198,7 @@ Cette table décrit le chaînage cible. Elle doit rester lisible par l'équipe m
 | RDV setting arrive | `setting_call_due` | Appel à documenter | `setting_call` | Selon résultat appel | Setter I | Maintenant | Ouverte | Résultat + mini note | Option `in_progress` si pris en main |
 | Appel setting terminé | `setting_call_completed` | À closer | `setting_call` | `closing_call` | Closer | Date RDV ou maintenant | Ouverte | Mini note + qualification setter | Lead passe en `closing` |
 | Appel setting terminé | `setting_call_completed` | Pas de réponse | `setting_call` | `follow_up` | Setter II | +2h puis +24h puis flux no-show setting | Ouverte | Mini note | Flux `setting_call_not_reached` |
-| Appel setting terminé | `setting_call_completed` | Joint mais indécis | `setting_call` | `follow_up` | Setter II | +72h | Ouverte | Mini note + qualification setter | Flux `post_setting_undecided` |
+| Appel setting terminé | `setting_call_completed` | Joint mais indécis | `setting_call` | `manual_reprise_setter` | Setter I | +72h | Ouverte | Mini note + qualification setter | Flux `post_setting_undecided` |
 | Appel setting terminé | `setting_call_completed` | Non pertinent | `setting_call` | Aucune | Personne | Aucun | Résolue | Mini note + qualification `not_relevant` | Stopper relances |
 | Appel setting terminé | `setting_call_completed` | Ne plus contacter | `setting_call` | Aucune | Personne | Aucun | Résolue | Mini note + qualification `do_not_contact` | Stop strict |
 | RDV closing arrive | `closing_call_due` | Appel à documenter | `closing_call` | Selon résultat appel | Closer | Maintenant | Ouverte | Résultat + mini note | Option `in_progress` si pris en main |
@@ -201,7 +206,7 @@ Cette table décrit le chaînage cible. Elle doit rester lisible par l'équipe m
 | Appel closing terminé | `closing_call_completed` | Va signer | `closing_call` | `follow_up` | Setter II | +72h | Ouverte | Mini note + qualification closer `will_sign` | Flux closer will sign |
 | Appel closing terminé | `closing_call_completed` | Non pertinent | `closing_call` | Aucune | Personne | Aucun | Résolue | Mini note + qualification closer `not_relevant` | Stopper relances |
 | Appel closing terminé | `closing_call_completed` | Pas de réponse | `closing_call` | `follow_up` | Setter II | +2h puis +24h puis flux no-show closing | Ouverte | Mini note | Flux `closing_call_not_reached` |
-| Appel closing terminé | `closing_call_completed` | Joint mais indécis | `closing_call` | `follow_up` | Setter II | +72h | Ouverte | Mini note | Flux `post_closing_undecided` |
+| Appel closing terminé | `closing_call_completed` | Joint mais indécis | `closing_call` | `manual_reprise_closer` | Closer | +72h | Ouverte | Mini note | Flux `post_closing_undecided` |
 | Date de cours approche | `course_start_approaching` | Lead non signé, date pertinente connue, aucun appel planifié | `follow_up` lead-relative concurrente | `follow_up` cours | Setter II ou IA | J-14/J-7/J-3/J-1 | Ouverte | Template cours | La relance cours gagne le conflit sauf si un appel est déjà planifié |
 | SchoolDrive indique signé | `schooldrive_signed` | Vente confirmée dans SchoolDrive | Toutes actions ouvertes | Aucune | Personne | Aucun | Résolue | Événement SchoolDrive | Qualification `signed`, stop relances |
 | SchoolDrive indique ne pas relancer / opt-out | `schooldrive_do_not_contact` | Flag ou opt-out externe | Toutes actions ouvertes | Aucune | Personne | Aucun | Résolue | Événement SchoolDrive | Statut `do_not_contact`, note de provenance |

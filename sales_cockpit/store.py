@@ -45,7 +45,16 @@ SCHOOLDRIVE_PENDING_AUTORESPONDER_STATUSES = {
     "sending",
     "moderation_pending",
 }
-VALID_ACTION_TYPES = {"reply", "follow_up", "setting_call", "closing_call", "contact_review", "other"}
+MANUAL_REPRISE_ACTION_TYPES = {"manual_reprise_setter", "manual_reprise_closer"}
+VALID_ACTION_TYPES = {
+    "reply",
+    "follow_up",
+    "setting_call",
+    "closing_call",
+    "contact_review",
+    "other",
+    *MANUAL_REPRISE_ACTION_TYPES,
+}
 VALID_TASK_STATUSES = {"open", "in_progress", "planned", "blocked", "done", "cancelled"}
 VALID_CONTACT_STATUSES = {"contact_allowed", "do_not_contact"}
 VALID_LEAD_STATUSES = {"eligible", "not_relevant", "will_sign", "signed"}
@@ -2954,22 +2963,18 @@ def cancel_call_action_without_replacement(
         first_step = _get_sequence_step(conn, sequence_code, 1)
         next_action_id = None
         if first_step and task.get("conversation_id"):
-            next_action_id = _insert_next_action(
+            next_action_id = _create_sequence_step_action(
                 conn,
                 lead_id=task["lead_id"],
                 conversation_id=task["conversation_id"],
-                action_type="follow_up",
-                title=f"Relancer {lead_full_name(task)}",
-                assigned_to_user_id=setter2_user_id(conn) or task.get("assigned_to_user_id") or user_id,
-                created_by_user_id=user_id,
-                urgency="normal",
-                due_at=_due_for_sequence_step(now, first_step),
+                full_name=lead_full_name(task),
+                step=first_step,
+                anchor_at=now,
+                user_id=user_id,
+                previous_action_id=task_id,
                 description=note,
                 trigger_reason="appointment_cancelled_without_replacement",
-                sequence_code=sequence_code,
-                sequence_step_index=1,
-                previous_action_id=task_id,
-                metadata=_sequence_anchor_metadata(now, "RDV annulé sans remplacement"),
+                sequence_anchor_label="RDV annulé sans remplacement",
             )
         if task.get("conversation_id"):
             _insert_internal_note_message(
@@ -3742,6 +3747,151 @@ def _next_sequence_step(
     )
 
 
+def _sequence_action_assignee_id(conn: Any, action_type: str, fallback_user_id: int) -> int:
+    if action_type == "follow_up":
+        return setter2_user_id(conn) or fallback_user_id
+    if action_type in {"setting_call", "manual_reprise_setter", "other"}:
+        return setter1_user_id(conn) or fallback_user_id
+    if action_type in {"closing_call", "manual_reprise_closer"}:
+        return default_closer_user_id(conn) or fallback_user_id
+    return fallback_user_id
+
+
+def _sequence_action_title(action_type: str, full_name: str) -> str:
+    if action_type == "follow_up":
+        return f"Relancer {full_name}"
+    if action_type == "setting_call":
+        return _call_task_title("setting_call", full_name)
+    if action_type == "closing_call":
+        return _call_task_title("closing_call", full_name)
+    if action_type == "manual_reprise_setter":
+        return f"Reprise manuelle setter · {full_name}"
+    if action_type == "manual_reprise_closer":
+        return f"Reprise manuelle closer · {full_name}"
+    return f"Revoir {full_name}"
+
+
+def _create_sequence_step_action(
+    conn: Any,
+    *,
+    lead_id: int,
+    conversation_id: int,
+    full_name: str,
+    step: dict[str, Any],
+    anchor_at: str,
+    user_id: int,
+    previous_action_id: int,
+    trigger_reason: str,
+    description: str | None = None,
+    sequence_anchor_label: str | None = None,
+) -> int:
+    action_type = step["action_type"] or "follow_up"
+    assignee_id = _sequence_action_assignee_id(conn, action_type, user_id)
+    return _insert_next_action(
+        conn,
+        lead_id=lead_id,
+        conversation_id=conversation_id,
+        action_type=action_type,
+        title=_sequence_action_title(action_type, full_name),
+        assigned_to_user_id=assignee_id,
+        created_by_user_id=user_id,
+        urgency="normal",
+        due_at=_due_for_sequence_step(anchor_at, step),
+        description=description,
+        trigger_reason=trigger_reason,
+        sequence_code=step["sequence_code"],
+        sequence_step_index=step["step_index"],
+        previous_action_id=previous_action_id,
+        metadata=_sequence_anchor_metadata(anchor_at, sequence_anchor_label),
+        call_cycle_id=str(uuid4()) if action_type in {"setting_call", "closing_call"} else None,
+        call_attempt_index=1 if action_type in {"setting_call", "closing_call"} else None,
+    )
+
+
+def _resolve_sequence_completion(
+    conn: Any,
+    *,
+    lead_id: int,
+    conversation_id: int,
+    user_id: int,
+    now: str,
+    completed_action_id: int,
+    note: str = "",
+) -> None:
+    conn.execute(
+        """
+        UPDATE leads
+        SET sales_stage = 'lost',
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (now, lead_id),
+    )
+    conn.execute(
+        """
+        UPDATE conversations
+        SET status = 'resolved',
+            resolution_reason = 'sequence_completed_no_reply',
+            resolution_note = coalesce(?, resolution_note),
+            resolved_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (note or None, now, now, conversation_id),
+    )
+    insert_event(
+        conn,
+        lead_id,
+        "conversation_resolved_by_sequence_completion",
+        user_id=user_id,
+        metadata={"completed_action_id": completed_action_id, "note": note},
+    )
+
+
+def _advance_sequence_after_action(
+    conn: Any,
+    *,
+    task: dict[str, Any],
+    user_id: int,
+    now: str,
+    full_name: str,
+    trigger_reason: str,
+    note: str = "",
+) -> int | None:
+    conversation_id = task.get("conversation_id")
+    if not conversation_id:
+        return None
+    next_step = _next_sequence_step(
+        conn,
+        task.get("sequence_code"),
+        task.get("sequence_step_index"),
+    )
+    if not next_step:
+        _resolve_sequence_completion(
+            conn,
+            lead_id=task["lead_id"],
+            conversation_id=conversation_id,
+            user_id=user_id,
+            now=now,
+            completed_action_id=task["id"],
+            note=note,
+        )
+        return None
+    anchor = _sequence_anchor_from_action(task, now)
+    return _create_sequence_step_action(
+        conn,
+        lead_id=task["lead_id"],
+        conversation_id=conversation_id,
+        full_name=full_name,
+        step=next_step,
+        anchor_at=anchor,
+        user_id=user_id,
+        previous_action_id=task["id"],
+        trigger_reason=trigger_reason,
+        description=note or None,
+    )
+
+
 def _close_outbound_action_and_chain(
     conn: Any,
     conv: dict[str, Any],
@@ -3958,84 +4108,45 @@ def _close_outbound_action_and_chain(
             )
             return
 
-        first_step = _get_sequence_step(conn, "setter_no_next_step", 1)
+        sequence_code = (
+            "closer_will_sign"
+            if conv.get("lead_status") == "will_sign"
+            else "setter_no_next_step"
+        )
+        first_step = _get_sequence_step(conn, sequence_code, 1)
         if not first_step:
             return
-        assignee_id = setter2_user_id(conn) or user_id
-        next_action_id = _insert_next_action(
+        sequence_label = (
+            "Va signer après réponse sans rendez-vous"
+            if sequence_code == "closer_will_sign"
+            else "Dernier message setter sans rendez-vous"
+        )
+        next_action_id = _create_sequence_step_action(
             conn,
             lead_id=conv["lead_id"],
             conversation_id=conv["id"],
-            action_type="follow_up",
-            title=f"Relancer {full_name}",
-            assigned_to_user_id=assignee_id,
-            created_by_user_id=user_id,
-            urgency="normal",
-            due_at=_due_for_sequence_step(sent_at, first_step),
+            full_name=full_name,
+            step=first_step,
+            anchor_at=sent_at,
+            user_id=user_id,
             trigger_reason="reply_sent_no_setting_booked",
-            sequence_code="setter_no_next_step",
-            sequence_step_index=1,
             previous_action_id=action["id"],
-            metadata=_sequence_anchor_metadata(sent_at, "Dernier message setter sans rendez-vous"),
+            sequence_anchor_label=sequence_label,
         )
         conn.execute("UPDATE tasks SET next_action_id = ? WHERE id = ?", (next_action_id, action["id"]))
         return
 
     if action["type"] == "follow_up":
-        next_step = _next_sequence_step(
+        next_action_id = _advance_sequence_after_action(
             conn,
-            action.get("sequence_code"),
-            action.get("sequence_step_index"),
-        )
-        if not next_step:
-            conn.execute(
-                """
-                UPDATE leads
-                SET sales_stage = 'lost',
-                    updated_at = ?
-                WHERE id = ?
-                """,
-                (sent_at, conv["lead_id"]),
-            )
-            conn.execute(
-                """
-                UPDATE conversations
-                SET status = 'resolved',
-                    resolution_reason = 'sequence_completed_no_reply',
-                    resolved_at = ?,
-                    updated_at = ?
-                WHERE id = ?
-                """,
-                (sent_at, sent_at, conv["id"]),
-            )
-            insert_event(
-                conn,
-                conv["lead_id"],
-                "conversation_resolved_by_sequence_completion",
-                user_id=user_id,
-                metadata={"completed_action_id": action["id"]},
-            )
-            return
-
-        sequence_anchor_at = _sequence_anchor_from_action(action, sent_at)
-        assignee_id = setter2_user_id(conn) or user_id
-        next_action_id = _insert_next_action(
-            conn,
-            lead_id=conv["lead_id"],
-            conversation_id=conv["id"],
-            action_type="follow_up",
-            title=f"Relancer {full_name}",
-            assigned_to_user_id=assignee_id,
-            created_by_user_id=user_id,
-            urgency="normal",
-            due_at=_due_for_sequence_step(sequence_anchor_at, next_step),
+            task=action,
+            user_id=user_id,
+            now=sent_at,
+            full_name=full_name,
             trigger_reason="follow_up_sequence_continues",
-            sequence_code=next_step["sequence_code"],
-            sequence_step_index=next_step["step_index"],
-            previous_action_id=action["id"],
-            metadata=_sequence_anchor_metadata(sequence_anchor_at),
         )
-        conn.execute("UPDATE tasks SET next_action_id = ? WHERE id = ?", (next_action_id, action["id"]))
+        if next_action_id:
+            conn.execute("UPDATE tasks SET next_action_id = ? WHERE id = ?", (next_action_id, action["id"]))
 
 
 def _default_active_user_id(conn: Any, role: str) -> int | None:
@@ -5516,7 +5627,14 @@ def _normalize_sequence_step_admin_values(
     offset_unit: str,
 ) -> tuple[bool, str, dict[str, Any]]:
     normalized_action = (action_type or "").strip()
-    if normalized_action not in {"follow_up", "setting_call", "closing_call", "other"}:
+    if normalized_action not in {
+        "follow_up",
+        "setting_call",
+        "closing_call",
+        "manual_reprise_setter",
+        "manual_reprise_closer",
+        "other",
+    }:
         return False, "Type d'action invalide.", {}
     normalized_direction = (offset_direction or "").strip()
     if normalized_direction not in {"after", "before"}:
@@ -7688,6 +7806,8 @@ def complete_action_with_workflow(
             return False, "Qualification terminale : requalifiez le prospect avant cette action."
         if task["type"] in {"setting_call", "closing_call"} and not note:
             return False, "Une mini note est obligatoire après un appel."
+        if task["type"] in MANUAL_REPRISE_ACTION_TYPES and not note:
+            return False, "Une note est obligatoire pour terminer cette reprise manuelle."
         if outcome == "template_missing":
             if not note:
                 return False, "Explique quel modèle manque."
@@ -7782,6 +7902,8 @@ def complete_action_with_workflow(
                 "setting_call": "Note d'appel setting",
                 "closing_call": "Note d'appel closing",
                 "contact_review": "Note de revue contact",
+                "manual_reprise_setter": "Note de reprise manuelle setter",
+                "manual_reprise_closer": "Note de reprise manuelle closer",
                 "other": "Note d'action",
             }
             action_note_label = action_note_labels.get(task["type"], "Note d'action")
@@ -7826,6 +7948,28 @@ def complete_action_with_workflow(
                 sequence_step_index=step_index,
                 previous_action_id=task_id,
                 metadata=metadata,
+            )
+
+        def create_sequence_action(
+            step: dict[str, Any],
+            anchor_at: str,
+            trigger_reason: str,
+            sequence_anchor_label: str | None = None,
+        ) -> int | None:
+            if not conversation_id:
+                return None
+            return _create_sequence_step_action(
+                conn,
+                lead_id=task["lead_id"],
+                conversation_id=conversation_id,
+                full_name=full_name,
+                step=step,
+                anchor_at=anchor_at,
+                user_id=user_id,
+                previous_action_id=task_id,
+                trigger_reason=trigger_reason,
+                description=note or None,
+                sequence_anchor_label=sequence_anchor_label,
             )
 
         def resolve(reason: str) -> None:
@@ -7904,15 +8048,23 @@ def complete_action_with_workflow(
                         metadata={"conversation_id": conversation_id},
                     )
                     return True, "Action terminée. L'appel déjà planifié reste actif."
-                first_step = _get_sequence_step(conn, "setter_no_next_step", 1)
+                sequence_code = (
+                    "closer_will_sign"
+                    if task.get("lead_status") == "will_sign"
+                    else "setter_no_next_step"
+                )
+                first_step = _get_sequence_step(conn, sequence_code, 1)
                 if not first_step:
-                    return False, "Étape de relance introuvable."
-                next_action_id = create_followup(
-                    "setter_no_next_step",
-                    _due_for_sequence_step(now, first_step),
+                    return False, "Étape de flux introuvable."
+                next_action_id = create_sequence_action(
+                    first_step,
+                    now,
                     trigger_reason="reply_sent_no_setting_booked",
-                    sequence_anchor_at=now,
-                    sequence_anchor_label="Réponse setter sans rendez-vous",
+                    sequence_anchor_label=(
+                        "Va signer après réponse sans rendez-vous"
+                        if sequence_code == "closer_will_sign"
+                        else "Réponse setter sans rendez-vous"
+                    ),
                 )
             elif outcome == "setting_booked":
                 if not conversation_id:
@@ -8103,12 +8255,11 @@ def complete_action_with_workflow(
             elif outcome == "not_ready":
                 first_step = _get_sequence_step(conn, "post_setting_undecided", 1)
                 if not first_step:
-                    return False, "Étape de relance post-setting introuvable."
-                next_action_id = create_followup(
-                    "post_setting_undecided",
-                    _due_for_sequence_step(now, first_step),
+                    return False, "Étape post-setting introuvable."
+                next_action_id = create_sequence_action(
+                    first_step,
+                    now,
                     trigger_reason="setting_call_undecided",
-                    sequence_anchor_at=now,
                     sequence_anchor_label="Appel setting indécis",
                 )
             elif outcome in {"not_relevant", "do_not_contact"}:
@@ -8124,12 +8275,11 @@ def complete_action_with_workflow(
                 )
                 first_step = _get_sequence_step(conn, "closer_will_sign", 1)
                 if not first_step:
-                    return False, "Étape de relance Va signer introuvable."
-                next_action_id = create_followup(
-                    "closer_will_sign",
-                    _due_for_sequence_step(now, first_step),
+                    return False, "Étape Va signer introuvable."
+                next_action_id = create_sequence_action(
+                    first_step,
+                    now,
                     trigger_reason="closing_call_will_sign",
-                    sequence_anchor_at=now,
                     sequence_anchor_label="Closing qualifié Va signer",
                 )
             elif outcome == "not_reached":
@@ -8209,12 +8359,11 @@ def complete_action_with_workflow(
             elif outcome == "undecided":
                 first_step = _get_sequence_step(conn, "post_closing_undecided", 1)
                 if not first_step:
-                    return False, "Étape de relance post-appel introuvable."
-                next_action_id = create_followup(
-                    "post_closing_undecided",
-                    _due_for_sequence_step(now, first_step),
+                    return False, "Étape post-closing introuvable."
+                next_action_id = create_sequence_action(
+                    first_step,
+                    now,
                     trigger_reason="closing_call_undecided",
-                    sequence_anchor_at=now,
                     sequence_anchor_label="Closing indécis",
                 )
             elif outcome in {"not_relevant", "do_not_contact"}:
@@ -8224,22 +8373,15 @@ def complete_action_with_workflow(
             if outcome == "sequence_completed_no_reply":
                 resolve("sequence_completed_no_reply")
             elif outcome == "follow_up_sent":
-                next_step = _next_sequence_step(
+                next_action_id = _advance_sequence_after_action(
                     conn,
-                    task.get("sequence_code"),
-                    task.get("sequence_step_index"),
+                    task=task,
+                    user_id=user_id,
+                    now=now,
+                    full_name=full_name,
+                    trigger_reason="follow_up_sequence_continues",
+                    note=note,
                 )
-                if next_step:
-                    anchor = _sequence_anchor_from_action(task, now)
-                    next_action_id = create_followup(
-                        next_step["sequence_code"],
-                        _due_for_sequence_step(anchor, next_step),
-                        step_index=next_step["step_index"],
-                        trigger_reason="follow_up_sequence_continues",
-                        sequence_anchor_at=anchor,
-                    )
-                else:
-                    resolve("sequence_completed_no_reply")
 
         elif task["type"] == "contact_review":
             if outcome == "maintain_do_not_contact":
@@ -8309,8 +8451,30 @@ def complete_action_with_workflow(
                         previous_action_id=task_id,
                     )
 
+        elif task["type"] in MANUAL_REPRISE_ACTION_TYPES:
+            if outcome == "done":
+                next_action_id = _advance_sequence_after_action(
+                    conn,
+                    task=task,
+                    user_id=user_id,
+                    now=now,
+                    full_name=full_name,
+                    trigger_reason="manual_reprise_completed",
+                    note=note,
+                )
+
         elif task["type"] == "other":
-            if conversation_id and not _first_active_action_for_lead(conn, task["lead_id"]):
+            if task.get("sequence_code") and task.get("sequence_step_index"):
+                next_action_id = _advance_sequence_after_action(
+                    conn,
+                    task=task,
+                    user_id=user_id,
+                    now=now,
+                    full_name=full_name,
+                    trigger_reason="human_review_sequence_step_completed",
+                    note=note,
+                )
+            elif conversation_id and not _first_active_action_for_lead(conn, task["lead_id"]):
                 assignee_id = task.get("assigned_to_user_id") or setter1_user_id(conn) or user_id
                 next_action_id = _insert_next_action(
                     conn,
@@ -8344,6 +8508,104 @@ def complete_action_with_workflow(
                 new={"task_id": next_action_id},
             )
     return True, "Action terminée et suite créée selon la règle métier."
+
+
+def skip_sequence_step_action(
+    task_id: int,
+    user_id: int,
+    note: str,
+) -> tuple[bool, str]:
+    now = iso_utc()
+    note = note.strip()
+    if not note:
+        return False, "Une note est obligatoire pour ignorer cette étape."
+    with connect() as conn:
+        task = row_to_dict(
+            conn.execute(
+                """
+                SELECT
+                    t.*,
+                    l.first_name,
+                    l.last_name,
+                    l.lead_status,
+                    l.contact_status,
+                    c.status AS conversation_status
+                FROM tasks t
+                JOIN leads l ON l.id = t.lead_id
+                LEFT JOIN conversations c ON c.id = t.conversation_id
+                WHERE t.id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+        )
+        if not task:
+            return False, "Action introuvable."
+        if task.get("status") not in {"open", "in_progress", "planned", "blocked"}:
+            return False, "Cette action n'est plus active."
+        if not task.get("sequence_code") or not task.get("sequence_step_index"):
+            return False, "Cette action n'appartient pas à un flux."
+        if task.get("conversation_id") and task.get("conversation_status") != "open":
+            return False, "Conversation terminée : réactivez-la avant d'ignorer une étape."
+        if task.get("contact_status") in STOP_CONTACT_STATUSES:
+            return False, "Contact bloqué : aucune étape commerciale ne doit être poursuivie."
+        if task.get("lead_status") in STOP_QUALIFICATION_STATUSES:
+            return False, "Qualification terminale : aucune étape commerciale ne doit être poursuivie."
+
+        conn.execute(
+            """
+            UPDATE tasks
+            SET status = 'done',
+                outcome = 'sequence_step_skipped',
+                completed_at = ?,
+                updated_at = ?,
+                metadata_json = ?
+            WHERE id = ?
+            """,
+            (
+                now,
+                now,
+                json.dumps({"completion_note": note, "skipped": True}, ensure_ascii=False),
+                task_id,
+            ),
+        )
+        if task.get("conversation_id"):
+            _insert_internal_note_message(
+                conn,
+                task["lead_id"],
+                task["conversation_id"],
+                user_id,
+                f"Étape ignorée : {note}",
+                now,
+            )
+        insert_event(
+            conn,
+            task["lead_id"],
+            "sequence_step_skipped",
+            user_id=user_id,
+            previous={
+                "task_id": task_id,
+                "sequence_code": task.get("sequence_code"),
+                "sequence_step_index": task.get("sequence_step_index"),
+            },
+            new={"outcome": "sequence_step_skipped", "note": note},
+        )
+
+        next_action_id = _advance_sequence_after_action(
+            conn,
+            task=task,
+            user_id=user_id,
+            now=now,
+            full_name=lead_full_name(task),
+            trigger_reason="sequence_step_skipped_continues",
+            note=note,
+        )
+        if next_action_id:
+            conn.execute(
+                "UPDATE tasks SET next_action_id = ? WHERE id = ?",
+                (next_action_id, task_id),
+            )
+            return True, "Étape ignorée. Le flux continue à l'étape suivante."
+    return True, "Étape ignorée. Le flux est terminé."
 
 
 def _count_completed_outcomes(

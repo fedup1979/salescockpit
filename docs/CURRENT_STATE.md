@@ -203,6 +203,7 @@ Canonical model as of 2026-06-20:
 - `Parcours` is the commercial state of the prospect: new lead, setter conversation, setting call planned, closing call planned, will sign, won, lost, etc. It is not user-editable in V1. The system changes it through workflow outcomes.
 - `Flux` is a follow-up sequence: for example initial no-reply, setter exchange without next step, post-closing will-sign, or course-start reminders. Admins tune steps and templates in `Pilotage`; they do not create new business scenarios without code.
 - `Action` is the operational unit shown in `Tâches`: reply, follow-up, document setting call, document closing call, contact review.
+- `manual_reprise_setter` and `manual_reprise_closer` are explicit flux actions for indécis cases. They ask Setter I or the closer to reread the conversation and finish the action with a mandatory note. They are not automatic WhatsApp sends.
 
 Important invariants:
 
@@ -213,6 +214,8 @@ Important invariants:
 - Course-start dates come first from SchoolDrive `data.course.start_date`; if a Lead only has a category, Sales Cockpit uses the active default session for that category.
 - If a default session date is already past, Sales Cockpit creates an admin action asking to update the default session instead of silently doing nothing.
 - If SchoolDrive marks a course/session full, Sales Cockpit cancels open follow-up relances and routes the case to Setter I to propose another session. If an appointment is already planned, that appointment remains the primary action and receives a visible course-full note.
+- A prospect marked `will_sign` must not silently downgrade to the generic setter no-next-step flux after a simple reply. Unless the prospect signs, is disqualified, asks not to be contacted, books an appointment, or a course-start conflict wins, follow-up context remains `closer_will_sign`.
+- A sequence step can be skipped with a mandatory note. Skipping means only "do not do this step"; the flux continues to the next active step if one exists.
 
 ### SchoolDrive
 
