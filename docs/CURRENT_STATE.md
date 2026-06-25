@@ -13,7 +13,7 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 ## Production Readiness Snapshot
 
 - Latest checkpoint before hardening audit: `a02f10c`.
-- Latest deployed staging UI/API check: OK on commit `7a28b33`.
+- Latest deployed staging UI/API check: OK on commit `b183939`.
 - Latest observed production commit: `786f89c`; production was not touched by the V1 pre-cutover hardening deploy and remains cold/mock.
 - Latest local automated validation after the sidebar UX fix: `205 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\sidebar-full`, `compileall` OK, Streamlit smoke OK, and local `pre_cutover_check --allow-cold-prod` OK.
 - Latest staging pre-cutover check before this audit: OK.
@@ -27,7 +27,7 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 - Latest local V1 workflow update: `eligible` is now the default qualification; setting/closing indécis and no-show flows are distinct; call appointments can be rescheduled or cancelled; bug reports and template requests create admin actions; outbound WhatsApp safeguards are configurable in Admin.
 - Latest hardening update: no-show call retries are now scoped by `call_cycle_id`; business-rule seeds are versioned and migrate legacy `post_call_undecided` rows without overwriting existing real template mappings; Twilio template sync can unblock linked template requests; strict production cutover checks exist; SchoolDrive signed/do-not-contact/course-full/session-past signals are handled; follow-up quotas do not block human replies; outbound WhatsApp sends are claimed per active action before Twilio is called; core list queries now have indexes and pagination guards.
 - Latest workflow reconciliation update: Inbox/list and detail now use the same next-action priority; manual lift of `Ne plus contacter` closes obsolete contact reviews and recreates a reply only when the last inbound is unanswered; inbound on terminal qualifications creates a review instead of a normal reply; reopening a resolved conversation refuses terminal contact/qualification states; linked template requests/admin actions are cancelled when their blocked follow-up becomes obsolete.
-- Staging pre-cutover after deployment to `7a28b33`: OK after resetting the `SD-DEMO-*` demo scenarios, including API security, seed checks, and zero active workflow anomalies.
+- Staging pre-cutover after deployment to `b183939`: OK after resetting the `SD-DEMO-*` demo scenarios, including API security, seed checks, and zero active workflow anomalies.
 - Staging template mapping snapshot before/after deployment was identical; the seed did not overwrite the fine-tuned Twilio mappings.
 - Production was not redeployed in this pass. Keep production cold/mock until explicit GO.
 
@@ -45,7 +45,7 @@ Sales Cockpit has now encoded the canonical workflow model:
 
 Important runtime rule: a prospect message during an already planned setting/closing call creates an urgent `reply` action for Setter I but does not cancel the planned call. Course-start relances do not interrupt planned calls.
 
-Latest implementation status: the V1 pre-cutover hardening plus sidebar UX fix are deployed to staging on `7a28b33` and pushed to GitHub. They are not deployed to production.
+Latest implementation status: the V1 pre-cutover hardening plus reliable navigation fix are deployed to staging on `b183939` and pushed to GitHub. They are not deployed to production.
 
 ## Repositories And Environments
 
