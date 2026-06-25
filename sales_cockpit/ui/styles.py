@@ -66,7 +66,6 @@ header[data-testid="stHeader"] {
   background: transparent;
 }
 
-[data-testid="stToolbar"],
 [data-testid="stDecoration"],
 [data-testid="stStatusWidget"] {
   display: none;
@@ -81,7 +80,9 @@ header[data-testid="stHeader"] {
 }
 
 .st-key-mobile_nav {
-  display: none;
+  display: block;
+  max-width: 32rem;
+  margin: .1rem 0 .85rem 0;
 }
 
 h1, h2, h3 {
@@ -847,7 +848,6 @@ div[data-testid="stCheckbox"] span {
   }
 
   .st-key-mobile_nav {
-    display: block;
     position: sticky;
     top: .35rem;
     z-index: 20;

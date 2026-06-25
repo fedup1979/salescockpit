@@ -74,7 +74,9 @@ def test_ui_dates_are_displayed_in_geneva_time() -> None:
 def test_sidebar_reopen_control_is_not_hidden_by_css() -> None:
     assert 'header[data-testid="stHeader"] {\n  height: 0;' not in APP_CSS
     assert 'data-testid="collapsedControl"' not in APP_CSS
+    assert '[data-testid="stToolbar"]' not in APP_CSS
     assert ".st-key-mobile_nav" in APP_CSS
+    assert ".st-key-mobile_nav {\n  display: none;" not in APP_CSS
     assert "@media (max-width: 900px)" in APP_CSS
 
 
