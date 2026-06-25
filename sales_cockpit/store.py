@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -1824,13 +1825,36 @@ def _clean_schooldrive_text(value: Any) -> str | None:
     return text or None
 
 
-def _schooldrive_course_fields(data: dict[str, Any]) -> dict[str, str | None]:
+def _schooldrive_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _schooldrive_first_int(*values: Any) -> int | None:
+    for value in values:
+        parsed = _schooldrive_int(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _schooldrive_course_fields(data: dict[str, Any]) -> dict[str, Any]:
     course = data.get("course") or {}
     product = data.get("product") or {}
     if not isinstance(course, dict):
         course = {}
     if not isinstance(product, dict):
         product = {}
+    session = course.get("session") or {}
+    capacity = course.get("capacity") or {}
+    if not isinstance(session, dict):
+        session = {}
+    if not isinstance(capacity, dict):
+        capacity = {}
 
     category_raw = course.get("category")
     category_id = None
@@ -1857,13 +1881,77 @@ def _schooldrive_course_fields(data: dict[str, Any]) -> dict[str, str | None]:
         course.get("short_name")
         or course.get("course_name")
         or course.get("session_name")
+        or session.get("short_name")
+        or session.get("name")
         or course.get("name")
         or category_name
         or category_short_name
     )
+    session_id = _clean_schooldrive_text(
+        course.get("session_id")
+        or course.get("course_session_id")
+        or session.get("id")
+        or session.get("session_id")
+    )
+    session_name = _clean_schooldrive_text(
+        course.get("session_name")
+        or course.get("course_session_name")
+        or session.get("short_name")
+        or session.get("name")
+    )
+    course_start_date = _normalize_schooldrive_course_start(
+        course.get("start_date")
+        or course.get("course_start_date")
+        or session.get("start_date")
+        or session.get("course_start_date")
+    )
+    capacity_total = _schooldrive_first_int(
+        course.get("capacity_total"),
+        course.get("total_capacity"),
+        course.get("total_seats"),
+        capacity.get("total"),
+        capacity.get("capacity_total"),
+        session.get("capacity_total"),
+        session.get("total_capacity"),
+    )
+    capacity_occupied = _schooldrive_first_int(
+        course.get("capacity_occupied"),
+        course.get("occupied_capacity"),
+        course.get("occupied_seats"),
+        course.get("enrolled_count"),
+        capacity.get("occupied"),
+        capacity.get("capacity_occupied"),
+        session.get("capacity_occupied"),
+        session.get("occupied_capacity"),
+    )
+    capacity_available = _schooldrive_first_int(
+        course.get("capacity_available"),
+        course.get("available_capacity"),
+        course.get("available_seats"),
+        course.get("remaining_seats"),
+        capacity.get("available"),
+        capacity.get("capacity_available"),
+        session.get("capacity_available"),
+        session.get("available_capacity"),
+    )
+    is_full = any(
+        _schooldrive_bool(value)
+        for value in (
+            course.get("is_full"),
+            course.get("course_full"),
+            course.get("session_full"),
+            capacity.get("is_full"),
+            session.get("is_full"),
+            data.get("course_full"),
+            data.get("session_full"),
+        )
+    )
+    if capacity_available is not None and capacity_available <= 0:
+        is_full = True
 
     roadmap_id = _clean_schooldrive_text(product.get("roadmap_descriptive_id"))
-    if not course and roadmap_id:
+    has_course_identity = any((course_id, category_short_name, course_title, session_id, session_name))
+    if not has_course_identity and roadmap_id:
         course_id = roadmap_id
         course_title = f"Roadmap {roadmap_id}"
 
@@ -1871,6 +1959,13 @@ def _schooldrive_course_fields(data: dict[str, Any]) -> dict[str, str | None]:
         "course_id": course_id,
         "course_category_short_title": category_short_name,
         "course_title": course_title,
+        "session_id": session_id,
+        "session_name": session_name,
+        "course_start_date": course_start_date,
+        "capacity_total": capacity_total,
+        "capacity_occupied": capacity_occupied,
+        "capacity_available": capacity_available,
+        "is_full": 1 if is_full else 0,
     }
 
 
@@ -1908,6 +2003,13 @@ def _upsert_schooldrive_lead(
     course_id = course_fields["course_id"]
     category = course_fields["course_category_short_title"]
     course_name = course_fields["course_title"]
+    session_id = course_fields["session_id"]
+    session_name = course_fields["session_name"]
+    course_start_date = course_fields["course_start_date"]
+    capacity_total = course_fields["capacity_total"]
+    capacity_occupied = course_fields["capacity_occupied"]
+    capacity_available = course_fields["capacity_available"]
+    is_full = int(course_fields["is_full"] or 0)
     source_type = "paid_ads" if lead_type == "lead" else "organic"
     archived_at = _normalize_optional_iso(data.get("archived_at"))
     is_archived = 1 if bool(data.get("is_archived")) else 0
@@ -1928,6 +2030,8 @@ def _upsert_schooldrive_lead(
             UPDATE leads
             SET first_name = ?, last_name = ?, email = ?, phone_e164 = ?, phone_raw = ?,
                 course_id = ?, course_category_short_title = ?, course_title = ?,
+                session_id = ?, session_name = ?, course_start_date = ?,
+                capacity_total = ?, capacity_occupied = ?, capacity_available = ?, is_full = ?,
                 lead_type = ?, source = 'schooldrive_webhook', acquisition_type = ?,
                 schooldrive_url = ?, schooldrive_status = ?,
                 schooldrive_aggregated_updated_at = ?,
@@ -1950,6 +2054,13 @@ def _upsert_schooldrive_lead(
                 course_id,
                 category,
                 course_name,
+                session_id,
+                session_name,
+                course_start_date,
+                capacity_total,
+                capacity_occupied,
+                capacity_available,
+                is_full,
                 lead_type,
                 source_type,
                 url,
@@ -1974,7 +2085,10 @@ def _upsert_schooldrive_lead(
             """
             INSERT INTO leads (
                 schooldrive_lead_id, first_name, last_name, email, phone_e164, phone_raw,
-                course_id, course_category_short_title, course_title, lead_type,
+                course_id, course_category_short_title, course_title,
+                session_id, session_name, course_start_date,
+                capacity_total, capacity_occupied, capacity_available, is_full,
+                lead_type,
                 source, acquisition_type, lead_status, contact_status, sales_stage,
                 temperature, setter_user_id, closer_user_id, schooldrive_url,
                 schooldrive_status, schooldrive_aggregated_updated_at,
@@ -1983,7 +2097,7 @@ def _upsert_schooldrive_lead(
                 schooldrive_archive_reason, schooldrive_payload_json,
                 identity_status, identity_review_note, identity_candidates_json,
                 last_schooldrive_sync_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'schooldrive_webhook', ?,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'schooldrive_webhook', ?,
                 'eligible', 'contact_allowed', 'new', 'warm',
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -1997,6 +2111,13 @@ def _upsert_schooldrive_lead(
                 course_id,
                 category,
                 course_name,
+                session_id,
+                session_name,
+                course_start_date,
+                capacity_total,
+                capacity_occupied,
+                capacity_available,
+                is_full,
                 lead_type,
                 source_type,
                 setter_id,
@@ -2259,7 +2380,7 @@ def _course_start_anchor_for_lead(conn: Any, lead_id: int) -> tuple[str | None, 
     lead = row_to_dict(
         conn.execute(
             """
-            SELECT course_category_short_title, schooldrive_payload_json
+            SELECT course_category_short_title, course_start_date, schooldrive_payload_json
             FROM leads
             WHERE id = ?
             """,
@@ -2268,6 +2389,9 @@ def _course_start_anchor_for_lead(conn: Any, lead_id: int) -> tuple[str | None, 
     )
     if not lead:
         return None, None
+
+    if lead.get("course_start_date"):
+        return lead["course_start_date"], "Date de cours SchoolDrive"
 
     payload_start_date = None
     try:
@@ -2768,22 +2892,40 @@ def _schooldrive_do_not_contact_signal(data: dict[str, Any]) -> tuple[bool, str]
 
 
 def _schooldrive_course_full_signal(data: dict[str, Any]) -> tuple[bool, str]:
+    for key in ("is_full", "course_full", "session_full"):
+        if _schooldrive_bool(data.get(key)):
+            return True, f"data.{key}"
     course = data.get("course") or {}
     if not isinstance(course, dict):
         return False, ""
+    session = course.get("session") or {}
+    capacity = course.get("capacity") or {}
+    if not isinstance(session, dict):
+        session = {}
+    if not isinstance(capacity, dict):
+        capacity = {}
     for key in ("is_full", "course_full", "session_full"):
         if _schooldrive_bool(course.get(key)):
             return True, f"course.{key}"
+        if _schooldrive_bool(session.get(key)):
+            return True, f"course.session.{key}"
+        if _schooldrive_bool(capacity.get(key)):
+            return True, f"course.capacity.{key}"
     for key in ("capacity_status", "session_status", "status"):
         if str(course.get(key) or "").strip().lower() in {"full", "complete", "complet", "sold_out"}:
             return True, f"course.{key}"
-    seats = course.get("available_seats")
-    if seats is not None:
-        try:
-            if int(seats) <= 0:
-                return True, "course.available_seats"
-        except (TypeError, ValueError):
-            pass
+        if str(session.get(key) or "").strip().lower() in {"full", "complete", "complet", "sold_out"}:
+            return True, f"course.session.{key}"
+        if str(capacity.get(key) or "").strip().lower() in {"full", "complete", "complet", "sold_out"}:
+            return True, f"course.capacity.{key}"
+    for key in ("available_seats", "capacity_available", "available_capacity", "remaining_seats"):
+        seats = course.get(key) if key in course else capacity.get(key) if key in capacity else session.get(key)
+        if seats is not None:
+            try:
+                if int(seats) <= 0:
+                    return True, f"course.{key}"
+            except (TypeError, ValueError):
+                pass
     return False, ""
 
 
@@ -2972,6 +3114,13 @@ def list_conversations(
             l.course_id,
             l.course_category_short_title,
             l.course_title,
+            l.session_id,
+            l.session_name,
+            l.course_start_date,
+            l.capacity_total,
+            l.capacity_occupied,
+            l.capacity_available,
+            l.is_full,
             l.lead_type,
             l.acquisition_type,
             l.lead_status,
@@ -3104,6 +3253,13 @@ def get_conversation(conversation_id: int) -> dict[str, Any] | None:
                 l.course_id,
                 l.course_category_short_title,
                 l.course_title,
+                l.session_id,
+                l.session_name,
+                l.course_start_date,
+                l.capacity_total,
+                l.capacity_occupied,
+                l.capacity_available,
+                l.is_full,
                 l.lead_type,
                 l.acquisition_type,
                 l.lead_status,
@@ -4522,23 +4678,86 @@ def _advance_sequence_after_action(
     )
 
 
+def _validate_outbound_action_can_chain(
+    conn: Any,
+    conv: dict[str, Any],
+    action: dict[str, Any] | None,
+    action_outcome: str | None = None,
+    assigned_to_user_id: int | None = None,
+) -> tuple[bool, str]:
+    if not action:
+        return True, ""
+    if action.get("type") == "reply":
+        allowed = {None, "setting_booked", "closing_booked", "not_relevant", "do_not_contact"}
+        if action_outcome not in allowed:
+            return False, f"Résultat invalide pour une réponse WhatsApp : {action_outcome}."
+        if action_outcome == "setting_booked":
+            assignee_id = (
+                assigned_to_user_id
+                if _is_setter1_user(conn, assigned_to_user_id)
+                else setter1_user_id(conn)
+            ) or action.get("assigned_to_user_id")
+            if not assignee_id:
+                return False, "Setter I introuvable pour créer l'appel setting."
+        elif action_outcome == "closing_booked":
+            if not (assigned_to_user_id or default_closer_user_id(conn)):
+                return False, "Closer introuvable pour créer l'appel closing."
+        elif action_outcome is None:
+            active_call = _first_active_action_for_lead(
+                conn,
+                conv["lead_id"],
+                action_types=("setting_call", "closing_call"),
+            )
+            if not active_call:
+                sequence_code = (
+                    "closer_will_sign"
+                    if conv.get("lead_status") == "will_sign"
+                    else "setter_no_next_step"
+                )
+                if not _get_sequence_step(conn, sequence_code, 1):
+                    return False, "Étape de flux introuvable pour créer la suite après réponse."
+    elif action.get("type") == "follow_up":
+        allowed = {None, "follow_up_sent"}
+        if action_outcome not in allowed:
+            return False, f"Résultat invalide pour une relance WhatsApp : {action_outcome}."
+        if not action.get("sequence_code") or not action.get("sequence_step_index"):
+            return False, "Cette relance n'est pas rattachée à un flux exploitable."
+    return True, ""
+
+
 def _close_outbound_action_and_chain(
     conn: Any,
     conv: dict[str, Any],
     user_id: int,
     message_id: int,
     sent_at: str,
+    action_id: int | None = None,
     action_outcome: str | None = None,
     next_due_at: str | None = None,
     assigned_to_user_id: int | None = None,
     note: str = "",
 ) -> None:
-    action = _first_active_action_for_lead(
-        conn,
-        conv["lead_id"],
-        action_types=("reply", "follow_up"),
-        include_blocked=True,
-    )
+    if action_id:
+        action = row_to_dict(
+            conn.execute(
+                """
+                SELECT *
+                FROM tasks
+                WHERE id = ?
+                  AND lead_id = ?
+                  AND type IN ('reply', 'follow_up')
+                  AND status IN ('open', 'in_progress', 'planned', 'blocked')
+                """,
+                (action_id, conv["lead_id"]),
+            ).fetchone()
+        )
+    else:
+        action = _first_active_action_for_lead(
+            conn,
+            conv["lead_id"],
+            action_types=("reply", "follow_up"),
+            include_blocked=True,
+        )
     if not action:
         return
 
@@ -7639,6 +7858,7 @@ def send_freeform_message(
     assigned_to_user_id: int | None = None,
     note: str = "",
     attachments: list[dict[str, Any]] | None = None,
+    expected_action_id: int | None = None,
 ) -> tuple[bool, str]:
     conv = get_conversation(conversation_id)
     if not conv:
@@ -7651,7 +7871,21 @@ def send_freeform_message(
         return False, "Conversation terminée : réactivez-la avant tout envoi."
     body = body.strip()
     with connect() as conn:
-        action_kind = _active_outbound_action_kind(conn, conv["lead_id"])
+        outbound_action = _active_outbound_action(conn, conv["lead_id"])
+        if expected_action_id and (
+            not outbound_action or int(outbound_action["id"]) != int(expected_action_id)
+        ):
+            return False, "Cette action a déjà changé ou a été traitée. Recharge la fiche avant d'envoyer."
+        action_kind = _outbound_action_kind(outbound_action)
+        ok_chain, chain_message = _validate_outbound_action_can_chain(
+            conn,
+            conv,
+            outbound_action,
+            action_outcome=action_outcome,
+            assigned_to_user_id=assigned_to_user_id,
+        )
+        if not ok_chain:
+            return False, chain_message
         if action_kind == "follow_up" and _has_blocked_followup(conn, conv["lead_id"]):
             return False, "Relance bloquée : le nouveau modèle doit être approuvé avant l'envoi."
     state = calculate_window(conv["last_inbound_at"])
@@ -7679,15 +7913,42 @@ def send_freeform_message(
 
     now = iso_utc()
     with connect() as conn:
-        cursor = conn.execute(
-            """
-            INSERT INTO messages (
-                conversation_id, lead_id, direction, channel, body, sender_user_id,
-                twilio_status, whatsapp_window_state_at_send, created_at
-            ) VALUES (?, ?, 'outbound', 'whatsapp_twilio', ?, ?, 'pending_send', ?, ?)
-            """,
-            (conversation_id, conv["lead_id"], stored_body, user_id, state.state, now),
+        outbound_action = _active_outbound_action(conn, conv["lead_id"])
+        if expected_action_id and (
+            not outbound_action or int(outbound_action["id"]) != int(expected_action_id)
+        ):
+            return False, "Cette action a déjà changé ou a été traitée. Recharge la fiche avant d'envoyer."
+        action_id = int(outbound_action["id"]) if outbound_action else None
+        action_kind = _outbound_action_kind(outbound_action)
+        ok_chain, chain_message = _validate_outbound_action_can_chain(
+            conn,
+            conv,
+            outbound_action,
+            action_outcome=action_outcome,
+            assigned_to_user_id=assigned_to_user_id,
         )
+        if not ok_chain:
+            return False, chain_message
+        ok, guard_message = _check_outbound_safeguards(
+            conn,
+            conv,
+            action_kind=action_kind,
+            enforce_min_followup_delay=False,
+        )
+        if not ok:
+            return False, guard_message
+        try:
+            cursor = conn.execute(
+                """
+                INSERT INTO messages (
+                    conversation_id, lead_id, direction, channel, body, sender_user_id,
+                    twilio_status, action_id, whatsapp_window_state_at_send, created_at
+                ) VALUES (?, ?, 'outbound', 'whatsapp_twilio', ?, ?, 'pending_send', ?, ?, ?)
+                """,
+                (conversation_id, conv["lead_id"], stored_body, user_id, action_id, state.state, now),
+            )
+        except sqlite3.IntegrityError:
+            return False, _outbound_send_already_claimed_message()
         message_id = int(cursor.lastrowid)
         media_urls = _store_message_attachments(conn, message_id, attachment_items, media_base_url)
 
@@ -7726,6 +7987,7 @@ def send_freeform_message(
             user_id,
             message_id,
             now,
+            action_id=action_id,
             action_outcome=action_outcome,
             next_due_at=next_due_at,
             assigned_to_user_id=assigned_to_user_id,
@@ -7752,6 +8014,7 @@ def send_template_message(
     next_due_at: str | None = None,
     assigned_to_user_id: int | None = None,
     note: str = "",
+    expected_action_id: int | None = None,
 ) -> tuple[bool, str]:
     conv = get_conversation(conversation_id)
     template = get_template(template_id)
@@ -7766,7 +8029,21 @@ def send_template_message(
     if conv.get("status") == "resolved":
         return False, "Conversation terminée : réactivez-la avant tout envoi."
     with connect() as conn:
-        action_kind = _active_outbound_action_kind(conn, conv["lead_id"])
+        outbound_action = _active_outbound_action(conn, conv["lead_id"])
+        if expected_action_id and (
+            not outbound_action or int(outbound_action["id"]) != int(expected_action_id)
+        ):
+            return False, "Cette action a déjà changé ou a été traitée. Recharge la fiche avant d'envoyer."
+        action_kind = _outbound_action_kind(outbound_action)
+        ok_chain, chain_message = _validate_outbound_action_can_chain(
+            conn,
+            conv,
+            outbound_action,
+            action_outcome=action_outcome,
+            assigned_to_user_id=assigned_to_user_id,
+        )
+        if not ok_chain:
+            return False, chain_message
         if (
             action_kind == "follow_up"
             and _has_blocked_followup(conn, conv["lead_id"])
@@ -7797,25 +8074,48 @@ def send_template_message(
 
     now = iso_utc()
     with connect() as conn:
-        cursor = conn.execute(
-            """
-            INSERT INTO messages (
-                conversation_id, lead_id, direction, channel, body, sender_user_id,
-                twilio_status, template_id, template_variables_json,
-                whatsapp_window_state_at_send, created_at
-            ) VALUES (?, ?, 'outbound', 'whatsapp_twilio', ?, ?, 'pending_send', ?, ?, ?, ?)
-            """,
-            (
-                conversation_id,
-                conv["lead_id"],
-                body,
-                user_id,
-                template_id,
-                json.dumps(variables, ensure_ascii=False),
-                state.state,
-                now,
-            ),
+        outbound_action = _active_outbound_action(conn, conv["lead_id"])
+        if expected_action_id and (
+            not outbound_action or int(outbound_action["id"]) != int(expected_action_id)
+        ):
+            return False, "Cette action a déjà changé ou a été traitée. Recharge la fiche avant d'envoyer."
+        action_id = int(outbound_action["id"]) if outbound_action else None
+        action_kind = _outbound_action_kind(outbound_action)
+        ok_chain, chain_message = _validate_outbound_action_can_chain(
+            conn,
+            conv,
+            outbound_action,
+            action_outcome=action_outcome,
+            assigned_to_user_id=assigned_to_user_id,
         )
+        if not ok_chain:
+            return False, chain_message
+        ok, guard_message = _check_outbound_safeguards(conn, conv, action_kind=action_kind)
+        if not ok:
+            return False, guard_message
+        try:
+            cursor = conn.execute(
+                """
+                INSERT INTO messages (
+                    conversation_id, lead_id, direction, channel, body, sender_user_id,
+                    twilio_status, template_id, action_id, template_variables_json,
+                    whatsapp_window_state_at_send, created_at
+                ) VALUES (?, ?, 'outbound', 'whatsapp_twilio', ?, ?, 'pending_send', ?, ?, ?, ?, ?)
+                """,
+                (
+                    conversation_id,
+                    conv["lead_id"],
+                    body,
+                    user_id,
+                    template_id,
+                    action_id,
+                    json.dumps(variables, ensure_ascii=False),
+                    state.state,
+                    now,
+                ),
+            )
+        except sqlite3.IntegrityError:
+            return False, _outbound_send_already_claimed_message()
         message_id = int(cursor.lastrowid)
 
     try:
@@ -7849,6 +8149,7 @@ def send_template_message(
             user_id,
             message_id,
             now,
+            action_id=action_id,
             action_outcome=action_outcome,
             next_due_at=next_due_at,
             assigned_to_user_id=assigned_to_user_id,
@@ -7905,15 +8206,30 @@ def _mark_outbound_message_send_error(
 
 
 def _active_outbound_action_kind(conn: Any, lead_id: int) -> str:
-    action = _first_active_action_for_lead(
+    action = _active_outbound_action(conn, lead_id)
+    if action and action.get("type") == "follow_up":
+        return "follow_up"
+    return "reply"
+
+
+def _active_outbound_action(conn: Any, lead_id: int) -> dict[str, Any] | None:
+    return _first_active_action_for_lead(
         conn,
         lead_id,
         action_types=("reply", "follow_up"),
         include_blocked=True,
     )
-    if action and action.get("type") == "follow_up":
-        return "follow_up"
-    return "reply"
+
+
+def _outbound_action_kind(action: dict[str, Any] | None) -> str:
+    return "follow_up" if action and action.get("type") == "follow_up" else "reply"
+
+
+def _outbound_send_already_claimed_message() -> str:
+    return (
+        "Un envoi WhatsApp est déjà en cours ou déjà envoyé pour cette action. "
+        "Recharge la fiche avant de réessayer."
+    )
 
 
 def _check_outbound_safeguards(
@@ -8043,7 +8359,7 @@ def add_manual_note(
             user_id=user_id,
             metadata={"include_in_training": include_in_training},
         )
-    return True, "Note privée ajoutée."
+    return True, "Note interne ajoutée."
 
 
 def record_inbound_message(
@@ -8387,6 +8703,119 @@ def complete_task(task_id: int, user_id: int, outcome: str) -> None:
         )
 
 
+def _validate_action_workflow_completion(
+    conn: Any,
+    task: dict[str, Any],
+    outcome: str,
+    assigned_to_user_id: int | None = None,
+) -> tuple[bool, str]:
+    action_type = task.get("type")
+    conversation_id = task.get("conversation_id")
+    if outcome == "template_missing":
+        if action_type != "follow_up":
+            return False, "Résultat invalide : seul une relance peut être bloquée par modèle manquant."
+        return True, ""
+
+    allowed_by_type = {
+        "reply": {"reply_no_appointment", "setting_booked", "closing_booked", "not_relevant", "do_not_contact"},
+        "setting_call": {"to_closing", "not_reached", "not_ready", "not_relevant", "do_not_contact"},
+        "closing_call": {"signed", "will_sign", "not_reached", "undecided", "not_relevant", "do_not_contact"},
+        "follow_up": {"sequence_completed_no_reply", "follow_up_sent"},
+        "contact_review": {
+            "maintain_do_not_contact",
+            "lift_do_not_contact",
+            "keep_terminal_status",
+            "requalify_and_reply",
+        },
+        "manual_reprise_setter": {"done"},
+        "manual_reprise_closer": {"done"},
+        "other": {"done"},
+    }
+    allowed = allowed_by_type.get(str(action_type), set())
+    if outcome not in allowed:
+        return False, f"Résultat invalide pour l'action {action_type} : {outcome}."
+
+    if action_type == "reply":
+        if outcome == "reply_no_appointment":
+            active_call = _first_active_action_for_lead(
+                conn,
+                task["lead_id"],
+                action_types=("setting_call", "closing_call"),
+            )
+            if not active_call:
+                sequence_code = (
+                    "closer_will_sign"
+                    if task.get("lead_status") == "will_sign"
+                    else "setter_no_next_step"
+                )
+                if not _get_sequence_step(conn, sequence_code, 1):
+                    return False, "Étape de flux introuvable."
+        elif outcome == "setting_booked":
+            assignee_id = (
+                assigned_to_user_id
+                if _is_setter1_user(conn, assigned_to_user_id)
+                else setter1_user_id(conn)
+            ) or task.get("assigned_to_user_id")
+            if not conversation_id or not assignee_id:
+                return False, "Conversation ou Setter I introuvable pour créer l'appel."
+        elif outcome == "closing_booked":
+            if not conversation_id or not (assigned_to_user_id or default_closer_user_id(conn)):
+                return False, "Closer ou conversation introuvable."
+
+    elif action_type == "setting_call":
+        if outcome == "to_closing":
+            if not conversation_id or not (assigned_to_user_id or default_closer_user_id(conn)):
+                return False, "Closer ou conversation introuvable."
+        elif outcome == "not_reached":
+            if not conversation_id:
+                return False, "Conversation introuvable pour créer le rappel setting."
+            cycle_id = task.get("call_cycle_id") or str(uuid4())
+            count_after = _count_completed_call_outcomes(
+                conn,
+                task["lead_id"],
+                "setting_call",
+                "not_reached",
+                cycle_id,
+            ) + 1
+            step_index = 1 if count_after <= 1 else 2 if count_after <= 2 else 3
+            sequence_code = "setting_call_not_reached"
+            if not _get_sequence_step(conn, sequence_code, step_index):
+                return False, "Étape de rappel setting introuvable."
+        elif outcome == "not_ready":
+            if not conversation_id:
+                return False, "Conversation introuvable pour créer la reprise setter."
+            if not _get_sequence_step(conn, "post_setting_undecided", 1):
+                return False, "Étape post-setting introuvable."
+
+    elif action_type == "closing_call":
+        if outcome == "will_sign":
+            if not conversation_id:
+                return False, "Conversation introuvable pour créer la relance Va signer."
+            if not _get_sequence_step(conn, "closer_will_sign", 1):
+                return False, "Étape Va signer introuvable."
+        if outcome == "not_reached":
+            if not conversation_id:
+                return False, "Conversation introuvable pour créer le rappel closing."
+            cycle_id = task.get("call_cycle_id") or str(uuid4())
+            count_after = _count_completed_call_outcomes(
+                conn,
+                task["lead_id"],
+                "closing_call",
+                "not_reached",
+                cycle_id,
+            ) + 1
+            step_index = 1 if count_after <= 1 else 2 if count_after <= 2 else 3
+            if not _get_sequence_step(conn, "closing_call_not_reached", step_index):
+                return False, "Étape de rappel closing introuvable."
+        elif outcome == "undecided":
+            if not conversation_id:
+                return False, "Conversation introuvable pour créer la reprise closer."
+            if not _get_sequence_step(conn, "post_closing_undecided", 1):
+                return False, "Étape post-closing introuvable."
+
+    return True, ""
+
+
 def complete_action_with_workflow(
     task_id: int,
     user_id: int,
@@ -8444,6 +8873,14 @@ def complete_action_with_workflow(
             return False, "Une mini note est obligatoire après un appel."
         if task["type"] in MANUAL_REPRISE_ACTION_TYPES and not note:
             return False, "Une note est obligatoire pour terminer cette reprise manuelle."
+        ok_transition, transition_message = _validate_action_workflow_completion(
+            conn,
+            task,
+            outcome,
+            assigned_to_user_id=assigned_to_user_id,
+        )
+        if not ok_transition:
+            return False, transition_message
         if outcome == "template_missing":
             if not note:
                 return False, "Explique quel modèle manque."

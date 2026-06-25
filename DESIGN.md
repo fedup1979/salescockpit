@@ -51,7 +51,7 @@ Use system fonts. Keep labels compact and readable. Avoid display typography.
 - Template search should be immediate.
 - Lead search should be global.
 - Call tasks should be one click to create and one click to complete.
-- Manual private WhatsApp notes must be clearly distinguished from official Twilio messages.
+- Manual internal WhatsApp notes must be clearly distinguished from official Twilio messages.
 
 ## Accessibility
 

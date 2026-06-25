@@ -1,8 +1,12 @@
-# Sales Cockpit - Protocole de test court
+# Sales Cockpit - Protocole de test manuel V1
 
-Objectif : tester un maximum de boutons, fonctions, actions et transitions avec un minimum de clics.
+Objectif : valider l'expérience V1 de bout en bout avec des faux prospects restaurables, puis terminer par deux tests réels depuis le site web : un lead et une préinscription.
 
-Avant une validation propre :
+## Validation automatisée courante
+
+Dernière validation locale connue : `204 passed`, `compileall` OK.
+
+Avant une validation manuelle propre :
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\reset_demo.py
@@ -10,9 +14,7 @@ Avant une validation propre :
 
 Mot de passe local : `ChangeMe!2026`.
 
-## Validation Automatisée Courante
-
-Dernière validation locale : `177 passed`, `compileall` OK.
+Le script restaure le jeu de faux prospects. Si un test manuel pollue l'état, relancer `reset_demo.py` avant de recommencer.
 
 La suite automatisée couvre notamment :
 
@@ -26,23 +28,65 @@ La suite automatisée couvre notamment :
 - outbox qui conserve un message en `send_error` si Twilio échoue après création locale ;
 - idempotence Twilio inbound et webhook SchoolDrive.
 
-Les tests manuels ci-dessous servent surtout à valider l'ergonomie et la compréhension utilisateur.
-
 ## Format de retour
 
 ```text
-P0 Admin :
-P1 Mihary réponse client :
-P2 Tanjona relance modèle :
-P3 Demande de modèle :
-P4 Setting call vers closing :
-P5 Closing signé / va signer :
-P6 Ne plus contacter qui réécrit :
-P7 Clore / Réactiver :
+P0 Restauration :
+P1 Admin :
+P2 Setter I réponse entrante :
+P3 Setter I rendez-vous setting :
+P4 Setter II relance modèle :
+P5 Demande de modèle :
+P6 Setting vers closing :
+P7 Closing signé / va signer :
+P8 Ne plus contacter qui réécrit :
+P9 Clore / réactiver :
+P10 Lead réel site web :
+P11 Préinscription réelle site web :
 Bugs / confusions :
 ```
 
-## P0 Admin
+## Faux prospects restaurables
+
+Utiliser les fiches de démonstration suivantes après `reset_demo.py` :
+
+- `Léa Martin` ou `Inconnu(e)` : réponse entrante Setter I ;
+- `Aline Favre` : relance Setter II avec fenêtre WhatsApp fermée ;
+- `Thomas Girard` : demande de modèle ;
+- `Nadia Keller` : appel setting à documenter ;
+- `Nicolas Meyer` : appel closing à documenter ;
+- `Hugo Muller` : statut **Ne plus contacter** qui réécrit ;
+- `Chloé Schmid` ou `Irina Lopes` : clôture et réactivation.
+- `Marc Dubois` : follow-up futur avec fenêtre WhatsApp ouverte ;
+- `Sarah Perrin` : follow-up dû après absence de réponse ;
+- `Aline Favre` : follow-up dû avec fenêtre WhatsApp fermée ;
+- `Camille Laurent` : follow-up dû avec fenêtre WhatsApp ouverte ;
+- `Romain Blanc` : appel setting non joint, rappel futur ;
+- `Luc Moreau` : appel setting dû maintenant ;
+- `Émilie Morel` : appel closing non joint, rappel futur ;
+- `Mathieu Garnier` : closing `Va signer`, relance post-closing ;
+- `Sonia Mercier` : reprise manuelle setter ;
+- `Yves Caron` : reprise manuelle closer ;
+- `Emma Complet` : session complète, relances stoppées, revue humaine ;
+- `Rita Roadmap` : produit Roadmap hors flux V1, revue humaine.
+
+## P0 Restauration
+
+Compte : `francois.dupuis@essr.ch`.
+
+1. Relancer le jeu de démo :
+
+```powershell
+.\.venv\Scripts\python.exe scripts\reset_demo.py
+```
+
+2. Ouvrir l'application locale.
+3. Se connecter.
+4. Vérifier que les faux prospects listés ci-dessus existent.
+
+Résultat attendu : le protocole démarre depuis un état connu et restaurable.
+
+## P1 Admin
 
 Compte : `francois.dupuis@essr.ch`.
 
@@ -55,21 +99,36 @@ Compte : `francois.dupuis@essr.ch`.
 
 Résultat attendu : admin clair, bug enregistrable, signalements visibles, horaires visibles sans bascule automatique.
 
-## P1 Mihary Réponse Client
+## P2 Setter I Réponse Entrante
 
 Compte : `service.etudiants@essr.ch`.
 
 1. Ouvrir `Tâches`.
 2. Ouvrir `Léa Martin` ou `Inconnu(e)`.
-3. Vérifier que le client attend une réponse.
-4. Ajouter une note privée.
-5. Dans `Conversation`, envoyer le message libre, sans choisir de suite dans cet onglet.
-6. Vérifier qu'une relance de sécurité `Échange setter sans suite` est créée automatiquement si aucun RDV n'existe.
-7. Si le prospect accepte un appel, aller dans `Actions` et programmer le RDV setting depuis le bloc standard.
+3. Vérifier que le prospect attend une réponse.
+4. Ajouter une note interne.
+5. Dans `Conversation`, envoyer un message libre si la fenêtre WhatsApp est ouverte.
+6. Ne choisir aucune suite commerciale dans `Conversation`.
+7. Vérifier que l'action `Répondre au message` est clôturée.
+8. Vérifier qu'une relance de sécurité `Échange setter sans suite` est créée automatiquement si aucun rendez-vous n'existe.
 
-Résultat attendu : la réponse clôt l'action `Répondre au message`. Par défaut, la prochaine action est le flux `Échange setter sans suite`; si un RDV est programmé ensuite dans `Actions`, il remplace cette relance.
+Résultat attendu : la réponse clôt l'action entrante et la suite par défaut est créée par la logique métier, pas par un choix manuel dans le fil.
 
-## P2 Tanjona Relance Modèle
+## P3 Setter I Rendez-vous Setting
+
+Compte : `service.etudiants@essr.ch`.
+
+1. Repartir d'un faux prospect restauré ou d'un prospect Setter I encore actif.
+2. Aller dans `Actions`.
+3. Programmer un appel setting avec responsable, date, heure et note interne.
+4. Vérifier que l'action future apparaît dans la fiche.
+5. Déplacer le rendez-vous.
+6. Vérifier que l'heure affichée change.
+7. Annuler le rendez-vous avec une note interne.
+
+Résultat attendu : la programmation, le déplacement et l'annulation d'un rendez-vous setting sont compréhensibles et laissent une trace.
+
+## P4 Setter II Relance Modèle
 
 Compte : `setter2@essr.ch`.
 
@@ -84,7 +143,7 @@ Compte : `setter2@essr.ch`.
 
 Résultat attendu : la relance passe obligatoirement par un modèle, puis la prochaine action se met à jour.
 
-## P3 Demande De Modèle
+## P5 Demande De Modèle
 
 Compte : `setter2@essr.ch`.
 
@@ -98,7 +157,7 @@ Compte : `setter2@essr.ch`.
 
 Résultat attendu : la demande est visible dans `Modèles`. En staging/prod, seule l'approbation d'un vrai template Twilio peut débloquer une recommandation opérationnelle.
 
-## P4 Setting Call Vers Closing
+## P6 Setting Vers Closing
 
 Compte : `service.etudiants@essr.ch`.
 
@@ -111,7 +170,7 @@ Compte : `service.etudiants@essr.ch`.
 
 Résultat attendu : la note est obligatoire, l'action setting est terminée, une action closing est créée pour Yasmine. La note apparaît dans la conversation si les notes internes sont affichées.
 
-## P5 Closing Signé / Va Signer
+## P7 Closing Signé / Va Signer
 
 Compte : `yasmine@essr.ch`.
 
@@ -123,7 +182,7 @@ Compte : `yasmine@essr.ch`.
 
 Résultat attendu : `Signé` termine la conversation sans prochaine action. `Va signer` crée une relance Setter II selon le flux post-closing.
 
-## P6 Ne Plus Contacter Qui Réécrit
+## P8 Ne Plus Contacter Qui Réécrit
 
 Compte : `service.etudiants@essr.ch`.
 
@@ -135,7 +194,7 @@ Compte : `service.etudiants@essr.ch`.
 
 Résultat attendu : le statut de contact est levé, une action `Répondre au message` est créée. L'envoi reste impossible avant la levée du statut.
 
-## P7 Clore / Réactiver
+## P9 Clore / Réactiver
 
 Compte : `francois.dupuis@essr.ch`.
 
@@ -143,9 +202,46 @@ Compte : `francois.dupuis@essr.ch`.
 2. Ouvrir `Chloé Schmid` ou `Irina Lopes`.
 3. Cliquer `Réactiver`.
 4. Vérifier que le bouton reste bloqué sans note.
-5. Ajouter une note et réactiver avec une prochaine action.
+5. Ajouter une note interne et réactiver avec une prochaine action.
 6. Cliquer `Clore la conversation`.
 7. Vérifier que le bouton reste bloqué sans note.
-8. Ajouter une note et clore.
+8. Ajouter une note interne et clore.
 
-Résultat attendu : réactivation et clôture exigent une note. Les notes apparaissent dans la conversation si les notes internes sont affichées.
+Résultat attendu : réactivation et clôture exigent une note interne. Les notes apparaissent dans la conversation si les notes internes sont affichées.
+
+## P10 Lead Réel Site Web
+
+À exécuter seulement après réussite des faux prospects restaurables.
+
+1. Depuis le site web, créer un vrai lead de test avec un nom explicite, par exemple `Test SalesCockpit Lead`.
+2. Utiliser un numéro WhatsApp et une adresse e-mail de test contrôlés par l'équipe.
+3. Attendre le webhook SchoolDrive.
+4. Vérifier dans Sales Cockpit :
+   - création ou mise à jour du lead ;
+   - lien SchoolDrive présent ;
+   - autoresponder SchoolDrive visible seulement s'il est réellement `sent` ;
+   - action Setter II créée seulement si le scénario le prévoit ;
+   - absence de doublon après rafraîchissement ou replay.
+5. Envoyer une réponse WhatsApp depuis le numéro de test.
+6. Vérifier qu'une action `Répondre au message` remonte côté Setter I.
+
+Résultat attendu : un lead réel du site web arrive dans le cockpit avec les bons liens, statuts, messages et actions.
+
+## P11 Préinscription Réelle Site Web
+
+À exécuter après P10.
+
+1. Depuis le site web, créer une vraie préinscription de test avec un nom explicite, par exemple `Test SalesCockpit Presubscription`.
+2. Utiliser un numéro WhatsApp et une adresse e-mail de test contrôlés par l'équipe.
+3. Attendre le webhook SchoolDrive.
+4. Vérifier dans Sales Cockpit :
+   - création ou mise à jour de la préinscription ;
+   - lien SchoolDrive présent ;
+   - cours, session et date de début corrects ;
+   - capacité/session full correctement reflétée si SchoolDrive l'envoie ;
+   - action commerciale créée seulement si la préinscription reste traitable ;
+   - absence de doublon après rafraîchissement ou replay.
+5. Si SchoolDrive peut envoyer un événement de signature/enrolment de test, le déclencher.
+6. Vérifier que Sales Cockpit termine ou protège la conversation selon le statut reçu.
+
+Résultat attendu : une préinscription réelle du site web arrive dans le cockpit, reste rattachée à SchoolDrive et réagit correctement aux signaux de capacité et d'inscription.

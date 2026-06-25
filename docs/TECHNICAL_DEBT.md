@@ -1,29 +1,64 @@
-# Technical Debt And V2 Notes
+# Sales Cockpit - Technical Debt V1
 
-This document tracks deliberate V1 shortcuts that must not be forgotten during staging and production cutover.
+This document tracks the V1 debt that matters for staging, production cutover, and the first V2 planning pass.
 
-## Workflow Invariants Hardening
+## Maintenant
 
-The V1 workflow now relies on this invariant: an open commercial conversation must have one active next action, except for tightly controlled internal transitions. The nominal UI path is aligned, but several safeguards should be hardened before external automation or V2 workflow expansion.
+These items should be handled before or during the real cutover window because they affect operational correctness.
 
-V2 debt:
+### SchoolDrive Signals
 
-- make critical store transitions atomic: validate the next step, assignee, outcome, and sequence availability before marking the current task `done`;
-- validate `action_outcome` strictly by action type so an unsupported outcome cannot close an action without creating the expected next state;
-- add a stronger guard against multiple active main actions, while preserving the intentional `reply` plus planned call exception;
-- decide explicitly whether `manual_reprise` plus planned call is an allowed exception or a data anomaly;
-- make `pre_cutover_check.py` strictly read-only, or document why it is allowed to call `seed_initial_data()`;
-- evaluate a global hook for outbound messages sent without an active `reply` or `follow_up`;
-- update any remaining legacy copy that says a user should choose the next commercial action from `Conversation`;
-- replace legacy "post-call undecided follow-up" wording with "manual reprise" everywhere it still appears.
+- Confirm that SchoolDrive emits a fresh webhook when a WhatsApp autoresponder status changes to `sent`.
+- Confirm the exact signature/enrolment payload and trigger.
+- Confirm how course/session capacity is represented, including `capacity`, `is_full`, `available_seats`, and session-full cases.
+- Confirm whether a lead or presubscription can produce several enrolments.
+- Confirm the stable relationship from lead/presubscription to enrolment.
+- Confirm which IDs and timestamps are stable enough to use for idempotency and audit.
 
-## Refactoring Before Official V2
+### Real Site Validation
 
-V1 intentionally concentrated a lot of behavior in a small number of files to move fast during the cutover window. This is acceptable for the V1 launch, but it must not become the long-term architecture.
+- Run the final manual protocol with restored fake prospects.
+- Finish with one real lead created from the website.
+- Finish with one real presubscription created from the website.
+- Verify SchoolDrive links, autoresponder visibility, action creation, duplicate protection, capacity handling, and enrolment handling.
 
-Before starting the official V2 feature track, extract:
+### Twilio Cutover Readiness
 
-- `workflow_engine`: parcours/flux/action transitions, call cycles, no-show logic, course-start arbitration, safeguards;
+- Synchronize real ESSR Twilio templates in read-only mode.
+- Ensure every mapped follow-up step uses a real approved Content SID (`HX...`, not `HX_MOCK_*`).
+- Keep real Twilio writes and sends disabled until explicit cutover.
+- Confirm HTTPS inbound and status callback URLs before live mode.
+
+### Workflow Invariants
+
+- Preserve the V1 invariant: an open commercial conversation must have one clear active next action, except the controlled urgent-response plus planned-call case.
+- Validate that completing a response action, relance, setting call, or closing call creates the expected next state.
+- Keep active-conversation-without-next-action checks visible before cutover.
+- Remove or update any remaining legacy copy that suggests choosing the next commercial action from the conversation thread.
+
+### Pre-Cutover Check
+
+- `pre_cutover_check.py --strict-prod` is read-only and does not seed.
+- Current rule: non-strict local/staging checks may seed baseline data for readiness.
+- Ensure strict production checks fail on demo seed data, missing secrets, non-HTTPS callbacks, stale backups, blocked actions, pending template requests, or missing template mappings.
+
+## Plus Tard
+
+These items are acceptable V1 limitations but should shape the V2 backlog.
+
+### Workflow Engine Hardening
+
+- Make critical store transitions atomic: validate next step, assignee, outcome, and sequence availability before marking the current task `done`.
+- Validate action outcomes strictly by action type.
+- Add a stronger guard against multiple active main actions while preserving the urgent-response plus planned-call exception.
+- Decide explicitly whether manual reprise plus planned call is an allowed exception or a data anomaly.
+- Add parity tests proving that API workflow endpoints enforce the same rules as the Streamlit UI and store path.
+
+### Refactoring Before Official V2
+
+Extract the largest behavior areas before adding IA automation, PBX/softphone, A/B testing, or richer SchoolDrive write-back:
+
+- `workflow_engine`: parcours, flux, actions, call cycles, no-show logic, course-start arbitration, safeguards;
 - `schooldrive_ingest`: webhook idempotency, snapshot freshness, payload normalization, SchoolDrive business signals;
 - `twilio_templates`: Content API sync, template requests, approval/unblock logic, mapping validation;
 - `twilio_messaging`: outbox send path, status callbacks, delivery-state transitions, live-mode guards;
@@ -32,189 +67,126 @@ Before starting the official V2 feature track, extract:
 
 Current large files to split first: `sales_cockpit/store.py`, `sales_cockpit/ui/app.py`, `sales_cockpit/db.py`.
 
-Do this as a cleanup phase before adding IA automation, PBX/softphone, A/B testing, or richer SchoolDrive write-back. The goal is to keep the V1 cutover stable while making V2 safer to extend.
+### Conversation Journal Analytics
 
-## Conversation Journal Analytics
+The V1 journal is a deterministic projection over canonical tables (`messages`, `tasks`, `lead_events`, SchoolDrive webhook records, and Front buffer records). Before using it for heavy analytics:
 
-### V1 Implemented Guardrail
+- audit historical conversations for missing `lead_events`;
+- decide whether backfill is worth the operational risk;
+- extract the projection out of `store.py` if categorization grows;
+- consider a materialized journal only if projection queries become too slow;
+- add event-quality metrics for missing actor, effect, or sequence metadata.
 
-The conversation journal is a deterministic projection over the existing canonical tables (`messages`, `tasks`, `lead_events`, SchoolDrive webhook records, and Front buffer records). It avoids creating a second source of truth and deliberately hides WhatsApp message bodies while keeping internal notes visible.
+### Identity Resolution
 
-### V2 Debt
+Inbound WhatsApp matching remains intentionally conservative in V1:
 
-Before using the journal for heavy AI analytics or cross-conversation reporting:
+- one exact phone match: attach to that lead;
+- zero exact matches: create `Inconnu(e)` marked `À identifier`;
+- multiple exact matches: create `Inconnu(e)` marked `À identifier` and store candidates.
 
-- audit historical conversations for missing `lead_events` and decide whether a backfill is worth the operational risk;
-- extract the journal projection out of `store.py` if it starts gaining more categorization rules;
-- consider a read-optimized materialized journal table only if projection queries become too slow or analytics require global scans;
-- add event-quality metrics so missing actor, effect, or sequence metadata is visible before training/evaluation.
-
-## Identity Resolution
-
-### V1 Implemented Guardrail
-
-Inbound WhatsApp matching is intentionally conservative:
-
-- one exact phone match in Sales Cockpit: attach the message to that lead;
-- zero exact matches: create a temporary `Inconnu(e)` lead marked `À identifier`;
-- multiple exact matches: create a temporary `Inconnu(e)` lead marked `À identifier` and store the candidate leads for manual review.
-
-Users can temporarily fill:
-
-- first name;
-- last name;
-- course category;
-- course/session;
-- identification note.
-
-The temporary data is operational only. It does not replace SchoolDrive as source of truth.
-
-### V2 Debt
-
-Sales Cockpit still needs a real identity-resolution workflow:
+V2 needs a real identity-resolution workflow:
 
 - search/replay SchoolDrive by phone, name, and email;
-- merge a temporary Sales Cockpit lead into the correct SchoolDrive-backed lead;
-- preserve and move the WhatsApp thread, messages, actions, events, notes, and Front history during merge;
-- expose candidate selection in the UI for ambiguous matches;
-- periodically retry matching temporary leads against newly created SchoolDrive records;
-- decide whether Front unmatched conversations can create temporary identity records or stay in the Front buffer until matched.
+- merge a temporary lead into the correct SchoolDrive-backed lead;
+- preserve and move WhatsApp thread, messages, actions, events, notes and Front history during merge;
+- expose candidate selection in the UI;
+- periodically retry matching temporary leads against new SchoolDrive records;
+- decide whether unmatched Front conversations create temporary identities or stay in the Front buffer.
 
-### Cutover Risk
+Wrong identity attachment is more dangerous than a temporary `À identifier` record.
 
-Do not auto-attach an inbound WhatsApp to a candidate when more than one lead shares the same phone number. Wrong identity attachment is more dangerous than a temporary `À identifier` record.
+### Sequence Recalculation
 
-## Sequence Recalculation
+V1 Pilotage changes affect only future tasks created after save. V2 should add controlled recalculation:
 
-### V1 Implemented Guardrail
-
-Admins can tune active course categories, flux steps, and template mappings in Sales Cockpit. These changes deliberately affect only future flux actions created after the save.
-
-Existing open tasks keep their original due date, step index, assignee, and recommended template. This avoids silently changing work already visible in a user's queue.
-
-Flux steps are now stored as absolute offsets from the flow trigger (`offset_direction`, `offset_amount`, `offset_unit`). Recalculation must therefore use the original sequence anchor stored on tasks as `metadata_json.sequence_anchor_at`; it must not chain from the previous task's completion time.
-
-### V2 Debt
-
-Add a controlled recalculation workflow:
-
-- preview which open or future tasks would change;
+- preview affected open or future tasks;
 - show old versus new due date, step, template and assignee;
-- let an admin apply the recalculation only to selected fluxes, categories, or leads;
+- let an admin apply changes by flux, category or lead;
 - write an audit log entry for every recalculated task;
 - never recalculate completed, cancelled, archived, signed, non pertinent, or do-not-contact conversations.
 
-Do not add draft/publish/rollback for Pilotage in V1. It was considered and rejected as overkill for the cutover. Revisit only if Laura's tuning cadence creates real operational risk.
+Flux steps are stored as absolute offsets from the flow trigger. Recalculation must use `metadata_json.sequence_anchor_at`, not the previous task completion time.
 
-## Unsupported Course Categories
+### Unsupported Course Categories
 
-### V1 Implemented Guardrail
+If SchoolDrive sends a lead or presubscription for an inactive category, V1 stores the conversation and SchoolDrive WhatsApp messages, then creates a Setter I review task instead of starting Setter II automation.
 
-If SchoolDrive sends a lead or presubscription for a category not active in `course_categories`, Sales Cockpit stores the conversation and SchoolDrive WhatsApp messages, but creates a Setter I review task instead of starting the structured Setter II follow-up flux.
-
-### V2 Debt
-
-Add a guided admin workflow to activate a new course category:
+V2 should add a guided admin workflow:
 
 - choose or create the category;
 - configure the default session;
-- define templates for every required flow step;
+- define templates for required flow steps;
 - run a simulator before activation;
-- optionally reprocess the waiting review tasks once the category is configured.
+- optionally reprocess waiting review tasks.
 
-## Course-Start Follow-Up Engine
+### Course-Start Follow-Up Engine
 
-### V1 Implemented Guardrail
+V1 can create course-start follow-ups from `course.start_date` or active default session date. It does not interrupt planned setting/closing calls, and it can replace lead/presubscription follow-ups within 24h.
 
-Course-start follow-ups can now be created from the SchoolDrive `course.start_date` or from the active default session date for the course category.
+V2 should add:
 
-Runtime behavior:
+- periodic sweep for upcoming course-start reminders even without fresh SchoolDrive events;
+- preview/recalculation after default-session or flux changes;
+- conflict explanation before applying changes;
+- audit logs for cancelled or replaced tasks;
+- proactive detection of default sessions that have passed.
 
-- if a setting/closing call is already planned, the course-start follow-up does not interrupt it;
-- if a course-start follow-up conflicts with a lead/presubscription follow-up within 24h, the course-start follow-up wins and the lead-relative follow-up is cancelled;
-- if a category has no active default session and SchoolDrive provides no `start_date`, no course-start follow-up is created.
+### Capacity Freshness
 
-### V2 Debt
-
-Add a global scheduling/recalculation workflow:
-
-- periodic sweep that detects upcoming course-start reminders even when no fresh SchoolDrive event arrives;
-- preview and recalculate affected future tasks after an admin changes default sessions, course-start flux steps, or template mappings;
-- explain conflicts before applying changes;
-- preserve planned setting/closing calls as non-interruptible actions;
-- write audit logs for every cancelled/replaced task.
-
-Also add a periodic check for default sessions that have passed, even if no new SchoolDrive event arrives that day. V1 creates an admin action when such a stale default session is encountered during ingestion; V2 should find it proactively.
-
-### Course Capacity Freshness
-
-V1 reacts to the latest SchoolDrive webhook fields for course/session capacity (`course_full`, `session_full`, `is_full`, `available_seats`, or equivalent normalized signals). If SchoolDrive marks a course full, Sales Cockpit stops open follow-ups and routes the case to Setter I, or annotates the planned call if one exists.
-
-Known debt: before sending a course-start follow-up, Sales Cockpit does not yet perform a live SchoolDrive capacity check. It assumes the latest webhook is current. Before automating course-start sends, add one of these safeguards:
+V1 trusts the latest SchoolDrive webhook fields for capacity. Before automating course-start sends, add one of these safeguards:
 
 - SchoolDrive emits a webhook every time course/session capacity changes;
-- or Sales Cockpit performs a pre-send SchoolDrive capacity lookup immediately before the message is sent.
+- or Sales Cockpit performs a live SchoolDrive capacity lookup immediately before send.
 
-Without this, a course could become full after a follow-up was scheduled but before Setter II sends it.
+Without this, a course could become full after scheduling but before Setter II sends the message.
 
-## Admin Work Queues
+### Admin Work Queues
 
-### V1 Implemented Guardrail
-
-Template requests and bug reports now create explicit rows in `admin_actions`:
-
-- template requests appear in `Modèles`, and create an admin action that can be completed;
-- bug reports appear in `Admin > Signalements`, and create an admin action that can be completed;
-- both keep the source context needed for review and are visible in `Admin > Actions admin`.
-
-They deliberately do not create a standard commercial `tasks` row. Commercial tasks are lead/conversation-based, while a bug report can be global and a template request can be a support item rather than the prospect's next commercial action. The dedicated `admin_actions` table keeps admin workload visible without blurring the workflow model.
-
-### V2 Debt
-
-Extend the existing admin-action layer if admin workload needs richer operations:
+Template requests and bug reports use `admin_actions`, not standard commercial tasks. Extend this layer if admin workload needs:
 
 - assignment to a specific admin;
 - due dates and priorities;
-- filters by kind, status, and source page;
+- filters by kind, status and source page;
 - Twilio approval polling incidents;
 - integration incidents;
 - richer audit trail for reopen/reassign/close.
 
-Keep the current distinction between prospect next actions and internal support work.
+Keep the distinction between prospect next actions and internal support work.
 
-## Automatic Absence Transfers
+### Appointment Reminders
 
-Automatic task transfers between collaborators are intentionally out of V1 scope. Working hours are useful as reference data, but absence/back-up routing adds complexity for limited operational benefit. If someone is absent, another collaborator can manually open that person's queue and process the needed tasks.
-
-## Appointment Reminders
-
-### V1 Implemented Guardrail
-
-Setting and closing appointments are visible as future call-documentation actions. When the due time arrives, the task becomes actionable and the user documents whether the prospect was reached.
-
-If the prospect is not reached, V1 creates call retry actions at roughly +2h and +24h before switching to the appropriate no-show flux.
-
-### V2 Debt
-
-Add optional WhatsApp reminders before planned appointments:
+Setting and closing appointments are visible as future call-documentation actions in V1. V2 can add optional WhatsApp reminders:
 
 - J-1 reminder when the appointment is more than 24h away;
 - H-1 reminder when the appointment is more than 1h away;
 - no reminder if the appointment is too soon;
-- cancellation when the appointment is moved, cancelled, or replaced;
-- template mapping by course, role, and appointment type.
+- cancellation when moved, cancelled or replaced;
+- template mapping by course, role and appointment type.
 
 These reminders must never override the appointment itself.
 
-## API/UI Workflow Parity
+## Abandonné V1
 
-Some API endpoints are intentionally thin V1 wrappers around the core store functions. Before exposing these endpoints to external IA agents or automation tools, verify that the API path enforces exactly the same outcome logic as the Streamlit UI:
+These ideas were considered and deliberately left out of V1.
 
-- action outcome selection;
-- next-action creation;
-- template recommendation and request blocking;
-- safeguards and outbox behavior;
-- call reschedule/cancel/documentation flows;
-- terminal statuses and SchoolDrive signals.
-
-The rule for V2: external tools may call APIs only after each workflow-changing endpoint has a dedicated test proving parity with the UI/store path.
+- PBX/softphone integration.
+- Agenda/calendar synchronization; V1 only exposes optional calendar hyperlinks.
+- Notion enrichment or write-back.
+- IA setter automation and automatic relance sending.
+- Playwright automation as a mandatory validation layer; V1 uses a written manual protocol plus Streamlit AppTest coverage.
+- Multilingual UI and message orchestration.
+- Flux recalculation for existing open tasks after Pilotage edits.
+- Advanced identity resolution and merge workflow.
+- Live SchoolDrive capacity lookup before each send.
+- Multiple-enrolment automation beyond preserving and reviewing incoming signals.
+- A/B testing of templates, timings, or conversation flows.
+- Performance/pagination work beyond current list guards and indexes.
+- Automated handling of unknown Twilio callbacks beyond storing/reporting current known statuses.
+- External workflow API/UI parity as a release gate beyond the hardened send/action paths covered now.
+- Draft/publish/rollback for Pilotage. Revisit only if Laura's tuning cadence creates real operational risk.
+- Automatic absence transfers between collaborators. Another collaborator can manually open the absent person's queue.
+- Automatic conversion of Front active conversations at large scale before a reviewed pilot batch proves the conversion rules.
+- Live SchoolDrive write-back beyond the validated webhook/status signals.
+- Heavy AI analytics on the conversation journal before event quality is audited.
+- External IA agents or automation tools calling workflow-changing APIs before API/UI parity tests exist.

@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from sales_cockpit.api.main import app
 from sales_cockpit.config import get_settings
 from sales_cockpit.db import seed_initial_data
+from sales_cockpit.store import record_inbound_message
 
 
 def test_application_api_requires_configured_token(monkeypatch) -> None:
@@ -33,6 +34,24 @@ def test_application_api_accepts_bearer_token(monkeypatch) -> None:
     assert wrong.status_code == 403
     assert ok.status_code == 200
     assert isinstance(ok.json(), list)
+    get_settings.cache_clear()
+
+
+def test_application_send_api_requires_action_id_for_active_whatsapp_action(monkeypatch) -> None:
+    monkeypatch.setenv("SALES_COCKPIT_API_TOKEN", "api-secret")
+    get_settings.cache_clear()
+    seed_initial_data()
+    result = record_inbound_message("+41790006666", "Bonjour.")
+    client = TestClient(app)
+
+    response = client.post(
+        f"/conversations/{result['conversation_id']}/messages",
+        json={"user_id": 1, "body": "Bonjour."},
+        headers={"Authorization": "Bearer api-secret"},
+    )
+
+    assert response.status_code == 409
+    assert "action_id requis" in response.json()["detail"]
     get_settings.cache_clear()
 
 

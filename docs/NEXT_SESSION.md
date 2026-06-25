@@ -4,7 +4,7 @@
 
 Read `docs/CURRENT_STATE.md` first. It contains the current production-readiness state, the exact SchoolDrive AR-sent blocker, and the next operational decisions.
 
-Also read `docs/ADVERSARIAL_REVIEW.md` before making cutover decisions. It records the latest adversarial review findings; the listed corrections are deliberately not implemented yet.
+Also read `docs/ADVERSARIAL_REVIEW.md` before making cutover decisions. It records the latest adversarial review findings; several listed corrections have since been implemented locally, but they still need staging/prod deployment and validation.
 
 Sales Cockpit is a runnable staging prototype.
 
@@ -49,7 +49,7 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 
 ## Important Recent Decisions
 
-- Latest local hardening validation: `170 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\full`, plus `py_compile` OK for `store.py`, `ui/app.py`, and `ui/action_presenter.py`.
+- Latest local hardening validation: `204 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\full`, plus `compileall` OK after the V1 pre-cutover hardening.
 - Status / qualification / reactivation saves were hardened: terminal qualifications and contact statuses now keep `Parcours`, conversation status, and next action aligned. `init_db()` also normalizes existing impossible terminal combinations, such as signed leads not shown as `won`, `Ne plus contacter` leads not shown as `blacklist`, and sequence-completed conversations not shown as `lost`.
 - Use `--basetemp=.pytest-tmp\run` on Windows if Pytest fails after successful test execution because it cannot clean `pytest-current` in `%TEMP%`.
 - Workflow reconciliation after the latest review: a terminal qualification or `Ne plus contacter` can no longer silently coexist with ordinary commercial sends/actions; inbound on those states creates a human review; manually lifting `Ne plus contacter` closes the stale review and recreates `reply` only if the last inbound is unanswered; template requests/admin actions linked to obsolete follow-ups are cancelled.
@@ -93,7 +93,7 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - `sales_stage` is displayed as `Parcours` only in compact status chips. It must not be editable from the UI.
 - `Parcours` is operationally dangerous because it can force the next action. In V1 it is not user-editable; if a case is missing, add a real workflow path instead of restoring manual forçage.
 - Updating qualification/contact status without changing `Parcours` must not replace the current next action. If `Parcours` is forced to `appointment_booked`, it creates a `setting_call`. If qualification changes to `will_sign` without that force, it creates a Setter II follow-up.
-- Private notes are always included in the future learning base; there is no checkbox in the UI.
+- Notes internes are always included in the future learning base; there is no checkbox in the UI.
 - The global `Tâches` view filters by individual responsible people, not only by role.
 - `Non pertinent` and `Ne plus contacter` are separate. `Non pertinent` is commercial qualification. `Ne plus contacter` is a separate contact status.
 - If a `Ne plus contacter` prospect writes again, create a `contact_review` action for Setter I. Do not create automatic follow-ups.
@@ -121,7 +121,7 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - `reply` and `follow_up` should not be manually marked as sent in the main Actions flow. The normal proof is the outbound WhatsApp message from the Conversation composer.
 - The Conversation composer must not capture the next commercial action for a `reply`. It sends messages, approved templates, and template requests only.
 - If the prospect accepts an appointment after a reply, the user sends the WhatsApp message first, then creates the setting or closing call from the stable Actions block.
-- The Actions tab is now stable: status banner, fixed standard block, then action history. `reply` and `follow_up` explain that the work is done from `Conversation`; the standard block can schedule/modify calls, request/document manual reprises, document due calls, and skip eligible flow steps.
+- The Actions tab is now stable: status banner and fixed standard block. Action/event history lives in `Journal`. `reply` and `follow_up` explain that the work is done from `Conversation`; the standard block can schedule/modify calls, request/document manual reprises, document due calls, and skip eligible flow steps.
 - V1 no longer exposes `Actions avancées`. `reply` and `follow_up` must be resolved through the Conversation composer so there is a real outbound-message proof. Do not reintroduce generic manual action creation, off-cockpit message completion, manual handoff to closer, manual data correction, or conversation reopen there.
 - Setting and closing calls can be completed with business outcomes that create the next action.
 - No-show retries are counted per appointment cycle through `tasks.call_cycle_id` and `tasks.call_attempt_index`. A new setting/closing appointment starts a new cycle, so old no-shows do not make the system skip to the wrong retry.
@@ -170,7 +170,7 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - Tanjona is currently seeded as `setter2@essr.ch`.
 - The UI normalizes old `Setter 2` display names to `Tanjona` to handle stale local sessions or older seeded databases.
 - Dropdown labels should be displayed in French while internal values remain English.
-- Private notes remain yellow and align right like team messages.
+- Notes internes remain yellow and align right like team messages.
 - Action notes, call notes, closure notes, and reactivation notes also appear as yellow internal notes in the conversation thread. The Conversation tab has a checkbox to show or hide internal notes.
 - Reply tools live below the conversation thread.
 - SchoolDrive link appears next to the prospect name, opening in a new tab.
@@ -187,7 +187,7 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - Mock seed creates at least one open task per active user so every responsible-person queue can be inspected.
 - Inbound unanswered prospects show a restrained hot signal in Inbox and `Tâches`, sort above ordinary due actions, and the mock seed includes `Léa Martin` as a waiting-reply example.
 - Inbox and `Tâches` auto-refresh every 10 seconds while visible.
-- The right-side detail tabs use the same order in `Tâches` and Inbox: `Conversation`, `Actions`, `Notes privées`.
+- The right-side detail tabs use the same order in `Tâches` and Inbox: `Conversation`, `Actions`, `Notes internes`.
 - Inbox and `Tâches` use `Toutes` for the all-items tab.
 - Left split-screen cards use `Voir`, not `Ouvrir`.
 - The `Prochaine action` card shows only the action type, due date/time, and responsible-person badge.
@@ -195,7 +195,7 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - WhatsApp window text is explicit: `Ferme le ... à ...`, `Fermée le ... à ...`, or `Jamais ouverte` when no client reply has ever opened the window.
 - Streamlit developer toolbar options are hidden with `client.toolbarMode = "viewer"` in `.streamlit/config.toml` to avoid exposing the `Clear caches` command in the UI.
 - Demo data is versioned with `DEMO_SEED_VERSION` in `sales_cockpit/db.py`. The seed refreshes only `SD-DEMO-*` leads when the demo scenario version changes.
-- Current coherent demo scenarios are `SD-DEMO-4001` through `SD-DEMO-4019`; see `docs/TEST_PLAN.md`.
+- Current coherent demo scenarios are `SD-DEMO-4001` through `SD-DEMO-4025`; see `docs/TEST_PLAN.md`.
 - Before a clean manual validation pass, run `.\.venv\Scripts\python.exe scripts\reset_demo.py` to reset those demo scenarios.
 - Manual validation checklist is in `docs/TEST_PLAN.md`.
 - Navigation now includes `Mode d'emploi`; non-admin users no longer see the `Admin` page.
@@ -213,9 +213,9 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 
 ## Current Validation
 
-Latest known local validation after the V1 workflow update:
+Latest known local validation after the V1 pre-cutover hardening:
 
-- `pytest` with local temp directory: 170 tests passing.
+- `pytest` with local temp directory: 204 tests passing.
 - `compileall`: passed for `sales_cockpit`.
 - `git diff --check`: passed.
 - BOM scan: clean for tracked/project files.
@@ -254,7 +254,7 @@ Latest known local validation after the V1 workflow update:
 - The matched Front row is `cnv_1mz0vz4w`, phone `+33669502201`, linked to `subscription:131887` / Lea Bucco. Front history attachment added 11 `front_history` messages. Conversion dry-run skipped it because a `follow_up` action already exists.
 - Admin readiness on staging is green for SchoolDrive, Front, Twilio, Backup, and Workflow. The workflow count explicitly separates 1 SchoolDrive record waiting for the first sent autoresponder from true open conversations without action.
 - Latest staging pre-cutover check passed with `scripts/pre_cutover_check.py --api-base http://127.0.0.1:8602 --ui-url http://127.0.0.1:8502`.
-- `scripts/reset_demo.py`: verified on a temporary SQLite database and creates 19 `SD-DEMO-*` leads.
+- `scripts/reset_demo.py`: verified on a temporary SQLite database and creates 25 `SD-DEMO-*` leads (`SD-DEMO-4001` through `SD-DEMO-4025`).
 - Streamlit AppTest smoke covers reply-action guidance and absence of the generic `Terminer l'action` button in the main Actions flow.
 - Pytest uses an isolated temporary SQLite database via `tests/conftest.py`; it should not create test leads in the local app database.
 - Streamlit smoke tests passed during the session.
@@ -294,7 +294,7 @@ Stop-Process -Id <PID> -Force
 - Staging has `SALES_COCKPIT_SCHOOLDRIVE_INGEST_MIN_SENT_AT=2026-06-22T00:00:00Z` to prevent historical sent WhatsApp records from becoming operational conversations during final testing.
 - New SchoolDrive records without usable identity, without a WhatsApp autoresponder, or with sent autoresponders older than the configured cutoff are acknowledged and logged as ignored. Queued/sending/moderation-pending records with identity are kept as waiting records.
 - After cleanup, staging `pre_cutover_check` passed on commit `e388ed1`, database size was about 0.7 MB, with no foreign-key violations. A live post-cleanup presubscription `subscription:131968` was accepted with AR `armsg:1021237` (`sent`) and routed to a human review action because the SchoolDrive payload had no course category.
-- The cleanup script is `scripts/cleanup_schooldrive_staging.py`. It is dry-run by default and refuses production unless `--allow-production` is supplied. It exists for non-production cleanup only; do not use it casually on prod.
+- The cleanup script is `scripts/cleanup_schooldrive_staging.py`. It is dry-run by default and now refuses `prod` / `production` even if the deprecated `--allow-production` flag is supplied. It exists for staging cleanup only.
 - If many SchoolDrive records reappear in staging, first check whether they have `ignored_reason` values. A high ignored-event count is acceptable; high `leads.source='schooldrive_webhook'` count is not.
 - SchoolDrive fixed the missing course/category payload issue and now sends a nested `course` structure, or a `product` structure for Roadmap leads. Sales Cockpit supports this locally and has tests for Nutrition subscription, FSM lead with linked subscription, FSM lead without linked subscription, and Roadmap product lead. The remaining validation is a fresh live staging event using this new shape.
 - SchoolDrive URL format is provided by Tiago's webhook contract and should be checked during the first staging replay.

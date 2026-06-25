@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from datetime import timedelta
 
@@ -331,6 +332,86 @@ def test_schooldrive_sent_whatsapp_for_unconfigured_category_creates_human_revie
     assert action["assigned_to_email"] == "service.etudiants@essr.ch"
 
 
+def test_schooldrive_api_preserves_extra_fields_and_projects_capacity(monkeypatch) -> None:
+    seed_initial_data()
+    monkeypatch.setenv("SALES_COCKPIT_SCHOOLDRIVE_WEBHOOK_TOKEN", "sd-test-token")
+    get_settings.cache_clear()
+    payload = schooldrive_payload(
+        event_id="evt_extra_fields_capacity",
+        schooldrive_id="subscription:extra-fields",
+        lead_type="presubscription",
+    )
+    payload["data"]["unexpected_root_field"] = {"kept": True}
+    payload["data"]["course"].update(
+        {
+            "id": "course-extra-1",
+            "session_id": "session-extra-1",
+            "session_name": "APP GE P26",
+            "start_date": "2026-09-01",
+            "capacity_total": 20,
+            "capacity_occupied": 12,
+            "capacity_available": 8,
+            "unexpected_course_field": "kept too",
+        }
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/webhooks/schooldrive/lead-or-presubscription",
+        json=payload,
+        headers={"Authorization": "Bearer sd-test-token"},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["session_id"] == "session-extra-1"
+    assert conversation["session_name"] == "APP GE P26"
+    assert conversation["capacity_total"] == 20
+    assert conversation["capacity_occupied"] == 12
+    assert conversation["capacity_available"] == 8
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT payload_json FROM schooldrive_webhook_events WHERE event_id = ?",
+            ("evt_extra_fields_capacity",),
+        ).fetchone()
+        lead_row = conn.execute(
+            "SELECT schooldrive_payload_json FROM leads WHERE id = ?",
+            (result["lead_id"],),
+        ).fetchone()
+    event_payload = json.loads(row["payload_json"])
+    lead_payload = json.loads(lead_row["schooldrive_payload_json"])
+    assert event_payload["data"]["unexpected_root_field"] == {"kept": True}
+    assert event_payload["data"]["course"]["unexpected_course_field"] == "kept too"
+    assert lead_payload["data"]["unexpected_root_field"] == {"kept": True}
+
+
+def test_schooldrive_api_accepts_roadmap_product_without_course(monkeypatch) -> None:
+    seed_initial_data()
+    monkeypatch.setenv("SALES_COCKPIT_SCHOOLDRIVE_WEBHOOK_TOKEN", "sd-test-token")
+    get_settings.cache_clear()
+    payload = schooldrive_payload(
+        event_id="evt_api_roadmap_without_course",
+        schooldrive_id="lead:api-roadmap",
+    )
+    payload["data"].pop("course", None)
+    payload["data"]["product"] = {"roadmap_descriptive_id": "ASCA_RME"}
+
+    client = TestClient(app)
+    response = client.post(
+        "/webhooks/schooldrive/lead-or-presubscription",
+        json=payload,
+        headers={"Authorization": "Bearer sd-test-token"},
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["course_title"] == "Roadmap ASCA_RME"
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["trigger_reason"] == "unconfigured_course_category"
+
+
 def test_schooldrive_later_autoresponder_does_not_recreate_initial_followup() -> None:
     seed_initial_data()
     first = ingest_schooldrive_snapshot(schooldrive_payload())
@@ -547,6 +628,47 @@ def test_schooldrive_snapshot_accepts_roadmap_product_without_course() -> None:
     action = get_next_action_for_lead(result["lead_id"])
     assert action["type"] == "other"
     assert action["trigger_reason"] == "unconfigured_course_category"
+
+
+def test_schooldrive_snapshot_accepts_roadmap_product_with_non_identity_course_fields() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload(
+        event_id="evt_roadmap_product_partial_course",
+        schooldrive_id="lead:roadmap-partial-course",
+        lead_type="lead",
+    )
+    payload["data"]["course"] = {
+        "start_date": "2026-10-01",
+        "capacity_available": 12,
+    }
+    payload["data"]["product"] = {"roadmap_descriptive_id": "ASCA_RME"}
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["course_id"] == "ASCA_RME"
+    assert conversation["course_title"] == "Roadmap ASCA_RME"
+    assert conversation["course_start_date"].startswith("2026-10-01")
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "other"
+    assert action["trigger_reason"] == "unconfigured_course_category"
+
+
+def test_schooldrive_snapshot_detects_top_level_course_full_without_course_object() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload(
+        event_id="evt_top_level_course_full",
+        schooldrive_id="lead:top-level-course-full",
+        lead_type="lead",
+    )
+    payload["data"].pop("course")
+    payload["data"]["course_full"] = True
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "other"
+    assert action["trigger_reason"] == "schooldrive_course_full"
 
 
 def test_schooldrive_connector_supports_subscription_urls() -> None:

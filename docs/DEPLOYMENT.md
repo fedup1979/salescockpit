@@ -136,6 +136,15 @@ Repeat for `prod` and `dev` when needed. PROD has already been prepared once and
 sudo REPO_URL=git@github.com:fedup1979/salescockpit.git BRANCH=main bash deploy/scripts/deploy_env.sh prod
 ```
 
+Optional V1 calendar links can be configured per environment:
+
+```text
+SALES_COCKPIT_SETTER_CALENDAR_URL=
+SALES_COCKPIT_CLOSER_CALENDAR_URL=
+```
+
+When present, the UI shows `Ouvrir le calendrier` in call scheduling sections. There is no agenda synchronization in V1.
+
 ## Twilio Sandbox
 
 Use sandbox first. Do not switch production WhatsApp traffic until the cockpit has passed scenario testing.

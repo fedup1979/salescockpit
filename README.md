@@ -70,7 +70,7 @@ Seeded accounts:
 - Contextual Actions tab where WhatsApp actions are normally completed by sent-message proof, while calls require result and note.
 - Lead qualification.
 - Formal business rules visible in Admin.
-- Manual private WhatsApp notes.
+- Manual internal WhatsApp notes.
 - Bug reporting with activity logs.
 - Scenario reset script for clean local validation.
 - FastAPI endpoints for future webhooks.

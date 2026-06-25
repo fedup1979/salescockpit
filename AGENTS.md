@@ -105,13 +105,13 @@ Operational rule:
 - The Conversation composer captures the business outcome for `reply` at send time and creates the next action from that outcome.
 - Planned call actions are future actions to document the call result. When the due time arrives, they appear in `Tâches`; the user completes them in Actions with result plus mandatory note.
 - Planned calls must also be visible in the conversation detail so the setter/closer can see and modify them when a prospect writes before the appointment.
-- Manual WhatsApp completion belongs only in `Actions avancées`.
+- Manual WhatsApp completion is no longer exposed in V1; `reply` and `follow_up` are completed by the WhatsApp send proof from `Conversation`.
 - Course-date reminders always win over lead-relative reminders. If both conflict, cancel the lead-relative reminder. Do not interrupt or replace a planned `setting_call` or `closing_call`.
 - Minimum delay between outbound WhatsApp follow-ups is 24h.
 - Business rules are centralized in `sales_cockpit/business_rules.py` and displayed in Admin.
 - Main action types for V1 are `reply`, `follow_up`, `setting_call`, and `closing_call`. Qualification, manual notes, and template creation are support actions/proofs unless they block the main flow.
 - Keep the UI simple: no visible `Température` field. Display `sales_stage` as `Parcours`.
-- Private notes are always included in the future learning base; do not show an inclusion checkbox.
+- Internal notes / `Notes internes` are always included in the future learning base; do not show an inclusion checkbox.
 - In the global `Tâches` view, filter responsibility by individual people, not only by role.
 - The mock seed must keep at least one open task per active user so each responsible-person queue can be visually checked.
 - The mock seed includes at least one inbound unanswered example to verify the hot waiting-reply state.

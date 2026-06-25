@@ -63,7 +63,7 @@ Actions support :
 | Type | Rôle |
 |---|---|
 | Qualification | Résultat métier qui influence le chaînage. La qualification closer prime sur la qualification setter. |
-| Note manuelle | Preuve ou contexte ajouté après un appel, un échange privé ou une décision. |
+| Note manuelle | Preuve ou contexte ajouté après un appel, un échange interne ou une décision. |
 | Création de template | Débloque une relance quand aucun template approuvé ne convient. |
 | Revue admin | Cas ambigu, conflit de règles ou donnée manquante. |
 
@@ -82,7 +82,7 @@ Exemples :
 | `manual_reprise_setter` | Note obligatoire décrivant la reprise et la décision |
 | `manual_reprise_closer` | Note obligatoire décrivant la reprise et la décision |
 | Qualification support | Changement de qualification historisé |
-| Note support | Message `manual_note` ou note privée enregistrée |
+| Note support | Message `manual_note` ou note interne enregistrée |
 | Template support | Template créé, soumis, approuvé ou refusé |
 
 ### Résultat

@@ -27,13 +27,31 @@ def main() -> None:
     parser.add_argument(
         "--allow-production",
         action="store_true",
-        help="Allow cleanup when SALES_COCKPIT_ENVIRONMENT=production.",
+        help="Deprecated safety valve. Production cleanup is refused by this staging script.",
+    )
+    parser.add_argument(
+        "--target-environment",
+        choices=["staging"],
+        help="Required with --execute. Confirms the intended cleanup target.",
+    )
+    parser.add_argument(
+        "--confirm",
+        default="",
+        help="Required with --execute: CLEAN_STAGING_SCHOOLDRIVE.",
     )
     args = parser.parse_args()
 
     settings = get_settings()
-    if settings.environment == "production" and not args.allow_production:
-        raise SystemExit("Refusing to clean production without --allow-production.")
+    environment = (settings.environment or "").strip().lower()
+    if environment in {"prod", "production"}:
+        raise SystemExit("Refusing to clean prod/production with cleanup_schooldrive_staging.py.")
+    if args.execute:
+        if args.target_environment != "staging":
+            raise SystemExit("--execute requires --target-environment staging.")
+        if args.confirm != "CLEAN_STAGING_SCHOOLDRIVE":
+            raise SystemExit("--execute requires --confirm CLEAN_STAGING_SCHOOLDRIVE.")
+        if environment != "staging":
+            raise SystemExit("Refusing cleanup unless SALES_COCKPIT_ENVIRONMENT=staging.")
 
     before = _counts()
     result: dict[str, Any] = {

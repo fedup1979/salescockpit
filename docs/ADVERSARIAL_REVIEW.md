@@ -2,7 +2,7 @@
 
 Review date: 2026-06-22.
 
-Status: findings preserved, not implemented yet. This document records the adversarial system review requested before production WhatsApp cutover. It must be read before deciding that Sales Cockpit is ready for live WhatsApp routing.
+Status: findings preserved as the 2026-06-22 review baseline. Several P0/P1 findings have since been implemented locally in the V1 pre-cutover hardening, but the deployment and live validation gates still apply. This document must be read before deciding that Sales Cockpit is ready for live WhatsApp routing.
 
 Validation run during the review:
 
@@ -17,9 +17,19 @@ The core model `Parcours / Flux / Action` remains the right architecture for V1.
 
 Sales Cockpit is close to a solid V1, but the review found several production risks that are not caught by the current test suite. They are mostly operational risks: duplicate outbound sends, incomplete cutover gates, state transitions around terminal statuses, and performance/visibility issues at higher volume.
 
-Do not treat these findings as implemented fixes. They are a backlog of hardening work to plan and execute before or immediately around the production WhatsApp cutover.
+Do not treat this historical review alone as the current implementation state. Cross-check `docs/CURRENT_STATE.md`, `IMPLEMENTATION_STATUS.md`, and `docs/TECHNICAL_DEBT.md`; any fix that is only local still requires staging/prod deployment and validation before operational WhatsApp cutover.
 
 ## P0 Before WhatsApp Cutover
+
+Local V1 pre-cutover status after the hardening pass:
+
+| Finding | Local status | Remaining gate |
+|---|---|---|
+| Cleanup script can target production | Implemented locally: `prod` / `production` are refused and staging confirmation is required. | Deploy and keep restore point before any staging cleanup. |
+| Outbound sends are not idempotent | Implemented locally: free-form/template sends are claimed per active action; duplicate submits are rejected; Twilio failure leaves an explicit retry path. | Deploy and validate against staging/live-mode configuration before real WhatsApp cutover. |
+| Terminal statuses reopen too easily | Implemented locally: terminal/contact states block ordinary commercial reopen/reply paths and route to human review where needed. | Scenario validation with fake prospects and one fresh live lead/presubscription. |
+| Workflow completion can mutate before failing | Locally covered by regression tests for missing sequence step, missing assignee, and invalid outcome. | Keep this area under review because `store.py` remains large and should be extracted after V1. |
+| Strict production check is not strict enough | Partially implemented locally: strict mode avoids seeding, checks weak seed password, full template matrix including `lead_type`, old `pending_send`, pending template requests, blocked follow-ups, and a SchoolDrive AR-sent gate. | Backup restoreability and true live SchoolDrive/Twilio validation remain operational gates. |
 
 ### 1. SchoolDrive Cleanup Script Can Target Production
 
@@ -306,32 +316,19 @@ Current size hotspots:
 
 Do not refactor these during urgent cutover unless a correction requires it. Before official V2, extract the modules already listed in `docs/TECHNICAL_DEBT.md`: `workflow_engine`, `schooldrive_ingest`, `twilio_templates`, `twilio_messaging`, `admin_actions`, and `pilotage`.
 
-## Suggested Fix Order
+## Remaining Fix Order
 
-1. Patch production-dangerous safeguards: cleanup script, strict-prod read-only behavior, seed password gate.
-2. Patch outbound idempotency and callback recovery.
-3. Patch terminal-status reopening and inbound behavior.
-4. Patch workflow mutation-before-failure.
-5. Patch strict-prod template matrix and real SchoolDrive AR-sent gate.
-6. Patch phone normalization and phone indexes.
-7. Patch course-full/course-start edge cases.
-8. Patch task/inbox pagination and performance.
-9. Update stale docs and deployment truth block.
-10. Re-run full tests, compileall, staging deploy, staging pre-cutover, then repeat a focused adversarial review.
+1. Deploy the local hardening to staging only after a fresh backup and a template-mapping snapshot.
+2. Run staging `pre_cutover_check`, including the strict gates that can run before live WhatsApp.
+3. Execute the manual protocol with restored fake prospects.
+4. Validate one fresh website lead and one fresh website presubscription through AR `sent`.
+5. Run a focused adversarial review on the deployed staging build.
+6. Only then decide the production cutover window.
 
-## Tests To Add
+## Remaining Tests To Add Or Keep As V2 Debt
 
-- cleanup script refuses `prod` and `production` with `--execute`;
-- double-submit on same follow-up sends at most one Twilio message;
-- template double-submit sends at most one Twilio message;
 - crash or DB failure after Twilio accepted send leaves a recoverable state;
-- old `pending_send` rows fail strict-prod;
-- manual reactivation of `do_not_contact`, `signed`, `not_relevant`;
-- inbound on `signed` and `not_relevant`;
-- `course_full` on a resolved conversation opens the needed review;
-- course-start due earlier than active standard follow-up;
-- `will_sign` replaces active standard follow-up with `closer_will_sign`;
-- strict-prod fails when a `presubscription` mapping is missing but `lead` mapping exists;
-- queue/responsibility filtering after pagination cannot hide due conversations;
+- backup restoreability is verified by an automated or documented strict-prod gate;
+- course-start due earlier than active standard follow-up is reprioritized when appropriate;
+- queue/responsibility filtering after pagination cannot hide due conversations at higher volume;
 - phone normalization for Swiss number variants.
-

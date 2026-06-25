@@ -14,7 +14,7 @@ Latest recorded staging deployment check:
 - Twilio mode on staging: `mock`.
 - Workflow consistency: no active conversation without action, no resolved conversation with active action, no conflicting main actions.
 - API security readiness checks app API tokens and mock webhook tokens outside local tests.
-- Latest local hardening validation: `170 passed`, `py_compile` OK for `store.py`, `ui/app.py`, and `ui/action_presenter.py`. On Windows, run pytest with `--basetemp=.pytest-tmp\run` if `%TEMP%\pytest-current` cleanup raises a permission error after successful execution.
+- Latest local hardening validation: `204 passed`, `compileall` OK. On Windows, run pytest with `--basetemp=.pytest-tmp\run` if `%TEMP%\pytest-current` cleanup raises a permission error after successful execution.
 - Staging and cold production are both deployed on `db6f03b`; staging pre-cutover is OK, and production cold pre-cutover is OK with Twilio still in `mock` mode.
 
 The canonical workflow model is now:
@@ -54,7 +54,7 @@ The canonical workflow model is now:
 - Demo WhatsApp templates for initial offer, 72h/7d/30d follow-ups, setting, will-sign, course-date, and out-of-hours.
 - Stop statuses `Non pertinent`, `Ne plus contacter`, and `A signé` complete open actions and resolve conversations.
 - Status / qualification / reactivation saves keep `Parcours`, contact status, conversation status, and next action coherent. Startup normalization repairs existing terminal inconsistencies in Sales Cockpit data.
-- UI simplification: `Température` hidden, `sales_stage` displayed as `Parcours`, private notes always included for future learning.
+- UI simplification: `Température` hidden, `sales_stage` displayed as `Parcours`, internal notes always included for future learning.
 - Global `Tâches` filters responsibility by individual people, defaults to the connected user's own queue, and persists a manual responsible-person choice during navigation.
 - SchoolDrive lead source types use `lead` and `presubscription`; inbox cards display `Lead` / `Préinscription` and use course category vs course short name accordingly.
 - Experimental UX pass: `Tâches` is first in navigation and uses a split-screen action/person list with the selected prospect detail on the right.
@@ -74,7 +74,7 @@ The canonical workflow model is now:
 - Missing templates create `template_requests` linked to the blocked action.
 - Outbound WhatsApp messages close the active `reply` or `follow_up` action and create the next follow-up when applicable.
 - WhatsApp `reply` actions can now choose the business outcome at send time, so the sent message is the proof and the selected outcome creates the next action.
-- The Actions tab is contextual by action type: WhatsApp actions guide users to the Conversation composer, calls use result + mandatory note, contact reviews show explicit do-not-contact decisions, and exceptions live in Actions avancées.
+- The Actions tab is contextual by action type: WhatsApp actions guide users to the Conversation composer, calls use result + mandatory note, contact reviews show explicit do-not-contact decisions, and V1 no longer exposes generic advanced action completion.
 - Setting/closing calls can be completed with business outcomes that create the next action.
 - Setting/closing call actions now represent the future work of documenting the call at appointment time.
 - Planned setting/closing calls are visible in the conversation detail.
@@ -155,7 +155,7 @@ The canonical workflow model is now:
 - Inbound WhatsApp identity guardrail added: exact phone match attaches automatically; zero or multiple matches create a temporary `À identifier` lead with manual name/course fields.
 - V2 identity-resolution debt is documented in `docs/TECHNICAL_DEBT.md`.
 - Historical SchoolDrive diagnostic: `lead:124126` arrived with `armsg:1005384` as `queued`, while Claude MCP verified the same AR was already `sent` in SchoolDrive and no newer webhook reached Cockpit. Tiago later reported that the projector was published; the remaining gate is a fresh live website-form validation.
-- Actions tab refactored to a stable UX model: banner first, fixed standard block, disabled unavailable sections with reasons, and read-only action history. `reply` and `follow_up` remain system actions completed from `Conversation`; manual standard commands are call scheduling/modification, manual reprise, documentation, and sequence-step skip.
+- Actions tab refactored to a stable UX model: banner first, fixed standard block, and disabled unavailable sections with reasons. Action/event history lives in `Journal`. `reply` and `follow_up` remain system actions completed from `Conversation`; manual standard commands are call scheduling/modification, manual reprise, documentation, and sequence-step skip.
 
 ## Latest Hardening
 
@@ -170,7 +170,9 @@ The canonical workflow model is now:
 - Twilio template sync can approve and unblock linked template requests when a real approved template is found.
 - SchoolDrive signed, do-not-contact/opt-out, course-full, and stale default-session signals are handled.
 - Follow-up quotas block relance overload but do not block a normal human reply; the global kill switch still blocks every WhatsApp send.
-- Outbound WhatsApp sends write a pending message before the Twilio call, then mark it `send_error` if Twilio fails.
+- Outbound WhatsApp sends are claimed per active action before Twilio is called; a duplicate free-form or template submit for the same active action is rejected instead of sending twice.
+- Outbound WhatsApp sends write a pending message before the Twilio call, then mark it `send_error` if Twilio fails so an explicit retry is possible.
+- Business-rule seeding preserves existing approved real Twilio template mappings; tests protect the ESSR fine-tuning from being overwritten by a deploy seed.
 - `scripts/pre_cutover_check.py --strict-prod` is the mandatory final production gate before routing real WhatsApp to Sales Cockpit.
 
 ## Next Checkpoints

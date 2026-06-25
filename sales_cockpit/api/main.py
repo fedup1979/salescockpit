@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from sales_cockpit import __version__
 from sales_cockpit.config import get_settings
@@ -15,6 +15,7 @@ from sales_cockpit.store import (
     create_template,
     get_attachment_download,
     get_conversation,
+    get_next_action_for_lead,
     ingest_schooldrive_snapshot,
     list_conversations,
     list_messages,
@@ -32,12 +33,14 @@ app = FastAPI(title="Sales Cockpit API", version=__version__)
 class FreeformMessageRequest(BaseModel):
     user_id: int
     body: str = Field(min_length=1)
+    action_id: int | None = None
 
 
 class TemplateMessageRequest(BaseModel):
     user_id: int
     template_id: int
     variables: dict[str, str] = Field(default_factory=dict)
+    action_id: int | None = None
 
 
 class TemplateCreateRequest(BaseModel):
@@ -57,6 +60,8 @@ class InboundWebhookRequest(BaseModel):
 
 
 class SchoolDrivePerson(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     title: str | None = None
     first_name: str | None = None
     last_name: str | None = None
@@ -65,13 +70,17 @@ class SchoolDrivePerson(BaseModel):
 
 
 class SchoolDriveCourse(BaseModel):
-    category: str | None = None
+    model_config = ConfigDict(extra="allow")
+
+    category: str | dict[str, Any] | None = None
     course_name: str | None = None
     session_name: str | None = None
     start_date: str | None = None
 
 
 class SchoolDriveAutoresponder(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     message_id: str
     autoresponder_id: int | None = None
     template: str | None = None
@@ -84,6 +93,8 @@ class SchoolDriveAutoresponder(BaseModel):
 
 
 class SchoolDrivePayloadData(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     schooldrive_id: str
     lead_type: str
     url: str | None = None
@@ -92,17 +103,37 @@ class SchoolDrivePayloadData(BaseModel):
     archived_at: str | None = None
     archive_reason: str | None = None
     person: SchoolDrivePerson
-    course: SchoolDriveCourse
+    course: SchoolDriveCourse = Field(default_factory=SchoolDriveCourse)
+    product: dict[str, Any] = Field(default_factory=dict)
     status: str | None = None
     whatsapp_autoresponders: list[SchoolDriveAutoresponder] = Field(default_factory=list)
 
 
 class SchoolDriveWebhookEnvelope(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     schema_version: str
     event_id: str
     occurred_at: str
     environment: str
     data: SchoolDrivePayloadData
+
+
+def _require_action_id_for_api_send(conversation_id: int, action_id: int | None) -> None:
+    if action_id is not None:
+        return
+    conv = get_conversation(conversation_id)
+    if not conv:
+        return
+    action = get_next_action_for_lead(conv["lead_id"])
+    if action and action.get("type") in {"reply", "follow_up"}:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "action_id requis pour envoyer un WhatsApp sur une action active. "
+                "Recharge la fiche et renvoie l'identifiant de l'action."
+            ),
+        )
 
 
 @app.on_event("startup")
@@ -206,7 +237,13 @@ def send_freeform(
     request: FreeformMessageRequest,
     _api_access: None = Depends(require_api_access),
 ) -> dict:
-    ok, message = send_freeform_message(conversation_id, request.user_id, request.body)
+    _require_action_id_for_api_send(conversation_id, request.action_id)
+    ok, message = send_freeform_message(
+        conversation_id,
+        request.user_id,
+        request.body,
+        expected_action_id=request.action_id,
+    )
     if not ok:
         raise HTTPException(status_code=400, detail=message)
     return {"status": "ok", "message": message}
@@ -218,8 +255,13 @@ def send_template(
     request: TemplateMessageRequest,
     _api_access: None = Depends(require_api_access),
 ) -> dict:
+    _require_action_id_for_api_send(conversation_id, request.action_id)
     ok, message = send_template_message(
-        conversation_id, request.user_id, request.template_id, request.variables
+        conversation_id,
+        request.user_id,
+        request.template_id,
+        request.variables,
+        expected_action_id=request.action_id,
     )
     if not ok:
         raise HTTPException(status_code=400, detail=message)

@@ -12,7 +12,7 @@ from sales_cockpit.security import hash_password
 from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
 
 
-DEMO_SEED_VERSION = "2026-06-23-demo-admin-template-action"
+DEMO_SEED_VERSION = "2026-06-25-v1-cutover-demo-scenarios"
 BUSINESS_RULES_VERSION = "2026-06-24-manual-reprise-and-skip"
 
 
@@ -45,6 +45,13 @@ CREATE TABLE IF NOT EXISTS leads (
     course_id TEXT,
     course_title TEXT,
     course_category_short_title TEXT,
+    session_id TEXT,
+    session_name TEXT,
+    course_start_date TEXT,
+    capacity_total INTEGER,
+    capacity_occupied INTEGER,
+    capacity_available INTEGER,
+    is_full INTEGER NOT NULL DEFAULT 0,
     lead_type TEXT NOT NULL DEFAULT 'lead',
     source TEXT NOT NULL DEFAULT 'mock',
     acquisition_type TEXT NOT NULL DEFAULT 'unknown',
@@ -113,6 +120,7 @@ CREATE TABLE IF NOT EXISTS messages (
     twilio_error_code TEXT,
     twilio_error_message TEXT,
     template_id INTEGER REFERENCES whatsapp_templates(id),
+    action_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
     template_variables_json TEXT,
     whatsapp_window_state_at_send TEXT,
     sent_at TEXT,
@@ -544,6 +552,13 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
         "leads",
         [
             ("course_category_short_title", "TEXT"),
+            ("session_id", "TEXT"),
+            ("session_name", "TEXT"),
+            ("course_start_date", "TEXT"),
+            ("capacity_total", "INTEGER"),
+            ("capacity_occupied", "INTEGER"),
+            ("capacity_available", "INTEGER"),
+            ("is_full", "INTEGER NOT NULL DEFAULT 0"),
             ("lead_type", "TEXT NOT NULL DEFAULT 'lead'"),
             ("acquisition_type", "TEXT NOT NULL DEFAULT 'unknown'"),
             ("contact_status", "TEXT NOT NULL DEFAULT 'contact_allowed'"),
@@ -579,6 +594,7 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
             ("twilio_status", "TEXT"),
             ("twilio_error_code", "TEXT"),
             ("twilio_error_message", "TEXT"),
+            ("action_id", "INTEGER"),
         ],
     )
     add_missing_columns(
@@ -741,6 +757,7 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
         """
     )
     _ensure_twilio_message_sid_unique(conn)
+    _ensure_outbound_action_send_unique(conn)
     conn.execute(
         """
         UPDATE sequence_steps
@@ -1398,6 +1415,19 @@ def _ensure_twilio_message_sid_unique(conn: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_outbound_action_send_unique(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_outbound_action_active_unique
+        ON messages(action_id)
+        WHERE action_id IS NOT NULL
+          AND direction = 'outbound'
+          AND channel = 'whatsapp_twilio'
+          AND coalesce(twilio_status, '') != 'send_error'
+        """
+    )
+
+
 def reset_demo_data() -> None:
     init_db()
     with connect() as conn:
@@ -1471,6 +1501,13 @@ def _build_demo_scenarios(
         resolution_reason: str | None = None,
         resolution_note: str | None = None,
         resolved_delta: timedelta | None = None,
+        session_id: str | None = None,
+        session_name: str | None = None,
+        course_start_date: str | None = None,
+        capacity_total: int | None = None,
+        capacity_occupied: int | None = None,
+        capacity_available: int | None = None,
+        is_full: bool = False,
     ) -> dict[str, Any]:
         inbound_times = [item[3] for item in messages if item[0] == "inbound"]
         category = course_id.split()[0]
@@ -1484,6 +1521,13 @@ def _build_demo_scenarios(
             "course_id": course_id,
             "course_category_short_title": category,
             "course_title": course_title,
+            "session_id": session_id,
+            "session_name": session_name,
+            "course_start_date": course_start_date,
+            "capacity_total": capacity_total,
+            "capacity_occupied": capacity_occupied,
+            "capacity_available": capacity_available,
+            "is_full": 1 if is_full else 0,
             "lead_type": lead_type,
             "lead_status": lead_status,
             "contact_status": contact_status,
@@ -2103,6 +2147,212 @@ def _build_demo_scenarios(
                 )
             ],
         ),
+        lead(
+            "SD-DEMO-4020",
+            "Camille",
+            "Laurent",
+            "4020",
+            "APP",
+            "Anatomie, Physiologie, Pathologie",
+            "lead",
+            "eligible",
+            "contact_allowed",
+            "setting",
+            mihary_id,
+            None,
+            [
+                message("inbound", "Merci, pouvez-vous me redonner les prochaines dates ?", None, -timedelta(hours=4)),
+                message("outbound", "Bien sûr, je vous renvoie les informations utiles. Yasmine", mihary_id, -timedelta(hours=3, minutes=45)),
+            ],
+            [
+                task(
+                    "follow_up",
+                    "Relancer Camille Laurent",
+                    setter2_id,
+                    -timedelta(minutes=5),
+                    "high",
+                    description="Relance due alors que la fenêtre WhatsApp est encore ouverte.",
+                    trigger_reason="follow_up_due",
+                    sequence_code="setter_no_next_step",
+                    sequence_step_index=1,
+                )
+            ],
+        ),
+        lead(
+            "SD-DEMO-4021",
+            "Luc",
+            "Moreau",
+            "4021",
+            "FSM",
+            "Formation en santé naturelle",
+            "lead",
+            "eligible",
+            "contact_allowed",
+            "appointment_booked",
+            mihary_id,
+            None,
+            [
+                message("inbound", "Oui, appelez-moi aujourd'hui.", None, -timedelta(hours=6)),
+                message("outbound", "Parfait, appel prévu aujourd'hui. Yasmine", mihary_id, -timedelta(hours=5, minutes=45)),
+            ],
+            [
+                task(
+                    "setting_call",
+                    "Appeler et documenter l'appel setting de Luc Moreau",
+                    mihary_id,
+                    -timedelta(minutes=10),
+                    "urgent",
+                    description="Appel setting dû maintenant.",
+                    trigger_reason="setting_appointment_booked",
+                )
+            ],
+        ),
+        lead(
+            "SD-DEMO-4022",
+            "Sonia",
+            "Mercier",
+            "4022",
+            "AS",
+            "AS GE E26 PM",
+            "presubscription",
+            "eligible",
+            "contact_allowed",
+            "setting",
+            mihary_id,
+            None,
+            [
+                message("inbound", "Je dois encore réfléchir après notre appel.", None, -timedelta(days=3)),
+                message("manual_note", "Appel setting documenté : pas prête, reprise personnalisée nécessaire.", mihary_id, -timedelta(days=3, minutes=-10)),
+            ],
+            [
+                task(
+                    "setting_call",
+                    "Appeler et documenter l'appel setting de Sonia Mercier",
+                    mihary_id,
+                    -timedelta(days=3),
+                    "normal",
+                    "done",
+                    outcome="not_ready",
+                    completed_delta=-timedelta(days=3),
+                ),
+                task(
+                    "manual_reprise_setter",
+                    "Reprise manuelle setter de Sonia Mercier",
+                    mihary_id,
+                    -timedelta(minutes=15),
+                    "high",
+                    description="Relire le cas indécis côté Setter I et décider de la reprise.",
+                    trigger_reason="setting_call_not_ready",
+                    sequence_code="post_setting_undecided",
+                    sequence_step_index=1,
+                ),
+            ],
+        ),
+        lead(
+            "SD-DEMO-4023",
+            "Yves",
+            "Caron",
+            "4023",
+            "APP",
+            "Anatomie, Physiologie, Pathologie",
+            "lead",
+            "will_sign",
+            "contact_allowed",
+            "closing",
+            mihary_id,
+            yasmine_id,
+            [
+                message("inbound", "Je reste intéressé, mais je veux revoir un point.", None, -timedelta(days=3)),
+                message("manual_note", "Closing documenté : indécis, reprise closer nécessaire.", yasmine_id, -timedelta(days=3, minutes=-20)),
+            ],
+            [
+                task(
+                    "closing_call",
+                    "Appeler et documenter l'appel closing de Yves Caron",
+                    yasmine_id,
+                    -timedelta(days=3),
+                    "normal",
+                    "done",
+                    outcome="undecided",
+                    completed_delta=-timedelta(days=3),
+                ),
+                task(
+                    "manual_reprise_closer",
+                    "Reprise manuelle closer de Yves Caron",
+                    yasmine_id,
+                    -timedelta(minutes=10),
+                    "high",
+                    description="Relire le closing indécis et décider de la reprise.",
+                    trigger_reason="closing_call_undecided",
+                    sequence_code="post_closing_undecided",
+                    sequence_step_index=1,
+                ),
+            ],
+        ),
+        lead(
+            "SD-DEMO-4024",
+            "Emma",
+            "Complet",
+            "4024",
+            "APP GE P26",
+            "APP GE P26",
+            "presubscription",
+            "eligible",
+            "contact_allowed",
+            "setting",
+            mihary_id,
+            None,
+            [
+                message("outbound", "Bonjour Emma, merci pour votre préinscription APP. Yasmine", yasmine_id, -timedelta(days=1)),
+                message("manual_note", "SchoolDrive : session complète, proposer une autre session.", mihary_id, -timedelta(hours=2)),
+            ],
+            [
+                task(
+                    "other",
+                    "Proposer une autre session à Emma Complet",
+                    mihary_id,
+                    -timedelta(hours=2),
+                    "urgent",
+                    description="Session SchoolDrive complète ; relances commerciales stoppées.",
+                    trigger_reason="schooldrive_course_full",
+                )
+            ],
+            session_id="APP-GE-P26",
+            session_name="APP GE P26",
+            course_start_date=iso_utc(now + timedelta(days=30)),
+            capacity_total=20,
+            capacity_occupied=20,
+            capacity_available=0,
+            is_full=True,
+        ),
+        lead(
+            "SD-DEMO-4025",
+            "Rita",
+            "Roadmap",
+            "4025",
+            "ASCA_RME",
+            "Roadmap ASCA_RME",
+            "lead",
+            "eligible",
+            "contact_allowed",
+            "new",
+            mihary_id,
+            None,
+            [
+                message("outbound", "Bonjour Rita, nous avons bien reçu votre demande Roadmap. Yasmine", yasmine_id, -timedelta(hours=8)),
+            ],
+            [
+                task(
+                    "other",
+                    "Revoir le produit Roadmap de Rita Roadmap",
+                    mihary_id,
+                    -timedelta(hours=8),
+                    "normal",
+                    description="Produit Roadmap hors flux V1 normal, revue humaine requise.",
+                    trigger_reason="unconfigured_course_category",
+                )
+            ],
+        ),
     ]
 
 
@@ -2186,7 +2436,10 @@ def seed_initial_data() -> None:
                 conn.execute(
                     """
                     UPDATE leads
-                    SET course_category_short_title = ?, course_title = ?, lead_type = ?,
+                    SET course_category_short_title = ?, course_title = ?,
+                        session_id = ?, session_name = ?, course_start_date = ?,
+                        capacity_total = ?, capacity_occupied = ?, capacity_available = ?, is_full = ?,
+                        lead_type = ?,
                         acquisition_type = ?, contact_status = coalesce(contact_status, 'contact_allowed'),
                         updated_at = ?
                     WHERE id = ?
@@ -2194,6 +2447,13 @@ def seed_initial_data() -> None:
                     (
                         lead["course_category_short_title"],
                         lead["course_title"],
+                        lead["session_id"],
+                        lead["session_name"],
+                        lead["course_start_date"],
+                        lead["capacity_total"],
+                        lead["capacity_occupied"],
+                        lead["capacity_available"],
+                        lead["is_full"],
                         lead["lead_type"],
                         "organic" if lead["lead_type"] == "presubscription" else "paid_ads",
                         iso_utc(now),
@@ -2206,10 +2466,13 @@ def seed_initial_data() -> None:
                 """
                 INSERT INTO leads (
                     schooldrive_lead_id, first_name, last_name, email, phone_e164, phone_raw,
-                    course_id, course_category_short_title, course_title, lead_type, acquisition_type,
+                    course_id, course_category_short_title, course_title,
+                    session_id, session_name, course_start_date,
+                    capacity_total, capacity_occupied, capacity_available, is_full,
+                    lead_type, acquisition_type,
                     lead_status, contact_status, sales_stage, temperature,
                     setter_user_id, closer_user_id, last_schooldrive_sync_at, last_notion_sync_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     lead["schooldrive_lead_id"],
@@ -2221,6 +2484,13 @@ def seed_initial_data() -> None:
                     lead["course_id"],
                     lead["course_category_short_title"],
                     lead["course_title"],
+                    lead["session_id"],
+                    lead["session_name"],
+                    lead["course_start_date"],
+                    lead["capacity_total"],
+                    lead["capacity_occupied"],
+                    lead["capacity_available"],
+                    lead["is_full"],
                     lead["lead_type"],
                     "organic" if lead["lead_type"] == "presubscription" else "paid_ads",
                     lead["lead_status"],

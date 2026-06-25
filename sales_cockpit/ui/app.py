@@ -431,7 +431,12 @@ HELP_TEXTS = {
 
 
 def main() -> None:
-    st.set_page_config(page_title="Sales Cockpit", page_icon="SC", layout="wide")
+    st.set_page_config(
+        page_title="Sales Cockpit",
+        page_icon="SC",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
     st.markdown(APP_CSS, unsafe_allow_html=True)
     seed_initial_data()
     apply_pending_widget_clears()
@@ -725,6 +730,23 @@ def conversation_course_label(conv: dict) -> str:
     )
 
 
+def conversation_course_details(conv: dict) -> list[str]:
+    details: list[str] = []
+    session_name = (conv.get("session_name") or "").strip()
+    if session_name and session_name != (conv.get("course_title") or "").strip():
+        details.append(session_name)
+    occupied = conv.get("capacity_occupied")
+    total = conv.get("capacity_total")
+    available = conv.get("capacity_available")
+    if occupied is not None and total is not None:
+        details.append(f"{occupied} / {total} occupé")
+    elif available is not None:
+        details.append(f"{available} place(s) restante(s)")
+    if conv.get("is_full"):
+        details.append("Session complète")
+    return details
+
+
 def render_conversation_detail(user: dict, conversation_id: int) -> None:
     conv = get_conversation(conversation_id)
     if not conv:
@@ -736,7 +758,7 @@ def render_conversation_detail(user: dict, conversation_id: int) -> None:
     render_next_action_summary(user, conv)
     render_planned_call_notice(conv)
 
-    tabs = st.tabs(["Conversation", "Actions", "Notes privées", "Journal"])
+    tabs = st.tabs(["Conversation", "Actions", "Notes internes", "Journal"])
     with tabs[0]:
         show_internal_notes = st.checkbox(
             "Afficher les notes internes",
@@ -787,7 +809,8 @@ def render_conversation_context(conv: dict) -> None:
         window_boundary = f"Fermée le {format_window_boundary(conv.get('window_closes_at'))}"
     else:
         window_boundary = "Jamais ouverte"
-    course = escape_html(conversation_course_label(conv))
+    course_parts = [conversation_course_label(conv), *conversation_course_details(conv)]
+    course = escape_html(" · ".join(part for part in course_parts if part))
     phone = escape_html(conv.get("phone_e164") or "Téléphone indisponible")
     st.markdown(
         f"""
@@ -1171,6 +1194,33 @@ def standard_action_button_label(action_type: str) -> str:
     return labels.get(action_type, labelize(action_type))
 
 
+def calendar_url_for_call(action_type: str) -> str | None:
+    settings = get_settings()
+    raw_url = (
+        settings.setter_calendar_url
+        if action_type == "setting_call"
+        else settings.closer_calendar_url
+        if action_type == "closing_call"
+        else None
+    )
+    if not raw_url:
+        return None
+    parsed = urlparse(raw_url.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return raw_url.strip()
+
+
+def render_calendar_link(action_type: str) -> None:
+    url = calendar_url_for_call(action_type)
+    if not url:
+        return
+    st.markdown(
+        f'<a class="sc-link-button" href="{escape_html(url)}" target="_blank" rel="noopener noreferrer">Ouvrir le calendrier</a>',
+        unsafe_allow_html=True,
+    )
+
+
 def active_planned_call_for_lead(lead_id: int | None) -> dict | None:
     if not lead_id:
         return None
@@ -1227,6 +1277,7 @@ def render_composer(user: dict, conv: dict) -> None:
                 user["id"],
                 body.strip(),
                 attachments=attachments,
+                expected_action_id=action["id"] if action and action.get("type") in {"reply", "follow_up"} else None,
             )
             show_result(ok, message)
             if ok:
@@ -1308,6 +1359,7 @@ def render_composer(user: dict, conv: dict) -> None:
             user["id"],
             template["id"],
             variables,
+            expected_action_id=action["id"] if action and action.get("type") in {"reply", "follow_up"} else None,
         )
         show_result(ok, message)
         if ok:
@@ -1472,19 +1524,17 @@ def render_next_action_summary(user: dict, conv: dict) -> None:
             """,
             unsafe_allow_html=True,
         )
-        if action and conv.get("status") == "open":
-            disabled_reason = None if skip_section["enabled"] else skip_section["reason"]
-            render_delete_next_action_popover(user, action, disabled_reason)
+        if action and conv.get("status") == "open" and skip_section["enabled"]:
+            render_delete_next_action_popover(user, action)
 
 
 def render_delete_next_action_popover(user: dict, action: dict, disabled_reason: str | None = None) -> None:
     action_id = action["id"]
-    with st.popover("✕", help="Supprimer cette action", use_container_width=False):
+    with st.popover("X", help="Ignorer cette étape de flux", use_container_width=False):
         st.warning(
-            "Attention danger ! Cette fonction permet de supprimer une action. "
-            "Normalement, toutes les actions dans SalesCockpit ont une raison d'être, "
-            "alors ne supprimez une tâche que dans des cas exceptionnels et si vous êtes "
-            "tout à fait au clair quant aux implications système."
+            "Attention danger : cette commande ignore uniquement l'étape de flux courante. "
+            "Elle ne sert pas à annuler n'importe quelle action. Une note est obligatoire ; "
+            "si une étape suivante existe, le flux continuera automatiquement."
         )
         if disabled_reason:
             st.caption(disabled_reason)
@@ -1496,17 +1546,17 @@ def render_delete_next_action_popover(user: dict, action: dict, disabled_reason:
                 disabled=disabled_reason is not None,
             )
             confirm = st.checkbox(
-                "Je confirme que cette action doit être supprimée.",
+                "Je confirme que cette étape de flux doit être ignorée.",
                 key=f"delete_next_action_confirm_{action_id}",
                 disabled=disabled_reason is not None,
             )
-            submitted = st.form_submit_button("Supprimer cette action", disabled=disabled_reason is not None)
+            submitted = st.form_submit_button("Ignorer cette étape", disabled=disabled_reason is not None)
         if submitted and not disabled_reason:
             if not confirm:
-                st.error("Confirme la suppression de cette action.")
+                st.error("Confirme que cette étape de flux doit être ignorée.")
                 return
             if not note.strip():
-                st.error("Ajoute une note pour expliquer pourquoi cette action est supprimée.")
+                st.error("Ajoute une note pour expliquer pourquoi cette étape est ignorée.")
                 return
             ok, message = skip_sequence_step_action(action_id, user["id"], note.strip())
             show_result(ok, message)
@@ -2082,8 +2132,8 @@ def render_standard_action_planner(user: dict, conv: dict, users: list[dict], ac
     if conv.get("status") != "open":
         return
 
-    st.markdown("**Programmer / attribuer une action**")
-    st.caption("Choisissez la prochaine action standard. Elle remplace l'action ouverte actuelle et garde une note dans le fil. Si un appel est déjà planifié, une réponse urgente peut être ajoutée sans annuler l'appel.")
+    st.markdown("**Programmer un appel ou une reprise**")
+    st.caption("Choisissez une suite standard. Les réponses et relances WhatsApp se traitent depuis Conversation afin de garder une preuve d'envoi.")
     action_type = st.selectbox(
         "Action",
         STANDARD_NEXT_ACTION_TYPES,
@@ -2274,6 +2324,7 @@ def render_schedule_call_section(
             disabled_reason = option.get("reason") or "Option indisponible."
         with cols[index]:
             st.markdown(f"**Appel {call_type_short_label(action_type)}**")
+            render_calendar_link(action_type)
             if active_call and active_call.get("type") == action_type and option_enabled:
                 st.caption(
                     f"Actif : {format_due(active_call.get('due_at'))} · {display_assignee_name(active_call)}"
@@ -2456,7 +2507,7 @@ def render_action_history(actions: list[dict]) -> None:
     if not actions:
         return
     st.divider()
-    st.markdown("**Historique des actions**")
+    st.markdown("**Journal du flux**")
     for item in actions:
         proof = " · preuve message" if item.get("proof_message_id") else ""
         outcome = f" · {labelize(item['outcome'])}" if item.get("outcome") else ""
@@ -2484,15 +2535,13 @@ def render_next_action_box(user: dict, conv: dict) -> None:
     else:
         st.caption("Réactivez la conversation pour créer une nouvelle action.")
 
-    render_action_history(actions)
-
 
 def render_manual_note_box(user: dict, conv: dict) -> None:
     note_base_key = f"manual_note_body_{conv['id']}"
     note_key = resettable_widget_key(note_base_key)
     with st.form(f"manual_note_{conv['id']}"):
-        body = st.text_area("Résumé ou transcript privé", height=130, key=note_key)
-        submitted = st.form_submit_button("Ajouter la note privée")
+        body = st.text_area("Résumé ou transcript interne", height=130, key=note_key)
+        submitted = st.form_submit_button("Ajouter la note interne")
     if submitted:
         if not body.strip():
             st.error("Écris une note avant de l'ajouter.")

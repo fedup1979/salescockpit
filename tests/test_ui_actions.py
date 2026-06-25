@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta, time, timezone
+from pathlib import Path
 from uuid import uuid4
 
 from streamlit.testing.v1 import AppTest
@@ -212,9 +213,9 @@ def test_conversation_detail_exposes_journal_tab_in_inbox() -> None:
     joined_tabs = " / ".join(tab_labels)
     assert "Conversation" in tab_labels
     assert "Actions" in tab_labels
-    assert "Notes privées" in tab_labels
+    assert "Notes internes" in tab_labels
     assert "Journal" in tab_labels
-    assert joined_tabs.index("Notes privées") < joined_tabs.index("Journal")
+    assert joined_tabs.index("Notes internes") < joined_tabs.index("Journal")
 
 
 def test_conversation_journal_table_wraps_description_column() -> None:
@@ -372,6 +373,16 @@ def test_advanced_actions_are_not_exposed() -> None:
     assert "Passer au closer" not in button_labels
 
 
+def test_actions_tab_keeps_history_out_and_uses_internal_note_labels() -> None:
+    source = Path("sales_cockpit/ui/app.py").read_text(encoding="utf-8")
+
+    assert "render_action_history(actions)" not in source
+    assert "Ajouter la note interne" in source
+    assert "Résumé ou transcript interne" in source
+    assert "Ajouter la note privée" not in source
+    assert "Résumé ou transcript privé" not in source
+
+
 def test_call_not_reached_hides_note_fields() -> None:
     seed_initial_data()
     user = authenticate("service.etudiants@essr.ch", "ChangeMe!2026")
@@ -482,9 +493,9 @@ def test_skippable_flow_step_uses_red_delete_control_in_next_action_box() -> Non
     text_area_labels = [item.label for item in app.text_area]
 
     assert "Ignorer l'étape de flux actuelle" not in markup
-    assert "Supprimer cette action" in button_labels
+    assert "Ignorer cette étape" in button_labels
     assert any("Attention danger" in text for text in warning_texts)
-    assert "Je confirme que cette action doit être supprimée." in checkbox_labels
+    assert "Je confirme que cette étape de flux doit être ignorée." in checkbox_labels
     assert "Note obligatoire" in text_area_labels
 
 

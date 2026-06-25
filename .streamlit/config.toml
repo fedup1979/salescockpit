@@ -6,3 +6,6 @@ toolbarMode = "viewer"
 
 [server]
 headless = true
+
+[theme]
+base = "light"

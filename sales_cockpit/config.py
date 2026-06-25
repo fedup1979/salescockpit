@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     schooldrive_mcp_url: str | None = None
     schooldrive_webhook_token: str | None = None
     schooldrive_ingest_min_sent_at: str | None = None
+    setter_calendar_url: str | None = None
+    closer_calendar_url: str | None = None
     front_api_token: str | None = None
     front_import_query: str | None = None
     front_import_inbox_ids: str | None = None

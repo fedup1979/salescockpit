@@ -11,7 +11,7 @@ The app must help setters and closers manage:
 - WhatsApp templates.
 - Lead qualification.
 - Next actions across reply, setting call, follow-up, and closing call.
-- Manual private WhatsApp notes.
+- Manual internal WhatsApp notes.
 - Complete transcript storage for future AI setter learning.
 
 ## Initial Users
@@ -136,7 +136,7 @@ Left panel:
 Right panel:
 
 - Same prospect detail pattern as Inbox.
-- Tabs: `Conversation`, `Actions`, `Notes privées`.
+- Tabs: `Conversation`, `Actions`, `Notes internes`.
 
 ### Inbox
 
@@ -158,14 +158,14 @@ Right panel:
 - WhatsApp window badge.
 - Compact chips for qualification and parcours.
 - Next-action summary panel with only action type, due date/time, and responsible-person badge.
-- Tabs: `Conversation`, `Actions`, `Notes privées`.
+- Tabs: `Conversation`, `Actions`, `Notes internes`.
 
 ### Conversation Tab
 
 - Message thread.
 - Prospect messages aligned left.
 - ESSR/team messages aligned right.
-- Private notes yellow and aligned right.
+- Notes internes yellow and aligned right.
 - Temporary or ambiguous identity records show an `À identifier` badge.
 - Reply tools directly under the message thread.
 - If WhatsApp window is open: free-form composer is enabled.
@@ -183,7 +183,7 @@ Right panel:
 
 ### Actions Tab
 
-- Stable structure: status banner, fixed standard block, then read-only action history.
+- Stable structure: status banner, fixed standard block, with action and event history kept in `Journal`.
 - Blue banner: normal expected work, for example reply or follow-up to send from `Conversation`, planned call, due call, or manual reprise.
 - Orange banner: blocked action or status to review, for example missing WhatsApp template, `Ne plus contacter`, or terminal qualification to handle from the status chips.
 - Red banner: workflow anomaly, for example open conversation without action, resolved conversation with active action, unknown action type, or legacy `other`.
@@ -193,11 +193,11 @@ Right panel:
 - Calls and manual reprises are created from the standard Actions block, including after a message sent from `Conversation` has created the default follow-up flow.
 - `contact_review` is not completed from Actions. Users review or lift statuses from the status chips; the store closes obsolete contact reviews or recreates the appropriate reply when allowed.
 - `other` is backend fallback/anomaly only. The normal UI does not show an `other` completion form and `Pilotage` does not offer it as a normal new step type.
-- Action history includes outcome and message proof when available.
+- `Journal` includes action/event history, outcome, and message proof when available.
 
-### Private Note Tab
+### Notes Internes Tab
 
-- Manual note for private/informal WhatsApp conversation.
+- Manual note for internal or informal WhatsApp conversation context.
 - Notes are included in the future learning base by default.
 
 ### Admin
@@ -239,7 +239,7 @@ SQLite requirements:
 The seed creates:
 
 - 6 initial users, including Tanjona at `setter2@essr.ch`.
-- 19 coherent demo conversations (`SD-DEMO-4001` through `SD-DEMO-4019`).
+- 25 coherent demo conversations (`SD-DEMO-4001` through `SD-DEMO-4025`).
 - At least 10 conversations with WhatsApp window open.
 - At least 10 conversations with WhatsApp window closed.
 - A few conversations marked as resolved.

@@ -37,8 +37,9 @@ def main() -> None:
     parser.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds.")
     args = parser.parse_args()
 
-    seed_initial_data()
     settings = get_settings()
+    if not args.strict_prod:
+        seed_initial_data()
     readiness = get_integration_readiness()
     checks: list[dict[str, Any]] = []
 
@@ -88,6 +89,7 @@ def main() -> None:
                 readiness=readiness,
                 api_base=args.api_base,
                 ui_url=args.ui_url,
+                allow_cold_prod=args.allow_cold_prod,
             )
         )
 
@@ -151,6 +153,7 @@ def _strict_prod_failures(
     readiness: dict[str, Any],
     api_base: str,
     ui_url: str,
+    allow_cold_prod: bool = False,
 ) -> list[str]:
     failures: list[str] = []
     environment = (settings.environment or "").lower()
@@ -158,6 +161,8 @@ def _strict_prod_failures(
         failures.append("--strict-prod must run against SALES_COCKPIT_ENVIRONMENT=prod/production")
     if settings.seed_demo_data:
         failures.append("Production strict check requires SALES_COCKPIT_SEED_DEMO_DATA=false")
+    if _weak_seed_password(settings.seed_password):
+        failures.append("SALES_COCKPIT_SEED_PASSWORD must not use the default or a weak value")
 
     if not api_base or not _is_https_url(api_base):
         failures.append("--api-base must be a public HTTPS URL in strict prod")
@@ -196,6 +201,11 @@ def _strict_prod_failures(
         failures.append(f"{workflow['blocked_action_count']} blocked action(s) remain")
     if workflow.get("pending_template_request_count"):
         failures.append(f"{workflow['pending_template_request_count']} pending template request(s) remain")
+    old_pending_send_count = _old_pending_send_count()
+    if old_pending_send_count:
+        failures.append(f"{old_pending_send_count} old pending_send outbound message(s) remain")
+    if not allow_cold_prod and not _schooldrive_ar_sent_validated():
+        failures.append("SchoolDrive AR sent validation is missing")
 
     missing_mappings = _strict_missing_template_mapping_count()
     if missing_mappings:
@@ -207,6 +217,15 @@ def _strict_prod_failures(
 def _bad_secret(value: str | None) -> bool:
     normalized = (value or "").strip().lower()
     return not normalized or normalized in {"change_me", "changeme", "todo", "placeholder", "secret"}
+
+
+def _weak_seed_password(value: str | None) -> bool:
+    normalized = (value or "").strip().lower()
+    return (
+        not normalized
+        or normalized in {"changeme", "change_me", "changeme!2026", "password", "password123"}
+        or len(normalized) < 14
+    )
 
 
 def _is_https_url(value: str | None) -> bool:
@@ -226,29 +245,71 @@ def _strict_missing_template_mapping_count() -> int:
     with connect() as conn:
         row = conn.execute(
             """
+            WITH required AS (
+                SELECT
+                    ss.sequence_code,
+                    ss.step_index,
+                    cc.course_category,
+                    lt.lead_type
+                FROM sequence_steps ss
+                JOIN sequences s ON s.code = ss.sequence_code AND s.active = 1
+                JOIN course_categories cc ON cc.active = 1
+                CROSS JOIN (
+                    SELECT 'lead' AS lead_type
+                    UNION ALL
+                    SELECT 'presubscription' AS lead_type
+                ) lt
+                WHERE ss.active = 1
+                  AND ss.action_type = 'follow_up'
+                  AND ss.requires_template = 1
+            )
             SELECT COUNT(*) AS count
-            FROM sequence_steps ss
-            JOIN sequences s ON s.code = ss.sequence_code AND s.active = 1
-            JOIN course_categories cc ON cc.active = 1
-            WHERE ss.active = 1
-              AND ss.action_type = 'follow_up'
-              AND ss.requires_template = 1
-              AND NOT EXISTS (
+            FROM required r
+            WHERE NOT EXISTS (
                 SELECT 1
                 FROM sequence_template_mappings stm
                 JOIN whatsapp_templates wt ON wt.id = stm.template_id
                 WHERE stm.active = 1
-                  AND stm.sequence_code = ss.sequence_code
-                  AND stm.sequence_step_index = ss.step_index
-                  AND stm.course_category IN ('all', cc.course_category)
+                  AND stm.sequence_code = r.sequence_code
+                  AND stm.sequence_step_index = r.step_index
+                  AND stm.lead_type IN ('all', r.lead_type)
+                  AND stm.course_category IN ('all', r.course_category)
                   AND wt.status = 'approved'
                   AND wt.twilio_content_sid IS NOT NULL
                   AND wt.twilio_content_sid LIKE 'HX%'
                   AND wt.twilio_content_sid NOT LIKE 'HX_MOCK_%'
-              )
+            )
             """
         ).fetchone()
     return int(row["count"] if row else 0)
+
+
+def _old_pending_send_count() -> int:
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM messages
+            WHERE direction = 'outbound'
+              AND channel = 'whatsapp_twilio'
+              AND twilio_status = 'pending_send'
+              AND datetime(created_at) < datetime('now', '-15 minutes')
+            """
+        ).fetchone()
+    return int(row["count"] if row else 0)
+
+
+def _schooldrive_ar_sent_validated() -> bool:
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM schooldrive_whatsapp_autoresponders
+            WHERE status = 'sent'
+              AND sent_at IS NOT NULL
+            """
+        ).fetchone()
+    return int(row["count"] if row else 0) > 0
 
 
 def _summary(readiness: dict[str, Any]) -> dict[str, Any]:

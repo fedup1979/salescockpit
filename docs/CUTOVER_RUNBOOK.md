@@ -4,11 +4,11 @@ This runbook describes the controlled migration from Front.io to Sales Cockpit.
 
 ## Principles
 
-- SchoolDrive remains the source of truth for people, leads, presubscriptions, courses, and SchoolDrive URLs.
+- SchoolDrive remains the source of truth for people, leads, presubscriptions, courses, sessions, enrolments and SchoolDrive URLs.
 - Front is historical input. It should not create leads by itself.
 - Front messages are imported first into buffer tables, then optionally attached as `front_history`.
 - The real ESSR Twilio account is read-only until explicit cutover. Template synchronization may read templates, but Sales Cockpit must not create, submit, delete, or send through the real account during staging validation.
-- No production Twilio webhook is switched before SchoolDrive backfill, Front pilot import, backup, and manual validation are complete.
+- No production Twilio webhook is switched before SchoolDrive backfill, Front pilot import, backup, manual validation, and real website lead/presubscription tests are complete.
 - Every active Sales Cockpit conversation must have one clear next action.
 
 ## Environments
@@ -25,6 +25,7 @@ Production should use HTTPS before final cutover.
 - SchoolDrive production webhook URL and token are configured.
 - SchoolDrive can backfill all active leads and presubscriptions.
 - SchoolDrive emits a fresh webhook when a WhatsApp autoresponder status changes to `sent`; this must be validated with a real AR status-change event, not only with synthetic replay.
+- SchoolDrive signature/enrolment, capacity, session-full, multi-enrolment, ID and timestamp semantics have been confirmed with Tiago.
 - Staging has been cleaned after any historical event replay and rebuilt with records created on or after 2026-03-01.
 - Twilio WhatsApp sender for the production business is verified and approved.
 - Twilio templates from the real ESSR account are synchronized locally with `SALES_COCKPIT_TWILIO_CONTENT_READ_ONLY=true`.
@@ -35,8 +36,26 @@ Production should use HTTPS before final cutover.
 - Production Twilio mode remains `mock` until the final switch, then must be `live` with HTTPS inbound and status callback URLs.
 - Front API read-only token is valid.
 - Backup and restore scripts have been tested.
-- Laura validates the final operational workflow with real or near-real staging examples.
+- Laura validates the final operational workflow with restored fake prospects, then with one real website lead and one real website presubscription.
 - HTTPS is in place before the real WhatsApp webhook switch.
+
+## Message To Tiago
+
+Send this focused request before final staging validation:
+
+```text
+Hi Tiago,
+
+For the Sales Cockpit V1 cutover, can you please confirm only the following SchoolDrive webhook/data points?
+
+1. Signature/enrolment: the exact event or payload that confirms a person has signed/enrolled.
+2. Capacity/session full: the exact fields that indicate capacity, remaining seats, session full, course full, and whether the canonical boolean is `is_full`.
+3. Multiple enrolments: whether one lead or presubscription can create multiple enrolments, and how they are represented.
+4. Linkage: the stable relationship from lead/presubscription to enrolment.
+5. IDs/timestamps: the stable IDs and timestamps we should use for idempotency, ordering, and audit.
+
+We only need these points for V1 validation.
+```
 
 ## T-2 Or Earlier: Prepare
 
@@ -65,10 +84,15 @@ python scripts/schooldrive_replay_payloads.py payloads/schooldrive \
    - queued autoresponders do not create follow-ups;
    - a real AR changing to `sent` produces a new webhook and creates the Setter II +72h follow-up;
    - archived SchoolDrive records are terminated;
-   - Setter II +72h follow-ups exist only when expected.
+   - Setter II +72h follow-ups exist only when expected;
    - Pilotage > Flux par scénario can map a real Twilio template to each follow-up step and the Conversation tab shows the recommended template for a matching relance.
 
-6. Run the automated pre-cutover check on the droplet:
+6. Run the manual V1 protocol in `docs/TEST_PLAN.md`:
+   - first with restored fake prospects;
+   - then with one real lead created from the website;
+   - then with one real presubscription created from the website.
+
+7. Run the automated pre-cutover check on the droplet:
 
 ```bash
 cd /opt/sales-cockpit/staging/app
@@ -143,10 +167,11 @@ sudo bash /opt/sales-cockpit/staging/app/deploy/scripts/install_backup_cron.sh
 2. Keep Front available read-only.
 3. Run one last Front buffer import.
 4. Review `active` Front conversations.
-5. For each active matched Front conversation, decide the next Sales Cockpit action:
-   - latest customer message waiting: `reply`, usually Mihary;
-   - latest team message waiting for prospect: `follow_up`, usually Tanjona;
-   - unclear status: manual review.
+5. For each active matched Front conversation, decide the next operational handling in Sales Cockpit from the business context:
+   - customer waiting for an answer: create a response action for the appropriate Setter I;
+   - team waiting for the prospect: create or keep the appropriate structured relance for Setter II;
+   - appointment already agreed: create the corresponding setting or closing call action;
+   - unclear status: create a manual review with a note.
 
 Controlled conversion from matched Front buffer rows exists via `scripts/front_convert_matched.py`, dry-run by default, with guards around existing open actions. It has not yet been validated for a large cutover. Until a reviewed conversion batch passes, create or assign these actions manually in Sales Cockpit.
 
@@ -210,10 +235,13 @@ sudo CONFIRM_RESTORE=1 bash /opt/sales-cockpit/prod/app/deploy/scripts/restore_s
 - HTTPS domain for production.
 - Production environment variables and secrets.
 - Real SchoolDrive AR-sent event trigger validation.
+- Tiago confirmation on signature/enrolment, capacity/session full, multiple enrolments, lead/presubscription to enrolment linkage, IDs, timestamps, capacity and `is_full`.
 - Real ESSR Twilio template synchronization in read-only mode.
 - Laura mapping of course/event/relance steps to real Twilio templates.
 - Final Twilio production sender verification.
 - Front full-history import batch sizing.
 - UI filter for `front_history`.
-- Automatic conversion of active Front buffer rows into Sales Cockpit next actions.
-- Laura validation on a real scenario set.
+- Reviewed conversion pilot for active Front buffer rows.
+- Laura validation on restored fake prospects.
+- Real website lead validation.
+- Real website presubscription validation.

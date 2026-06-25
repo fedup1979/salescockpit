@@ -1,5 +1,6 @@
 ﻿import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from urllib.parse import unquote
 from uuid import uuid4
 
@@ -70,6 +71,107 @@ def test_seeded_user_can_login() -> None:
     assert user is not None
     assert user["role"] == "admin"
     assert any(item["event_type"] == "login" for item in list_user_activity_log())
+
+
+def test_demo_seed_covers_v1_cutover_manual_scenarios() -> None:
+    seed_initial_data()
+
+    with connect() as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) AS count FROM leads WHERE schooldrive_lead_id LIKE 'SD-DEMO-%'"
+        ).fetchone()["count"]
+        rows = conn.execute(
+            """
+            SELECT
+                l.schooldrive_lead_id,
+                l.session_name,
+                l.capacity_total,
+                l.capacity_occupied,
+                l.capacity_available,
+                l.is_full,
+                t.type,
+                t.trigger_reason
+            FROM leads l
+            JOIN tasks t ON t.lead_id = l.id
+            WHERE l.schooldrive_lead_id IN (
+                'SD-DEMO-4020', 'SD-DEMO-4021', 'SD-DEMO-4022',
+                'SD-DEMO-4023', 'SD-DEMO-4024', 'SD-DEMO-4025'
+            )
+              AND t.status IN ('open', 'planned', 'in_progress', 'blocked')
+            """
+        ).fetchall()
+
+    by_id = {row["schooldrive_lead_id"]: row for row in rows}
+    assert count == 25
+    assert by_id["SD-DEMO-4020"]["type"] == "follow_up"
+    assert by_id["SD-DEMO-4021"]["type"] == "setting_call"
+    assert by_id["SD-DEMO-4022"]["type"] == "manual_reprise_setter"
+    assert by_id["SD-DEMO-4023"]["type"] == "manual_reprise_closer"
+    assert by_id["SD-DEMO-4024"]["type"] == "other"
+    assert by_id["SD-DEMO-4024"]["trigger_reason"] == "schooldrive_course_full"
+    assert by_id["SD-DEMO-4024"]["session_name"] == "APP GE P26"
+    assert by_id["SD-DEMO-4024"]["capacity_total"] == 20
+    assert by_id["SD-DEMO-4024"]["capacity_available"] == 0
+    assert by_id["SD-DEMO-4024"]["is_full"] == 1
+    assert by_id["SD-DEMO-4025"]["type"] == "other"
+    assert by_id["SD-DEMO-4025"]["trigger_reason"] == "unconfigured_course_category"
+
+
+def test_seed_preserves_existing_real_template_mapping_fine_tuning() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    assert admin is not None
+    with connect() as conn:
+        template_id = conn.execute(
+            """
+            INSERT INTO whatsapp_templates (
+                twilio_content_sid, twilio_content_type, name, language, category,
+                body, status, approved_at, created_by_user_id
+            ) VALUES (
+                'HXrealfinetuning00000000000000000001', 'twilio/text',
+                'real_fine_tuned_template', 'fr', 'utility',
+                'Template ESSR réel fine-tuné', 'approved', ?, ?
+            )
+            """,
+            (iso_utc(utc_now()), admin["id"]),
+        ).lastrowid
+        conn.execute(
+            """
+            INSERT INTO sequence_template_mappings (
+                sequence_code, sequence_step_index, lead_type, course_category,
+                template_id, note, active, created_by_user_id, updated_by_user_id,
+                created_at, updated_at
+            ) VALUES (
+                'lead_no_reply', 1, 'presubscription', 'APP',
+                ?, 'Mapping réel à préserver', 1, ?, ?, ?, ?
+            )
+            ON CONFLICT(sequence_code, sequence_step_index, lead_type, course_category)
+            DO UPDATE SET template_id = excluded.template_id,
+                          note = excluded.note,
+                          active = excluded.active,
+                          updated_at = excluded.updated_at
+            """,
+            (template_id, admin["id"], admin["id"], iso_utc(utc_now()), iso_utc(utc_now())),
+        )
+
+    seed_initial_data()
+
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT stm.template_id, stm.note, stm.active, wt.twilio_content_sid
+            FROM sequence_template_mappings stm
+            JOIN whatsapp_templates wt ON wt.id = stm.template_id
+            WHERE stm.sequence_code = 'lead_no_reply'
+              AND stm.sequence_step_index = 1
+              AND stm.lead_type = 'presubscription'
+              AND stm.course_category = 'APP'
+            """
+        ).fetchone()
+    assert row["template_id"] == template_id
+    assert row["twilio_content_sid"] == "HXrealfinetuning00000000000000000001"
+    assert row["note"] == "Mapping réel à préserver"
+    assert row["active"] == 1
 
 
 def test_bug_report_is_stored_with_activity_log() -> None:
@@ -3037,6 +3139,175 @@ def test_outbox_keeps_send_error_message_when_twilio_fails(monkeypatch) -> None:
     assert len(failed) == 1
     assert failed[0]["twilio_status"] == "send_error"
     assert failed[0]["twilio_error_message"] == "temporary Twilio failure"
+
+
+def test_double_submit_freeform_sends_twilio_once(monkeypatch) -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Bonjour.")
+    action = get_next_action_for_lead(result["lead_id"])
+    calls = []
+
+    class CountingClient:
+        def send_freeform(self, to_phone: str, body: str, media_urls=None):
+            calls.append((to_phone, body))
+            return SimpleNamespace(sid=f"SM_FREEFORM_{len(calls)}", status="sent", provider="twilio")
+
+    monkeypatch.setattr("sales_cockpit.store.get_whatsapp_client", lambda: CountingClient())
+
+    ok, message = send_freeform_message(
+        result["conversation_id"],
+        admin["id"],
+        "Bonjour.",
+        expected_action_id=action["id"],
+    )
+    assert ok is True, message
+    ok, message = send_freeform_message(
+        result["conversation_id"],
+        admin["id"],
+        "Bonjour encore.",
+        expected_action_id=action["id"],
+    )
+
+    assert ok is False
+    assert "déjà" in message or "dÃ©jÃ" in message
+    assert len(calls) == 1
+
+
+def test_double_submit_template_sends_twilio_once(monkeypatch) -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Bonjour.")
+    action = get_next_action_for_lead(result["lead_id"])
+    template_id = create_template(
+        admin["id"],
+        "double_submit_template",
+        "Bonjour, merci pour votre message.",
+        status="approved",
+        twilio_content_sid="HXdddddddddddddddddddddddddddddddd",
+        twilio_content_type="twilio/text",
+    )
+    calls = []
+
+    class CountingClient:
+        def send_template(self, to_phone: str, content_sid: str, variables: dict):
+            calls.append((to_phone, content_sid, variables))
+            return SimpleNamespace(sid=f"SM_TEMPLATE_{len(calls)}", status="sent", provider="twilio")
+
+    monkeypatch.setattr("sales_cockpit.store.get_whatsapp_client", lambda: CountingClient())
+
+    ok, message = send_template_message(
+        result["conversation_id"],
+        admin["id"],
+        template_id,
+        {},
+        expected_action_id=action["id"],
+    )
+    assert ok is True, message
+    ok, message = send_template_message(
+        result["conversation_id"],
+        admin["id"],
+        template_id,
+        {},
+        expected_action_id=action["id"],
+    )
+
+    assert ok is False
+    assert "déjà" in message or "dÃ©jÃ" in message
+    assert len(calls) == 1
+
+
+def test_retry_after_twilio_failure_reuses_active_action(monkeypatch) -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Bonjour.")
+    action = get_next_action_for_lead(result["lead_id"])
+    calls = []
+
+    class FlakyClient:
+        def send_freeform(self, to_phone: str, body: str, media_urls=None):
+            calls.append(body)
+            if len(calls) == 1:
+                raise TwilioMessageError("temporary Twilio failure")
+            return SimpleNamespace(sid="SM_RETRY_OK", status="sent", provider="twilio")
+
+    monkeypatch.setattr("sales_cockpit.store.get_whatsapp_client", lambda: FlakyClient())
+
+    ok, message = send_freeform_message(
+        result["conversation_id"],
+        admin["id"],
+        "Premier essai.",
+        expected_action_id=action["id"],
+    )
+    assert ok is False
+    assert "Twilio" in message
+
+    ok, message = send_freeform_message(
+        result["conversation_id"],
+        admin["id"],
+        "Deuxième essai.",
+        expected_action_id=action["id"],
+    )
+
+    assert ok is True, message
+    assert calls == ["Premier essai.", "Deuxième essai."]
+    outbound = [item for item in list_messages(result["conversation_id"]) if item["direction"] == "outbound"]
+    assert [item["twilio_status"] for item in outbound] == ["send_error", "sent"]
+
+
+def test_workflow_completion_refuses_invalid_outcome_without_closing_action() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Bonjour.")
+    action = get_next_action_for_lead(result["lead_id"])
+
+    ok, message = complete_action_with_workflow(action["id"], admin["id"], "signed", note="Invalid")
+
+    assert ok is False
+    assert "invalide" in message
+    assert get_next_action_for_lead(result["lead_id"])["id"] == action["id"]
+
+
+def test_workflow_completion_refuses_missing_sequence_step_without_closing_action() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Bonjour.")
+    action = get_next_action_for_lead(result["lead_id"])
+    with connect() as conn:
+        conn.execute(
+            "UPDATE sequence_steps SET active = 0 WHERE sequence_code = 'setter_no_next_step' AND step_index = 1"
+        )
+
+    ok, message = complete_action_with_workflow(
+        action["id"],
+        admin["id"],
+        "reply_no_appointment",
+        note="Réponse sans rendez-vous.",
+    )
+
+    assert ok is False
+    assert "flux" in message
+    assert get_next_action_for_lead(result["lead_id"])["id"] == action["id"]
+
+
+def test_workflow_completion_refuses_missing_assignee_without_closing_action() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Bonjour.")
+    action = get_next_action_for_lead(result["lead_id"])
+    with connect() as conn:
+        conn.execute("UPDATE users SET active = 0 WHERE role = 'closer'")
+
+    ok, message = complete_action_with_workflow(
+        action["id"],
+        admin["id"],
+        "closing_booked",
+        note="RDV closing demandé.",
+    )
+
+    assert ok is False
+    assert "Closer" in message
+    assert get_next_action_for_lead(result["lead_id"])["id"] == action["id"]
 
 
 def unique_phone() -> str:

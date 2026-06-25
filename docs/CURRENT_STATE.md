@@ -1,10 +1,10 @@
 # Current Project State
 
-Last updated: 2026-06-23 13:21 Europe/Zurich.
+Last updated: 2026-06-25 Europe/Zurich.
 
 This is the first document to read when resuming Sales Cockpit.
 
-Important follow-up: the adversarial review findings from 2026-06-22 are preserved in `docs/ADVERSARIAL_REVIEW.md`. They are not implemented yet. Read that file before declaring the system ready for live WhatsApp cutover.
+Important follow-up: the adversarial review findings from 2026-06-22 are preserved in `docs/ADVERSARIAL_REVIEW.md`. Several P0/P1 findings have now been implemented and tested locally for the V1 pre-cutover hardening, but they are not deployed yet. Read that file before declaring the system ready for live WhatsApp cutover.
 
 ## Executive Summary
 
@@ -15,7 +15,7 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 - Latest checkpoint before hardening audit: `a02f10c`.
 - Latest deployed staging UI/API check: OK on commit `db6f03b`.
 - Latest deployed production cold check: OK on commit `db6f03b`, Twilio `mock`, no SchoolDrive/Front production traffic connected.
-- Latest local automated validation after the Actions UX refactor: `170 passed`, targeted `py_compile` OK.
+- Latest local automated validation after the V1 pre-cutover hardening: `204 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\full`.
 - Latest staging pre-cutover check before this audit: OK.
 - Staging Twilio mode: `mock`, no real WhatsApp send from Sales Cockpit.
 - Production Twilio mode: `mock`, prepared cold only.
@@ -23,9 +23,9 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 - Current SchoolDrive live gate: validate one fresh website form through AR `sent` snapshot and Setter II +72h follow-up.
 - Front: read-only buffer foundation exists; Front is not a blocker for the Laura workflow review.
 - Go/no-go: good for Laura business review in staging; not yet GO for operational WhatsApp cutover.
-- Hardening completed locally after the checkpoint: app API token guard, mock webhook token guard, Twilio status regression guard, Twilio SID uniqueness, production seed without demo conversations, fake attachment uploader removed, documentation aligned.
+- Hardening completed locally after the checkpoint: app API token guard, mock webhook token guard, Twilio status regression guard, Twilio SID uniqueness, production seed without demo conversations, fake attachment uploader removed, outbound send idempotence by action, SchoolDrive V1 signals, cleanup/pre-cutover safeguards, light-theme UX alignment, and documentation alignment.
 - Latest local V1 workflow update: `eligible` is now the default qualification; setting/closing indécis and no-show flows are distinct; call appointments can be rescheduled or cancelled; bug reports and template requests create admin actions; outbound WhatsApp safeguards are configurable in Admin.
-- Latest hardening update: no-show call retries are now scoped by `call_cycle_id`; business-rule seeds are versioned and migrate legacy `post_call_undecided` rows; Twilio template sync can unblock linked template requests; strict production cutover checks exist; SchoolDrive signed/do-not-contact/course-full/session-past signals are handled; follow-up quotas do not block human replies; outbound WhatsApp writes a pending outbox row before calling Twilio; core list queries now have indexes and pagination guards.
+- Latest hardening update: no-show call retries are now scoped by `call_cycle_id`; business-rule seeds are versioned and migrate legacy `post_call_undecided` rows without overwriting existing real template mappings; Twilio template sync can unblock linked template requests; strict production cutover checks exist; SchoolDrive signed/do-not-contact/course-full/session-past signals are handled; follow-up quotas do not block human replies; outbound WhatsApp sends are claimed per active action before Twilio is called; core list queries now have indexes and pagination guards.
 - Latest workflow reconciliation update: Inbox/list and detail now use the same next-action priority; manual lift of `Ne plus contacter` closes obsolete contact reviews and recreates a reply only when the last inbound is unanswered; inbound on terminal qualifications creates a review instead of a normal reply; reopening a resolved conversation refuses terminal contact/qualification states; linked template requests/admin actions are cancelled when their blocked follow-up becomes obsolete.
 - Staging pre-cutover after deployment: OK, including API security and seed checks.
 - Production cold pre-cutover after deployment with `--allow-cold-prod`: OK, including API security, seed checks, and zero active workflow anomalies.
