@@ -63,7 +63,6 @@ APP_CSS = """
 }
 
 header[data-testid="stHeader"] {
-  height: 0;
   background: transparent;
 }
 

@@ -27,6 +27,7 @@ from sales_cockpit.ui.app import (
     message_display_timestamp,
     simulated_template_label,
 )
+from sales_cockpit.ui.styles import APP_CSS
 
 
 def unique_phone() -> str:
@@ -68,6 +69,13 @@ def test_ui_dates_are_displayed_in_geneva_time() -> None:
         )
         == "2026-06-23T06:11:00Z"
     )
+
+
+def test_sidebar_reopen_control_is_not_hidden_by_css() -> None:
+    assert 'header[data-testid="stHeader"] {\n  height: 0;' not in APP_CSS
+    assert 'data-testid="collapsedControl"' not in APP_CSS
+    assert ".st-key-mobile_nav" in APP_CSS
+    assert "@media (max-width: 900px)" in APP_CSS
 
 
 def test_reply_action_guides_to_conversation_send_without_generic_completion() -> None:
