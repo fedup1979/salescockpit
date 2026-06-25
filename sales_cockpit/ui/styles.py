@@ -165,19 +165,19 @@ h1, h2, h3 {
   display: inline-flex;
   align-items: center;
   gap: .35rem;
-  padding: .18rem .5rem;
+  padding: .12rem .45rem;
   border: 1px solid var(--sc-border);
   border-radius: 6px;
   background: oklch(0.99 0.004 250);
   color: var(--sc-muted);
-  font-size: .78rem;
-  line-height: 1.15;
+  font-size: .74rem;
+  line-height: 1.1;
   min-height: 1.65rem;
 }
 
 .st-key-lead_state_header .sc-compact-state > span {
   width: 100%;
-  min-height: 2.25rem;
+  min-height: 2rem;
   justify-content: flex-start;
 }
 
@@ -217,7 +217,7 @@ h1, h2, h3 {
 .sc-compact-state strong {
   display: inline-flex;
   align-items: center;
-  line-height: 1.15;
+  line-height: 1.1;
 }
 
 .sc-compact-state strong {
@@ -554,7 +554,7 @@ h1, h2, h3 {
 
 .st-key-next_action_summary_box [data-testid="stPopover"] {
   position: absolute;
-  top: 2.45rem;
+  top: 3.25rem;
   right: .85rem;
   z-index: 2;
   width: 2rem;
