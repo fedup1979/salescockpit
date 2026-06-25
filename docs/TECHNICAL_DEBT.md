@@ -163,8 +163,8 @@ Without this, a course could become full after a follow-up was scheduled but bef
 
 Template requests and bug reports now create explicit rows in `admin_actions`:
 
-- template requests appear in `Modèles` and `Admin > Templates`, and create an admin action that can be completed;
-- bug reports appear in `Admin > Bugs & logs`, and create an admin action that can be completed;
+- template requests appear in `Modèles`, and create an admin action that can be completed;
+- bug reports appear in `Admin > Signalements`, and create an admin action that can be completed;
 - both keep the source context needed for review and are visible in `Admin > Actions admin`.
 
 They deliberately do not create a standard commercial `tasks` row. Commercial tasks are lead/conversation-based, while a bug report can be global and a template request can be a support item rather than the prospect's next commercial action. The dedicated `admin_actions` table keeps admin workload visible without blurring the workflow model.
@@ -181,6 +181,10 @@ Extend the existing admin-action layer if admin workload needs richer operations
 - richer audit trail for reopen/reassign/close.
 
 Keep the current distinction between prospect next actions and internal support work.
+
+## Automatic Absence Transfers
+
+Automatic task transfers between collaborators are intentionally out of V1 scope. Working hours are useful as reference data, but absence/back-up routing adds complexity for limited operational benefit. If someone is absent, another collaborator can manually open that person's queue and process the needed tasks.
 
 ## Appointment Reminders
 

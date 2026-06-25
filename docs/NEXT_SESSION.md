@@ -60,11 +60,11 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - The exhaustive validated business logic is now in `docs/BUSINESS_LOGIC.md`.
 - The implementation gap analysis is now in `docs/GAP_ANALYSIS.md`.
 - The validated workflow model is documented in `docs/ACTION_WORKFLOW.md` and structured in `sales_cockpit/business_rules.py`; read it before changing `Tâches`, actions, follow-ups, calls, templates, qualification, or automation.
-- Admin now includes a `Workflow` tab showing main action types, support actions, action statuses, and the transition table.
+- `Pilotage > Logique métier` shows the business validation matrix, useful reference tables, operating rules, and the technical transition table.
 - The main V1 action chain is `reply`, `follow_up`, `setting_call`, `closing_call`.
 - `setting_call` and `closing_call` are now the future action to call the prospect and document the call at the appointment time. In UI copy, prefer `Appeler et documenter appel setting` and `Appeler et documenter appel closing`.
 - Template requests create `admin_actions`. Admin users now see open admin actions from the `Tâches` page as well as `Admin > Actions admin`.
-- A template request can be linked manually to a synced Twilio template from `Modèles` or `Admin > Templates`; approving a linked, real approved Twilio template unblocks the related Setter II follow-up.
+- A template request can be linked manually to a synced Twilio template from `Modèles`; approving a linked, real approved Twilio template unblocks the related Setter II follow-up.
 - Qualification, manual notes, and template creation are support actions/proofs by default, not main workflow actions.
 - `setting_call` is the preferred internal term. The UI should say `Appel`, for example `Appel setting` and `Appel closing`, not `Entretien`.
 - Persisted action statuses should be `planned`, `open`, `in_progress`, `done`, `cancelled`, `blocked`; `due` should be calculated from `due_at`, not stored as a status.
@@ -200,12 +200,12 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - Manual validation checklist is in `docs/TEST_PLAN.md`.
 - Navigation now includes `Mode d'emploi`; non-admin users no longer see the `Admin` page.
 - Sidebar includes a `Bug` button. It opens a large dialog, creates a row in `bug_reports`, and logs the event in `user_activity_log`.
-- Business events inserted via `lead_events` are mirrored into `user_activity_log`, so Admin can inspect recent usage and cross-check bug reports with workflow events.
-- Admin now has a `Bugs & logs` tab showing bug reports and recent activity.
+- Business events inserted via `lead_events` are mirrored into `user_activity_log` for backend audit/debug, but the admin activity log is no longer shown in the UI.
+- Admin now has a `Signalements` tab showing bug reports. The old admin activity log is no longer shown.
 - Admin now opens with an `État` tab showing readiness for SchoolDrive, Front, Twilio, backups, and workflow consistency.
 - Admin > Utilisateurs sorts users by ID, so Laura appears first in the seeded local data.
 - Admin shows page access by role. Admin sees everything; Setter I, Setter II and Closer see all user pages except Admin.
-- Human and business hours have provisional V1 values in Admin > Règles métier > Horaires et bascules. They still need Laura validation.
+- Human and business hours are shown in `Pilotage > Logique métier`. Automatic absence transfers are intentionally out of V1 scope.
 - The `Mode d'emploi` page is now prose, not expanders. Do not reintroduce accordion-heavy help unless François asks.
 - In `Mode d'emploi` and `Pilotage`, use function labels (`Setter I`, `Setter II`, `Closer`, `Admin`) rather than person names. Person names are still appropriate when showing the actual assignee on a task or in user management.
 - Template requests and bug reports create `admin_actions`, not standard prospect tasks. Do not create fake commercial tasks for them. Keep admin support work in `Admin > Actions admin`.

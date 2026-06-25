@@ -7,6 +7,7 @@ from sales_cockpit.db import seed_initial_data
 from sales_cockpit.store import (
     authenticate,
     assign_standard_next_action,
+    create_template_request,
     get_next_action_for_lead,
     list_sequence_steps,
     list_conversations,
@@ -235,7 +236,7 @@ def test_conversation_journal_table_wraps_description_column() -> None:
     assert "<div" not in html
 
 
-def test_admin_bugs_logs_no_longer_shows_user_activity_log() -> None:
+def test_admin_navigation_is_reduced_to_operational_tabs() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
 
@@ -246,14 +247,72 @@ def test_admin_bugs_logs_no_longer_shows_user_activity_log() -> None:
     app.run(timeout=10)
 
     assert len(app.exception) == 0
+    tab_labels = [item.label for item in app.tabs]
     captions = "\n".join(item.value for item in app.caption)
     all_text = "\n".join(
         [*(item.value for item in app.markdown), *(item.value for item in app.caption), *(item.value for item in app.info)]
     )
-    assert "Bugs & logs" in [item.label for item in app.tabs]
+    assert tab_labels == ["État", "Utilisateurs", "Actions admin", "Garde-fous", "Signalements", "Intégrations"]
+    assert "Règles métier" not in tab_labels
+    assert "Workflow" not in tab_labels
+    assert "Flux" not in tab_labels
+    assert "Templates" not in tab_labels
+    assert "Bugs & logs" not in tab_labels
     assert "Chaque signalement conserve le contexte" in captions
     assert "Journal utilisateur" not in all_text
     assert "Derniers événements métier" not in captions
+
+
+def test_pilotage_business_logic_shows_useful_references_without_transfer_rules() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+
+    app = AppTest.from_file("sales_cockpit/ui/app.py")
+    app.session_state["user"] = admin
+    app.run(timeout=10)
+    set_navigation(app, "Pilotage")
+    app.run(timeout=10)
+
+    assert len(app.exception) == 0
+    all_text = "\n".join(
+        [
+            *(item.value for item in app.markdown),
+            *(item.value for item in app.caption),
+        ]
+    )
+    assert "Référentiels métier utiles" in all_text
+    assert "Qualifications" in all_text
+    assert "Contact" in all_text
+    assert "Motifs de clôture" in all_text
+    assert "Attribution" in all_text
+    assert "Horaires" in all_text
+    assert "Horaires entreprise" in all_text
+    assert "Absences et backups" not in all_text
+
+
+def test_models_page_remains_template_request_workspace() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Il manque un modèle.")
+    ok, message = create_template_request(
+        result["conversation_id"],
+        admin["id"],
+        "Modèle de test manquant.",
+        context="Test UI Modèles.",
+    )
+    assert ok, message
+
+    app = AppTest.from_file("sales_cockpit/ui/app.py")
+    app.session_state["user"] = admin
+    app.run(timeout=10)
+    set_navigation(app, "Modèles")
+    app.run(timeout=10)
+
+    assert len(app.exception) == 0
+    button_labels = [item.label for item in app.button]
+    selectbox_labels = [item.label for item in app.selectbox]
+    assert "Synchroniser Twilio" in button_labels
+    assert "Demande à lier" in selectbox_labels
 
 
 def test_statuses_are_edited_from_header_bubbles_without_status_tab() -> None:

@@ -142,7 +142,6 @@ Implemented and deployed in commit `f8e8a0b`.
 - Mapping dimensions: `sequence_code`, `sequence_step_index`, `lead_type`, `course_category`.
 - `all` is supported for lead type and course category.
 - Pilotage > Flux par scénario lets admins assign approved Twilio templates while looking at the full message body.
-- Admin > Flux still displays the technical mapping table.
 - Only real Twilio templates approved by WhatsApp can be mapped. Draft, pending, rejected, local demo, and `HX_MOCK_*` templates are rejected.
 - During a `follow_up` action, the Conversation tab displays the recommended template when a mapping matches the prospect.
 
@@ -174,7 +173,7 @@ Verification after premapping:
 
 Implemented in commit `6c48293`, then expanded in commit `f8e8a0b`.
 
-`Pilotage` is an admin-only commercial tuning page for Laura. It keeps the existing technical Admin page intact, but exposes the workflow in a more human-readable way:
+`Pilotage` is an admin-only commercial tuning page for Laura. `Admin` remains focused on readiness, users, admin actions, safeguards, signalements, and integrations.
 
 - overview of normal flows;
 - active course categories handled by structured flows;
@@ -183,7 +182,7 @@ Implemented in commit `6c48293`, then expanded in commit `f8e8a0b`.
 - scenario timelines by lead type, course category and sequence;
 - full template message body, Twilio SID and template status for each step;
 - approved template assignment by flow, step, lead type and course category;
-- natural-language conflict rules;
+- natural-language conflict rules and useful business reference tables;
 - simple simulator for lead-relative and course-start timelines.
 
 Default course sessions live in `course_default_sessions`. They are used as a planning layer when a SchoolDrive Lead has only a course category, for example `APP`, but no specific session or `start_date`. SchoolDrive data remains authoritative: if SchoolDrive provides a real session/start date, it wins over the default session.

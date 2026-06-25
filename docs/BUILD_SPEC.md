@@ -202,14 +202,10 @@ Right panel:
 
 ### Admin
 
-- Users and commercial roles.
-- Qualification statuses and stop rules.
-- Workflow tab with main action types, support actions, action statuses, and transition table.
-- Operating rules, including WhatsApp window constraints and conflict policy.
-- Schedule and absence-transfer rules, currently declarative.
-- Follow-up sequences.
-- SchoolDrive lead types: `lead` and `presubscription` (`Lead` / `Préinscription` in the UI).
-- Demo template catalog used only for local/mock/demo mode. Real operational recommendations must use synchronized Twilio templates approved by WhatsApp.
+- Admin is the technical and support console: readiness, users, admin actions, outbound safeguards, signalements, and integrations.
+- Commercial flow tuning lives in `Pilotage`: course categories, default sessions, flow steps, scenario templates, business logic, and useful reference tables.
+- Twilio templates and template requests live in `Modèles`.
+- Automatic absence transfer is out of V1 scope. Working hours may be shown as reference, but team members can manually log into a colleague's queue if needed.
 
 ## Current Data Model Highlights
 

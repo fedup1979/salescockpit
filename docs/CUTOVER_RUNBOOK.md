@@ -66,7 +66,7 @@ python scripts/schooldrive_replay_payloads.py payloads/schooldrive \
    - a real AR changing to `sent` produces a new webhook and creates the Setter II +72h follow-up;
    - archived SchoolDrive records are terminated;
    - Setter II +72h follow-ups exist only when expected.
-   - Admin > Flux can map a real Twilio template to each follow-up step and the Conversation tab shows the recommended template for a matching relance.
+   - Pilotage > Flux par scénario can map a real Twilio template to each follow-up step and the Conversation tab shows the recommended template for a matching relance.
 
 6. Run the automated pre-cutover check on the droplet:
 

@@ -48,11 +48,12 @@ Compte : `francois.dupuis@essr.ch`.
 
 1. Ouvrir `Admin`.
 2. Vérifier que Tanjona existe avec le rôle `Setter II`.
-3. Vérifier `Règles métier > Horaires et bascules`.
+3. Vérifier que `Admin` contient `État`, `Utilisateurs`, `Actions admin`, `Garde-fous`, `Signalements`, `Intégrations`.
 4. Créer un signalement avec le bouton `Bug`.
-5. Vérifier le signalement dans `Admin > Bugs & logs`.
+5. Vérifier le signalement dans `Admin > Signalements`.
+6. Vérifier les horaires dans `Pilotage > Logique métier`.
 
-Résultat attendu : admin clair, bug enregistrable, logs visibles.
+Résultat attendu : admin clair, bug enregistrable, signalements visibles, horaires visibles sans bascule automatique.
 
 ## P1 Mihary Réponse Client
 

@@ -7,7 +7,7 @@ Pour l'état d'implémentation et les écarts restants, lire `docs/GAP_ANALYSIS.
 
 Il doit devenir la référence de travail pour toute évolution de `Tâches`, Inbox, automatisation Setter II, Twilio, SchoolDrive, Notion et futur setter IA.
 
-La version structurée de cette logique existe dans `sales_cockpit/business_rules.py` via `MAIN_ACTION_TYPES`, `SUPPORT_ACTIONS`, `ACTION_STATUSES` et `WORKFLOW_TRANSITIONS`. Elle est affichée dans l'onglet Admin > Workflow.
+La version structurée de cette logique existe dans `sales_cockpit/business_rules.py` via `MAIN_ACTION_TYPES`, `SUPPORT_ACTIONS`, `ACTION_STATUSES` et `WORKFLOW_TRANSITIONS`. Elle est affichée dans `Pilotage > Logique métier`.
 
 ## Décisions Validées
 

@@ -3656,6 +3656,8 @@ def render_pilotage_conflict_rules() -> None:
         st.markdown(f"**{index}. {rule['Situation']}**")
         st.write(rule["Règle"])
 
+    render_pilotage_business_references()
+
     st.markdown("### Tous les cas à valider")
     st.caption(
         "Les lignes `Actif` décrivent le comportement actuellement attendu du cockpit. "
@@ -3682,6 +3684,97 @@ def render_pilotage_conflict_rules() -> None:
         pilotage_rows_with_natural_language(WORKFLOW_TRANSITIONS, "workflow_transition"),
         max_height_rem=34,
     )
+
+
+def render_pilotage_business_references() -> None:
+    st.markdown("### Référentiels métier utiles")
+    st.caption(
+        "Ces référentiels expliquent les choix visibles dans la fiche prospect et dans les actions. "
+        "Les référentiels purement techniques restent hors de l'UX normale."
+    )
+
+    st.markdown("#### Qualifications")
+    render_wrapped_table(
+        [
+            {
+                "Qualification": item["label"],
+                "Code": item["value"],
+                "Sens": item["meaning"],
+                "Bloque les relances": yes_no(item.get("stops_followups")),
+            }
+            for item in QUALIFICATION_STATUSES
+        ],
+        max_height_rem=16,
+    )
+
+    st.markdown("#### Contact")
+    render_wrapped_table(
+        [
+            {
+                "Contact": item["label"],
+                "Code": item["value"],
+                "Sens": item["meaning"],
+                "Bloque les relances": yes_no(item.get("stops_followups")),
+            }
+            for item in CONTACT_STATUSES
+        ],
+        max_height_rem=12,
+    )
+
+    st.markdown("#### Motifs de clôture")
+    render_wrapped_table(
+        [
+            {
+                "Motif": item["label"],
+                "Code": item["value"],
+                "Sens": item["meaning"],
+                "Note obligatoire": yes_no(item.get("requires_note")),
+            }
+            for item in RESOLUTION_REASONS
+        ],
+        max_height_rem=20,
+    )
+
+    st.markdown("#### Attribution")
+    render_wrapped_table(
+        [
+            {
+                "Déclencheur": item["trigger"],
+                "Responsable": item["owner"],
+                "Effet": item["effect"],
+            }
+            for item in ASSIGNMENT_RULES
+            if item["trigger"] != "responsable absent"
+        ],
+        max_height_rem=18,
+    )
+
+    st.markdown("#### Horaires")
+    st.caption(
+        "Les horaires servent de référence opérationnelle. Il n'y a pas de bascule automatique entre collaborateurs en V1."
+    )
+    render_wrapped_table(
+        [
+            {
+                "Règle": item["rule"],
+                "Horaire": item["value"],
+                "Usage": schedule_reference_usage(item["rule"]),
+            }
+            for item in SCHEDULE_RULES
+            if item["rule"].startswith("Horaires ")
+        ],
+        max_height_rem=16,
+    )
+
+
+def yes_no(value: bool | None) -> str:
+    return "Oui" if value else "Non"
+
+
+def schedule_reference_usage(rule: str) -> str:
+    if rule == "Horaires entreprise":
+        return "Référence commune pour identifier les messages ou actions hors horaire."
+    return "Créneau de travail affiché à titre de référence, sans transfert automatique de file."
 
 
 def render_wrapped_table(rows: list[dict], max_height_rem: int = 42) -> None:
@@ -4704,13 +4797,9 @@ def render_admin(user: dict) -> None:
     tabs = st.tabs([
         "État",
         "Utilisateurs",
-        "Règles métier",
-        "Workflow",
-        "Flux",
-        "Templates",
         "Actions admin",
         "Garde-fous",
-        "Bugs & logs",
+        "Signalements",
         "Intégrations",
     ])
     with tabs[0]:
@@ -4736,183 +4825,13 @@ def render_admin(user: dict) -> None:
         st.dataframe(SALES_ACTORS, hide_index=True, use_container_width=True)
 
     with tabs[2]:
-        st.subheader("Qualifications")
-        st.dataframe(QUALIFICATION_STATUSES, hide_index=True, use_container_width=True)
-        st.subheader("Statuts de contact")
-        st.dataframe(CONTACT_STATUSES, hide_index=True, use_container_width=True)
-        st.subheader("Motifs de clôture")
-        st.dataframe(RESOLUTION_REASONS, hide_index=True, use_container_width=True)
-        st.subheader("Règles opérationnelles")
-        st.dataframe(OPERATING_RULES, hide_index=True, use_container_width=True)
-        st.subheader("Règles d'attribution")
-        st.dataframe(ASSIGNMENT_RULES, hide_index=True, use_container_width=True)
-        st.subheader("Horaires et bascules")
-        st.dataframe(SCHEDULE_RULES, hide_index=True, use_container_width=True)
-        st.subheader("Origines")
-        st.dataframe(SOURCE_TYPES, hide_index=True, use_container_width=True)
-        st.subheader("Types de leads SchoolDrive")
-        st.dataframe(LEAD_TYPES, hide_index=True, use_container_width=True)
-
-    with tabs[3]:
-        st.subheader("Types d'actions principales")
-        st.dataframe(MAIN_ACTION_TYPES, hide_index=True, use_container_width=True)
-        st.subheader("Actions support")
-        st.dataframe(SUPPORT_ACTIONS, hide_index=True, use_container_width=True)
-        st.subheader("Statuts d'action")
-        st.dataframe(ACTION_STATUSES, hide_index=True, use_container_width=True)
-        st.subheader("Table de transitions")
-        st.caption(
-            "Cette table décrit le chaînage cible : action actuelle + événement/résultat -> prochaine action."
-        )
-        st.dataframe(WORKFLOW_TRANSITIONS, hide_index=True, use_container_width=True, height=520)
-
-    with tabs[4]:
-        st.subheader("Flux de relance")
-        st.dataframe(list_sequences(), hide_index=True, use_container_width=True)
-        st.subheader("Étapes du flux")
-        sequence_steps = list_sequence_steps()
-        st.dataframe(sequence_steps, hide_index=True, use_container_width=True, height=300)
-
-        st.subheader("Templates recommandés par étape")
-        mappings = list_sequence_template_mappings()
-        if mappings:
-            mapping_rows = [
-                {
-                    "Flux": item["sequence_code"],
-                    "Étape": item["sequence_step_index"],
-                    "Type": "Tous" if item["lead_type"] == "all" else labelize(item["lead_type"]),
-                    "Catégorie": "Toutes" if item["course_category"] == "all" else item["course_category"],
-                    "Template": item.get("template_name") or "Template supprimé",
-                    "Statut": template_status_label({"status": item.get("template_status")}),
-                    "Note": item.get("note") or "",
-                }
-                for item in mappings
-            ]
-            st.dataframe(mapping_rows, hide_index=True, use_container_width=True, height=260)
-        else:
-            st.info("Aucun template réel n'est encore recommandé pour les flux.")
-
-        st.markdown("**Ajouter ou modifier une recommandation**")
-        real_templates = [item for item in list_templates() if is_approved_real_twilio_template(item)]
-        if not real_templates:
-            st.warning("Synchronisez d'abord les vrais templates Twilio approuvés dans la page Modèles.")
-        else:
-            with st.form("sequence_template_mapping_form"):
-                selected_step = st.selectbox(
-                    "Étape",
-                    sequence_steps,
-                    format_func=format_sequence_step,
-                )
-                lead_type = st.selectbox(
-                    "Type SchoolDrive",
-                    ["all", "lead", "presubscription"],
-                    format_func=lambda value: {
-                        "all": "Tous",
-                        "lead": "Lead",
-                        "presubscription": "Préinscription",
-                    }.get(value, labelize(value)),
-                )
-                course_category = st.text_input(
-                    "Catégorie de cours",
-                    value="all",
-                    help="Ex. APP, FSM, AS. Garder `all` si le même template vaut pour toutes les catégories.",
-                )
-                template = st.selectbox(
-                    "Template Twilio recommandé",
-                    real_templates,
-                    format_func=lambda item: (
-                        f"{item['name']} · {template_status_label(item)} · "
-                        f"{item['language']} · {labelize(item['category'])}"
-                    ),
-                )
-                note = st.text_input("Note interne", placeholder="Ex. APP relance 3 avant appel.")
-                submitted = st.form_submit_button("Enregistrer le mapping")
-            if submitted:
-                ok, message = upsert_sequence_template_mapping(
-                    user["id"],
-                    selected_step["sequence_code"],
-                    int(selected_step["step_index"]),
-                    lead_type,
-                    course_category,
-                    int(template["id"]),
-                    note,
-                )
-                show_result(ok, message)
-                if ok:
-                    st.rerun()
-
-        if mappings:
-            with st.expander("Désactiver un mapping", expanded=False):
-                with st.form("deactivate_sequence_template_mapping_form"):
-                    mapping = st.selectbox(
-                        "Mapping",
-                        mappings,
-                        format_func=lambda item: (
-                            f"{item['sequence_code']} #{item['sequence_step_index']} · "
-                            f"{item['lead_type']} · {item['course_category']} · "
-                            f"{item.get('template_name') or 'template supprimé'}"
-                        ),
-                    )
-                    submitted = st.form_submit_button("Désactiver")
-                if submitted:
-                    ok, message = deactivate_sequence_template_mapping(user["id"], int(mapping["id"]))
-                    show_result(ok, message)
-                    if ok:
-                        st.rerun()
-
-    with tabs[5]:
-        st.subheader("Templates de démo")
-        st.dataframe(DEMO_TEMPLATE_CATALOG, hide_index=True, use_container_width=True)
-        st.caption("Les vrais templates seront synchronisés depuis Twilio. Les noms ci-dessus servent de mapping provisoire.")
-        st.subheader("Statuts de demande de modèle")
-        st.dataframe(TEMPLATE_REQUEST_STATUSES, hide_index=True, use_container_width=True)
-        st.subheader("Demandes de modèles")
-        st.caption("Chaque demande crée aussi une action Admin dans l'onglet Actions admin.")
-        requests = list_template_requests()
-        if requests:
-            st.dataframe(requests, hide_index=True, use_container_width=True, height=320)
-            templates_for_linking = template_link_options(list_templates())
-            with st.form("update_template_request_status"):
-                request = st.selectbox(
-                    "Demande",
-                    requests,
-                    format_func=lambda item: f"#{item['id']} · {lead_display_name(item)} · {labelize(item['status'])}",
-                )
-                linked_template = st.selectbox(
-                    "Template Twilio lié",
-                    templates_for_linking,
-                    index=template_link_index(templates_for_linking, request.get("template_id")),
-                    format_func=template_link_label,
-                )
-                status = st.selectbox(
-                    "Nouveau statut",
-                    [item["value"] for item in TEMPLATE_REQUEST_STATUSES],
-                    index=safe_index([item["value"] for item in TEMPLATE_REQUEST_STATUSES], request["status"]),
-                    format_func=labelize,
-                )
-                submitted = st.form_submit_button("Mettre à jour la demande")
-            if submitted:
-                selected_template_id = int(linked_template["id"]) if linked_template.get("id") else None
-                ok, message = update_template_request_status(
-                    request["id"],
-                    user["id"],
-                    status,
-                    selected_template_id,
-                )
-                show_result(ok, message)
-                if ok:
-                    st.rerun()
-        else:
-            st.info("Aucune demande de modèle.")
-
-    with tabs[6]:
         render_admin_actions_tab(user)
 
-    with tabs[7]:
+    with tabs[3]:
         render_admin_safeguards_tab(user)
 
-    with tabs[8]:
-        st.subheader("Signalements Bug")
+    with tabs[4]:
+        st.subheader("Signalements")
         st.caption("Chaque signalement conserve le contexte et crée aussi une action Admin terminable.")
         bug_reports = list_bug_reports()
         if bug_reports:
@@ -4920,7 +4839,7 @@ def render_admin(user: dict) -> None:
         else:
             st.info("Aucun signalement pour le moment.")
 
-    with tabs[9]:
+    with tabs[5]:
         st.subheader("Intégrations")
         st.markdown(
             """
