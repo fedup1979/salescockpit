@@ -49,9 +49,7 @@ def set_navigation(app: AppTest, page: str) -> None:
     for key in [
         "active_navigation",
         "desktop_navigation",
-        "mobile_navigation",
         "_last_desktop_navigation",
-        "_last_mobile_navigation",
     ]:
         app.session_state[key] = page
 
@@ -73,13 +71,21 @@ def test_ui_dates_are_displayed_in_geneva_time() -> None:
     )
 
 
-def test_sidebar_reopen_control_is_not_hidden_by_css() -> None:
+def test_sidebar_reopen_control_is_not_hidden_and_page_selector_is_removed() -> None:
     assert 'header[data-testid="stHeader"] {\n  height: 0;' not in APP_CSS
     assert 'data-testid="collapsedControl"' not in APP_CSS
     assert '[data-testid="stToolbar"]' not in APP_CSS
-    assert ".st-key-mobile_nav" in APP_CSS
-    assert ".st-key-mobile_nav {\n  display: none;" not in APP_CSS
+    assert ".st-key-mobile_nav" not in APP_CSS
     assert "@media (max-width: 900px)" in APP_CSS
+
+    seed_initial_data()
+    user = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    app = AppTest.from_file("sales_cockpit/ui/app.py")
+    app.session_state["user"] = user
+    app.run(timeout=10)
+
+    assert len(app.exception) == 0
+    assert "Page" not in [item.label for item in app.selectbox]
 
 
 def test_message_body_cleanup_removes_trailing_orphan_html_tags_only() -> None:

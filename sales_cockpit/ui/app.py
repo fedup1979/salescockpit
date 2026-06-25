@@ -497,16 +497,6 @@ def render_shell() -> None:
             st.session_state.pop("user", None)
             st.rerun()
 
-    with st.container(key="mobile_nav"):
-        mobile_select_kwargs = {
-            "label": "Page",
-            "options": nav_options,
-            "key": "mobile_navigation",
-        }
-        if "mobile_navigation" not in st.session_state:
-            mobile_select_kwargs["index"] = safe_index(nav_options, nav)
-        st.selectbox(**mobile_select_kwargs)
-
     if nav == "Tâches":
         render_work_queue(user)
     elif nav == "Inbox":
@@ -532,20 +522,14 @@ def resolve_navigation(nav_options: list[str]) -> str:
         current = fallback
 
     desktop_value = st.session_state.get("desktop_navigation", current)
-    mobile_value = st.session_state.get("mobile_navigation", current)
     last_desktop = st.session_state.get("_last_desktop_navigation", current)
-    last_mobile = st.session_state.get("_last_mobile_navigation", current)
 
     if desktop_value in nav_options and desktop_value != last_desktop:
         current = desktop_value
-    elif mobile_value in nav_options and mobile_value != last_mobile:
-        current = mobile_value
 
     st.session_state["active_navigation"] = current
     st.session_state["desktop_navigation"] = current
-    st.session_state["mobile_navigation"] = current
     st.session_state["_last_desktop_navigation"] = current
-    st.session_state["_last_mobile_navigation"] = current
     return current
 
 

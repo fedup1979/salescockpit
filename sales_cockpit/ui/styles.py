@@ -79,12 +79,6 @@ header[data-testid="stHeader"] {
   max-width: min(1720px, calc(100vw - 2rem));
 }
 
-.st-key-mobile_nav {
-  display: block;
-  max-width: 32rem;
-  margin: .1rem 0 .85rem 0;
-}
-
 h1, h2, h3 {
   letter-spacing: 0;
 }
@@ -845,23 +839,6 @@ div[data-testid="stCheckbox"] span {
     padding-left: 1rem;
     padding-right: 1rem;
     max-width: 100%;
-  }
-
-  .st-key-mobile_nav {
-    position: sticky;
-    top: .35rem;
-    z-index: 20;
-    padding: .55rem .65rem .65rem .65rem;
-    margin: .1rem 0 .85rem 0;
-    border: 1px solid var(--sc-border);
-    border-radius: 8px;
-    background: oklch(0.985 0.006 250);
-    box-shadow: 0 8px 18px oklch(0.45 0.02 250 / 0.08);
-  }
-
-  .st-key-mobile_nav label,
-  .st-key-mobile_nav span {
-    color: var(--sc-text) !important;
   }
 
   .sc-search-field-offset {
