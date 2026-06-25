@@ -16,6 +16,7 @@ from sales_cockpit.store import (
 )
 from sales_cockpit.ui.app import (
     CLOSURE_RESOLUTION_REASON_VALUES,
+    conversation_journal_table_html,
     format_action_datetime,
     format_dt,
     format_due,
@@ -197,12 +198,25 @@ def test_conversation_detail_exposes_journal_tab_in_inbox() -> None:
     assert "Notes privées" in tab_labels
     assert "Journal" in tab_labels
     assert joined_tabs.index("Notes privées") < joined_tabs.index("Journal")
-    journal_df = next(
-        dataframe.value
-        for dataframe in app.dataframe
-        if {"Date", "Catégorie", "Description"}.issubset(dataframe.value.columns)
+
+
+def test_conversation_journal_table_wraps_description_column() -> None:
+    html = conversation_journal_table_html(
+        [
+            {
+                "occurred_at": "2026-06-23T07:12:00Z",
+                "category_label": "Action humaine",
+                "category": "action_humaine",
+                "description": "Action attendue avec une description longue qui doit revenir à la ligne.",
+                "actor_label": "Mihary",
+            }
+        ]
     )
-    assert "WhatsApp client reçu" in journal_df["Description"].to_string()
+
+    assert 'class="sc-journal-table"' in html
+    assert 'class="sc-journal-description"' in html
+    assert "Action attendue avec une description longue" in html
+    assert "<div" not in html
 
 
 def test_admin_bugs_logs_no_longer_shows_user_activity_log() -> None:

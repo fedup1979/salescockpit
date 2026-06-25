@@ -1060,25 +1060,30 @@ def render_conversation_journal(conversation_id: int) -> None:
         use_container_width=False,
     )
 
-    rows = []
+    st.html(conversation_journal_table_html(events))
+
+
+def conversation_journal_table_html(events: list[dict]) -> str:
+    rows_html = [
+        '<table class="sc-journal-table">',
+        "<thead><tr><th>Date</th><th>Catégorie</th><th>Description</th></tr></thead>",
+        "<tbody>",
+    ]
     for event in events:
         description = event.get("description") or ""
         actor = event.get("actor_label")
         if actor and actor not in {"Système", "Client"}:
             description = f"{description} · {actor}"
-        rows.append(
-            {
-                "Date": journal_timestamp(event.get("occurred_at")),
-                "Catégorie": event.get("category_label") or labelize(event.get("category")),
-                "Description": description,
-            }
+        category = event.get("category_label") or labelize(event.get("category"))
+        rows_html.append(
+            "<tr>"
+            f"<td class=\"sc-journal-time\">{escape_html(journal_timestamp(event.get('occurred_at')))}</td>"
+            f"<td><span class=\"sc-journal-badge\">{escape_html(category)}</span></td>"
+            f"<td class=\"sc-journal-description\">{escape_html(description)}</td>"
+            "</tr>"
         )
-    st.dataframe(
-        rows,
-        hide_index=True,
-        use_container_width=True,
-        height=min(720, max(240, 38 * len(rows) + 38)),
-    )
+    rows_html.extend(["</tbody>", "</table>"])
+    return "\n".join(rows_html)
 
 
 def message_display_timestamp(message: dict) -> str | None:
