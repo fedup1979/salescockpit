@@ -517,6 +517,36 @@ def test_schooldrive_snapshot_accepts_real_subscription_payload_fields() -> None
     assert "whatsapp_template_id" in ar["payload_json"]
 
 
+def test_schooldrive_autoresponder_body_drops_trailing_orphan_html_tags() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload(
+        event_id="evt_sd_autoresponder_html_tail",
+        schooldrive_id="lead:html-tail",
+        autoresponders=[
+            {
+                "message_id": "armsg:html-tail",
+                "autoresponder_id": 2063,
+                "template": "mkt_app_ln_subs_02",
+                "whatsapp_send_body": "Bonjour Dévaki,\n\nRépondez simplement 1 ou 2.\n\n          </div>\n        </div>",
+                "status": "sent",
+                "sent_at": "2026-06-25T11:56:00Z",
+            }
+        ],
+    )
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    messages = list_messages(result["conversation_id"])
+    outbound = [item for item in messages if item["channel"] == "schooldrive_autoresponder"][-1]
+    assert outbound["body"] == "Bonjour Dévaki,\n\nRépondez simplement 1 ou 2."
+    with connect() as conn:
+        ar = conn.execute(
+            "SELECT payload_json FROM schooldrive_whatsapp_autoresponders WHERE message_id = ?",
+            ("armsg:html-tail",),
+        ).fetchone()
+    assert "</div>" in ar["payload_json"]
+
+
 def test_schooldrive_snapshot_accepts_nested_nutrition_subscription_course() -> None:
     seed_initial_data()
     payload = schooldrive_payload(

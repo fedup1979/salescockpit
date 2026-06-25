@@ -3217,6 +3217,43 @@ def test_double_submit_template_sends_twilio_once(monkeypatch) -> None:
     assert len(calls) == 1
 
 
+def test_template_message_body_drops_trailing_orphan_html_tags(monkeypatch) -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Bonjour.")
+    action = get_next_action_for_lead(result["lead_id"])
+    template_id = create_template(
+        admin["id"],
+        "html_tail_template",
+        "Bonjour Dévaki,\n\nRépondez simplement 1 ou 2.\n\n          </div>\n        </div>",
+        status="approved",
+        twilio_content_sid="HXeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        twilio_content_type="twilio/text",
+    )
+
+    class Client:
+        def send_template(self, to_phone: str, content_sid: str, variables: dict):
+            return SimpleNamespace(sid="SM_TEMPLATE_HTML_TAIL", status="sent", provider="twilio")
+
+    monkeypatch.setattr("sales_cockpit.store.get_whatsapp_client", lambda: Client())
+
+    ok, message = send_template_message(
+        result["conversation_id"],
+        admin["id"],
+        template_id,
+        {},
+        expected_action_id=action["id"],
+    )
+
+    assert ok is True, message
+    outbound = [
+        item
+        for item in list_messages(result["conversation_id"])
+        if item["direction"] == "outbound" and item["template_id"] == template_id
+    ][-1]
+    assert outbound["body"] == "Bonjour Dévaki,\n\nRépondez simplement 1 ou 2."
+
+
 def test_retry_after_twilio_failure_reuses_active_action(monkeypatch) -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")

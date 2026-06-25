@@ -31,6 +31,7 @@ from sales_cockpit.services.twilio_client import (
     get_whatsapp_client,
 )
 from sales_cockpit.services.front_import import build_front_cutover_plan, list_front_import_records
+from sales_cockpit.services.message_text import clean_message_body_text
 from sales_cockpit.services.whatsapp_rules import calculate_window, iso_utc, parse_dt, utc_now
 
 
@@ -2263,7 +2264,7 @@ def _schooldrive_autoresponder_message_body(
     whatsapp_send_body: Any = None,
 ) -> str:
     if status == "sent":
-        body = str(whatsapp_send_body or "").strip()
+        body = clean_message_body_text(whatsapp_send_body)
         if body:
             return body
         return f"WhatsApp automatique SchoolDrive envoyé : {template}"
@@ -8071,6 +8072,7 @@ def send_template_message(
     body = template["body"]
     for key, value in variables.items():
         body = body.replace("{{" + key + "}}", value)
+    stored_body = clean_message_body_text(body)
 
     now = iso_utc()
     with connect() as conn:
@@ -8105,7 +8107,7 @@ def send_template_message(
                 (
                     conversation_id,
                     conv["lead_id"],
-                    body,
+                    stored_body,
                     user_id,
                     template_id,
                     action_id,

@@ -5,6 +5,7 @@ from uuid import uuid4
 from streamlit.testing.v1 import AppTest
 
 from sales_cockpit.db import seed_initial_data
+from sales_cockpit.services.message_text import clean_message_body_text
 from sales_cockpit.store import (
     authenticate,
     assign_standard_next_action,
@@ -78,6 +79,14 @@ def test_sidebar_reopen_control_is_not_hidden_by_css() -> None:
     assert ".st-key-mobile_nav" in APP_CSS
     assert ".st-key-mobile_nav {\n  display: none;" not in APP_CSS
     assert "@media (max-width: 900px)" in APP_CSS
+
+
+def test_message_body_cleanup_removes_trailing_orphan_html_tags_only() -> None:
+    raw = "Bonjour Dévaki\n\nRépondez simplement 1 ou 2.\n\n          </div>\n        </div>"
+
+    assert clean_message_body_text(raw) == "Bonjour Dévaki\n\nRépondez simplement 1 ou 2."
+    assert clean_message_body_text("Je préfère <3\n</div>") == "Je préfère <3"
+    assert clean_message_body_text("A < B et C > D") == "A < B et C > D"
 
 
 def test_reply_action_guides_to_conversation_send_without_generic_completion() -> None:

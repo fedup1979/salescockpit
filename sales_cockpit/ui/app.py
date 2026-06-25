@@ -34,6 +34,7 @@ from sales_cockpit.business_rules import (
 )
 from sales_cockpit.config import get_settings
 from sales_cockpit.db import seed_initial_data
+from sales_cockpit.services.message_text import clean_message_body_text
 from sales_cockpit.services.whatsapp_rules import iso_utc, parse_dt, utc_now
 from sales_cockpit.services.schooldrive import SchoolDriveConnector
 from sales_cockpit.ui.action_presenter import build_action_tab_presentation
@@ -1050,12 +1051,13 @@ def render_messages(conversation_id: int, show_internal_notes: bool = True) -> N
         template = f" · modèle: {message['template_name']}" if message.get("template_name") else ""
         delivery = render_delivery_status(message)
         attachments_html = render_message_attachments(message.get("attachments") or [])
+        body = clean_message_body_text(message["body"])
         st.markdown(
             f"""
             <div class="sc-message-row {row_css}">
               <div class="sc-message {css}">
                 <div class="sc-message-meta">{sender} · {created}{template}{delivery}</div>
-                <div>{escape_html(message['body'])}</div>
+                <div>{escape_html(body)}</div>
                 {attachments_html}
               </div>
             </div>
