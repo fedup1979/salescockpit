@@ -4,7 +4,7 @@ Objectif : valider l'expérience V1 de bout en bout avec des faux prospects rest
 
 ## Validation automatisée courante
 
-Dernière validation locale connue : `204 passed`, `compileall` OK.
+Dernière validation locale connue : `205 passed`, `compileall` OK.
 
 Avant une validation manuelle propre :
 

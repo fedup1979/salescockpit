@@ -49,8 +49,8 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 
 ## Important Recent Decisions
 
-- Latest local hardening validation: `204 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\full`, plus `compileall` OK after the V1 pre-cutover hardening.
-- Latest staging deployment: commit `ddb657c`, API/UI OK, `scripts/pre_cutover_check.py --api-base http://127.0.0.1:8602 --ui-url http://127.0.0.1:8502 --allow-cold-prod` OK.
+- Latest local hardening validation: `205 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\sidebar-full`, plus `compileall` OK after the sidebar UX fix.
+- Latest staging deployment: commit `7a28b33`, API/UI OK, `scripts/pre_cutover_check.py --api-base http://127.0.0.1:8602 --ui-url http://127.0.0.1:8502 --allow-cold-prod` OK after resetting the `SD-DEMO-*` demo scenarios.
 - The staging template mapping snapshot before/after deployment was identical; existing real Twilio mappings were preserved.
 - Status / qualification / reactivation saves were hardened: terminal qualifications and contact statuses now keep `Parcours`, conversation status, and next action aligned. `init_db()` also normalizes existing impossible terminal combinations, such as signed leads not shown as `won`, `Ne plus contacter` leads not shown as `blacklist`, and sequence-completed conversations not shown as `lost`.
 - Use `--basetemp=.pytest-tmp\run` on Windows if Pytest fails after successful test execution because it cannot clean `pytest-current` in `%TEMP%`.
@@ -217,12 +217,12 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 
 Latest known local validation after the V1 pre-cutover hardening:
 
-- `pytest` with local temp directory: 204 tests passing.
+- `pytest` with local temp directory: 205 tests passing.
 - `compileall`: passed for `sales_cockpit`.
 - `git diff --check`: passed.
 - BOM scan: clean for tracked/project files.
 - Staging deploy source: `main` branch via `deploy/scripts/deploy_env.sh`.
-- Latest verified staging commit: `ddb657c`.
+- Latest verified staging commit: `7a28b33`.
 - Latest observed cold production commit: `786f89c`; production was not redeployed in this pass.
 - Staging `pre_cutover_check` passed after deployment.
 - Production `pre_cutover_check --allow-cold-prod` passed after deployment; Twilio remains `mock`, seed demo is false, and SchoolDrive/Front are intentionally not connected there yet.
