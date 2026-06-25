@@ -3121,8 +3121,8 @@ def render_pilotage(user: dict) -> None:
         "Sessions par défaut",
         "Étapes des flux",
         "Flux par scénario",
-        "Règles de conflit",
-        "Vue des flux",
+        "Vues des flux",
+        "Logique métier",
     ])
     with tabs[0]:
         render_pilotage_overview()
@@ -3135,9 +3135,9 @@ def render_pilotage(user: dict) -> None:
     with tabs[4]:
         render_pilotage_scenario_tables(user)
     with tabs[5]:
-        render_pilotage_conflict_rules()
-    with tabs[6]:
         render_pilotage_simulator()
+    with tabs[6]:
+        render_pilotage_conflict_rules()
 
 
 def render_pilotage_overview() -> None:
@@ -3171,8 +3171,8 @@ def render_pilotage_overview() -> None:
 
         - **Sessions de référence** : règle utilisée quand SchoolDrive envoie un Lead avec une catégorie, mais sans session précise.
         - **Flux par scénario** : liste des événements prévus, avec le template recommandé et le message complet.
-        - **Règles de conflit** : ce qui gagne quand deux flux se chevauchent, quand le prospect répond ou quand un appel est déjà planifié.
-        - **Vue des flux** : prévisualisation rapide de la timeline une fois les sessions de référence définies.
+        - **Vues des flux** : prévisualisation rapide de la timeline une fois les sessions de référence définies.
+        - **Logique métier** : ce qui gagne quand deux flux se chevauchent, quand le prospect répond ou quand un appel est déjà planifié.
 
         La donnée SchoolDrive réelle gagne toujours. Une session par défaut ne sert qu'à piloter les relances liées au cours quand le Lead n'a pas encore de session explicite.
         """
@@ -4395,7 +4395,7 @@ def pilotage_function_text(value):
 
 
 def render_pilotage_simulator() -> None:
-    st.markdown("### Vue des flux")
+    st.markdown("### Vues des flux")
     st.caption("Prévisualisation simple. Cette vue ne crée aucune tâche et n'envoie aucun message.")
     default_sessions = {item["course_category"]: item for item in list_course_default_sessions()}
     active_categories = pilotage_active_categories()

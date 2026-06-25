@@ -178,6 +178,22 @@ def test_admin_users_table_formats_setter2_role() -> None:
     assert row["Rôle"] == "Setter II"
 
 
+def test_pilotage_tabs_end_with_flux_views_and_business_logic() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+
+    app = AppTest.from_file("sales_cockpit/ui/app.py")
+    app.session_state["user"] = admin
+    app.run(timeout=10)
+    set_navigation(app, "Pilotage")
+    app.run(timeout=10)
+
+    assert len(app.exception) == 0
+    tab_labels = [item.label for item in app.tabs]
+    assert tab_labels[-3:] == ["Flux par scénario", "Vues des flux", "Logique métier"]
+    assert "Règles de conflit" not in tab_labels
+
+
 def test_conversation_detail_exposes_journal_tab_in_inbox() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
