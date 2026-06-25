@@ -324,6 +324,24 @@ h1, h2, h3 {
   .sc-planned-call-notice span {
     text-align: left;
   }
+
+  .sc-journal-table {
+    grid-template-columns: 1fr;
+  }
+
+  .sc-journal-header {
+    display: none;
+  }
+
+  .sc-journal-cell {
+    border-bottom: 0;
+    padding: .26rem .65rem;
+  }
+
+  .sc-journal-description {
+    border-bottom: 1px solid oklch(0.91 0.008 250);
+    padding-bottom: .55rem;
+  }
 }
 
 .sc-message {
@@ -403,6 +421,103 @@ h1, h2, h3 {
 
 .sc-delivery-failed {
   color: oklch(0.52 0.17 28);
+}
+
+.sc-journal-table {
+  display: grid;
+  grid-template-columns: minmax(8.8rem, .22fr) minmax(8rem, .2fr) minmax(18rem, 1fr);
+  gap: 0;
+  margin-top: .7rem;
+  border: 1px solid var(--sc-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: oklch(0.995 0.004 250);
+}
+
+.sc-journal-header {
+  padding: .5rem .65rem;
+  background: oklch(0.955 0.007 250);
+  color: var(--sc-muted);
+  font-size: .75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--sc-border);
+}
+
+.sc-journal-day {
+  padding: .35rem .65rem;
+  background: oklch(0.975 0.006 250);
+  color: var(--sc-muted);
+  font-size: .76rem;
+  font-weight: 700;
+  border-bottom: 1px solid var(--sc-border);
+}
+
+.sc-journal-cell {
+  padding: .48rem .65rem;
+  border-bottom: 1px solid oklch(0.91 0.008 250);
+  color: var(--sc-text);
+  font-size: .86rem;
+  line-height: 1.35;
+  min-width: 0;
+}
+
+.sc-journal-time {
+  color: var(--sc-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.sc-journal-description {
+  overflow-wrap: anywhere;
+}
+
+.sc-journal-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.35rem;
+  padding: .08rem .42rem;
+  border: 1px solid var(--sc-border);
+  border-radius: 999px;
+  background: oklch(0.965 0.006 250);
+  color: var(--sc-muted);
+  font-size: .75rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.sc-journal-message_client,
+.sc-journal-message_standard,
+.sc-journal-message_libre {
+  background: oklch(0.965 0.018 250);
+  border-color: oklch(0.78 0.07 250);
+  color: oklch(0.38 0.1 250);
+}
+
+.sc-journal-note_interne {
+  background: oklch(0.965 0.026 82);
+  border-color: oklch(0.78 0.11 82);
+  color: oklch(0.42 0.11 82);
+}
+
+.sc-journal-action_humaine {
+  background: oklch(0.94 0.04 145);
+  border-color: oklch(0.76 0.085 145);
+  color: oklch(0.36 0.12 145);
+}
+
+.sc-journal-evenement_systeme,
+.sc-journal-changement_etat {
+  background: oklch(0.97 0.006 250);
+  border-color: var(--sc-border);
+  color: var(--sc-muted);
+}
+
+.sc-journal-actor {
+  display: inline-block;
+  margin-left: .45rem;
+  color: var(--sc-muted);
+  font-size: .78rem;
 }
 
 .sc-attachment-list {

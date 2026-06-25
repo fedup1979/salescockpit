@@ -177,6 +177,50 @@ def test_admin_users_table_formats_setter2_role() -> None:
     assert row["Rôle"] == "Setter II"
 
 
+def test_conversation_detail_exposes_journal_tab_in_inbox() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Je veux des informations.")
+
+    app = AppTest.from_file("sales_cockpit/ui/app.py")
+    app.session_state["user"] = admin
+    app.session_state["selected_conversation_id"] = result["conversation_id"]
+    app.run(timeout=10)
+    set_navigation(app, "Inbox")
+    app.run(timeout=10)
+
+    assert len(app.exception) == 0
+    tab_labels = [item.label for item in app.tabs]
+    joined_tabs = " / ".join(tab_labels)
+    assert "Conversation" in tab_labels
+    assert "Actions" in tab_labels
+    assert "Notes privées" in tab_labels
+    assert "Journal" in tab_labels
+    assert joined_tabs.index("Notes privées") < joined_tabs.index("Journal")
+    assert "WhatsApp client reçu" in "\n".join(item.value for item in app.markdown)
+
+
+def test_admin_bugs_logs_no_longer_shows_user_activity_log() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+
+    app = AppTest.from_file("sales_cockpit/ui/app.py")
+    app.session_state["user"] = admin
+    app.run(timeout=10)
+    set_navigation(app, "Admin")
+    app.run(timeout=10)
+
+    assert len(app.exception) == 0
+    captions = "\n".join(item.value for item in app.caption)
+    all_text = "\n".join(
+        [*(item.value for item in app.markdown), *(item.value for item in app.caption), *(item.value for item in app.info)]
+    )
+    assert "Bugs & logs" in [item.label for item in app.tabs]
+    assert "Chaque signalement conserve le contexte" in captions
+    assert "Journal utilisateur" not in all_text
+    assert "Derniers événements métier" not in captions
+
+
 def test_statuses_are_edited_from_header_bubbles_without_status_tab() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")

@@ -315,6 +315,623 @@ def list_user_activity_log(limit: int = 200) -> list[dict[str, Any]]:
     return rows_to_dicts(rows)
 
 
+JOURNAL_MESSAGE_EVENT_TYPES = {
+    "manual_private_whatsapp_note_created",
+    "whatsapp_freeform_sent",
+    "whatsapp_inbound_received",
+    "whatsapp_template_sent",
+}
+
+JOURNAL_TASK_TYPE_LABELS = {
+    "reply": "Répondre",
+    "follow_up": "Relance",
+    "setting_call": "Appel setting",
+    "closing_call": "Appel closing",
+    "contact_review": "Revue contact",
+    "manual_reprise_setter": "Reprise setter",
+    "manual_reprise_closer": "Reprise closer",
+    "other": "Anomalie / revue humaine",
+}
+
+JOURNAL_STATUS_LABELS = {
+    "open": "ouverte",
+    "in_progress": "en cours",
+    "planned": "planifiée",
+    "blocked": "bloquée",
+    "done": "réalisée",
+    "cancelled": "annulée",
+    "resolved": "terminée",
+}
+
+JOURNAL_CATEGORY_LABELS = {
+    "message_client": "Message client",
+    "message_standard": "Message standard",
+    "message_libre": "Message libre",
+    "note_interne": "Note interne",
+    "action_humaine": "Action humaine",
+    "evenement_systeme": "Événement système",
+    "changement_etat": "Changement d'état",
+}
+
+
+def _journal_json_dict(raw: str | None) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _journal_compact(value: Any, max_chars: int = 260) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3] + "..."
+
+
+def _journal_label(value: str | None) -> str:
+    if not value:
+        return "Non défini"
+    labels = {
+        **JOURNAL_TASK_TYPE_LABELS,
+        **JOURNAL_STATUS_LABELS,
+        "appointment_booked": "RDV agendé",
+        "blacklist": "Ne plus contacter",
+        "closing": "Closing",
+        "contact_allowed": "Contact autorisé",
+        "do_not_contact": "Ne plus contacter",
+        "eligible": "Éligible",
+        "not_interesting": "Non pertinent",
+        "not_relevant": "Non pertinent",
+        "signed": "A signé",
+        "will_sign": "Va signer",
+    }
+    return labels.get(value, value.replace("_", " ").capitalize())
+
+
+def _journal_display_dt(value: str | None) -> str:
+    parsed = parse_dt(value) if value else None
+    if not parsed:
+        return "date inconnue"
+    return parsed.astimezone(ZURICH_TZ).strftime("%d.%m.%Y %H:%M")
+
+
+def _journal_actor(
+    *,
+    user_id: int | None = None,
+    user_name: str | None = None,
+    user_email: str | None = None,
+    fallback_type: str = "system",
+    fallback_label: str = "Système",
+) -> dict[str, Any]:
+    if user_id or user_name or user_email:
+        return {
+            "actor_type": "user",
+            "actor_user_id": user_id,
+            "actor_label": user_name or user_email or f"Utilisateur #{user_id}",
+        }
+    return {
+        "actor_type": fallback_type,
+        "actor_user_id": None,
+        "actor_label": fallback_label,
+    }
+
+
+def _journal_event(
+    *,
+    occurred_at: str | None,
+    category: str,
+    event_type: str,
+    source_table: str,
+    source_id: int | str | None,
+    lead_id: int | None,
+    conversation_id: int | None,
+    description: str,
+    actor: dict[str, Any] | None = None,
+    task_id: int | None = None,
+    message_id: int | None = None,
+    previous_state: dict[str, Any] | None = None,
+    new_state: dict[str, Any] | None = None,
+    effects: list[dict[str, Any]] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    actor_payload = actor or _journal_actor()
+    return {
+        "occurred_at": occurred_at,
+        "category": category,
+        "category_label": JOURNAL_CATEGORY_LABELS.get(category, _journal_label(category)),
+        "event_type": event_type,
+        "source_table": source_table,
+        "source_id": source_id,
+        "lead_id": lead_id,
+        "conversation_id": conversation_id,
+        "task_id": task_id,
+        "message_id": message_id,
+        "actor_type": actor_payload["actor_type"],
+        "actor_user_id": actor_payload["actor_user_id"],
+        "actor_label": actor_payload["actor_label"],
+        "description": _journal_compact(description, 900),
+        "previous_state": previous_state or {},
+        "new_state": new_state or {},
+        "effects": effects or [],
+        "metadata": metadata or {},
+    }
+
+
+def _journal_message_description(message: dict[str, Any]) -> tuple[str, str, str, dict[str, Any]]:
+    direction = message.get("direction")
+    channel = message.get("channel") or ""
+    template_name = message.get("template_name")
+    metadata = {
+        "channel": channel,
+        "twilio_status": message.get("twilio_status"),
+        "whatsapp_window_state_at_send": message.get("whatsapp_window_state_at_send"),
+    }
+    if message.get("template_id"):
+        metadata["template_id"] = message.get("template_id")
+    if template_name:
+        metadata["template_name"] = template_name
+
+    if direction == "manual_note":
+        note_body = _journal_compact(message.get("body"), 1200)
+        return (
+            "note_interne",
+            "internal_note_created",
+            f"Note interne : {note_body}",
+            {**metadata, "note_body": message.get("body") or ""},
+        )
+    if direction == "inbound":
+        return (
+            "message_client",
+            "whatsapp_inbound_received",
+            "WhatsApp client reçu",
+            metadata,
+        )
+    if channel == "schooldrive_autoresponder":
+        body = str(message.get("body") or "")
+        template = ""
+        if body.startswith("WhatsApp automatique SchoolDrive") and " : " in body:
+            template = body.split(" : ", 1)[1].split(" (", 1)[0].strip()
+        label = f"WhatsApp SchoolDrive : {template}" if template else "WhatsApp SchoolDrive automatique"
+        return (
+            "message_standard",
+            "schooldrive_whatsapp_autoresponder",
+            label,
+            {**metadata, "schooldrive_template": template or None},
+        )
+    if message.get("template_id"):
+        template_label = template_name or f"template #{message['template_id']}"
+        return (
+            "message_standard",
+            "whatsapp_template_sent",
+            f"WhatsApp template envoyé : {template_label}",
+            metadata,
+        )
+    return (
+        "message_libre",
+        "whatsapp_freeform_sent",
+        "Message libre WhatsApp envoyé",
+        metadata,
+    )
+
+
+def _journal_task_created_description(task: dict[str, Any]) -> str:
+    action_type = _journal_label(task.get("type"))
+    assignee = task.get("assigned_to_name") or task.get("assigned_to_email") or "Non assigné"
+    due = _journal_display_dt(task.get("due_at")) if task.get("due_at") else "aucune échéance"
+    status = _journal_label(task.get("status"))
+    title = _journal_compact(task.get("title"), 180)
+    parts = [f"Action attendue : {title}", action_type, f"assignée à {assignee}", f"échéance {due}"]
+    if task.get("status") in {"blocked", "cancelled"}:
+        parts.append(status)
+    if task.get("trigger_reason"):
+        parts.append(f"raison : {_journal_label(task.get('trigger_reason'))}")
+    return " · ".join(parts)
+
+
+def _journal_task_completed_description(task: dict[str, Any]) -> str:
+    action_type = _journal_label(task.get("type"))
+    outcome = _journal_label(task.get("outcome")) if task.get("outcome") else "sans résultat renseigné"
+    title = _journal_compact(task.get("title"), 180)
+    if task.get("proof_message_id"):
+        return f"Action réalisée par envoi WhatsApp : {title} · {action_type} · {outcome}"
+    if task.get("proof_event_id"):
+        return f"Action réalisée avec preuve système : {title} · {action_type} · {outcome}"
+    return f"Action réalisée : {title} · {action_type} · {outcome}"
+
+
+def _journal_state_changes(previous: dict[str, Any], new: dict[str, Any]) -> list[str]:
+    labels = {
+        "status": "Statut conversation",
+        "lead_status": "Qualification",
+        "contact_status": "Contact",
+        "sales_stage": "Parcours",
+        "identity_status": "Identité",
+        "resolution_reason": "Motif de clôture",
+        "reopen_action_type": "Action de réouverture",
+    }
+    changes: list[str] = []
+    for key, label in labels.items():
+        old = previous.get(key)
+        new_value = new.get(key)
+        if old is not None and new_value is not None and old != new_value:
+            changes.append(f"{label} : {_journal_label(str(old))} -> {_journal_label(str(new_value))}")
+        elif old is None and new_value is not None:
+            changes.append(f"{label} : {_journal_label(str(new_value))}")
+    return changes
+
+
+def _journal_lead_event_description(event: dict[str, Any]) -> tuple[str, str]:
+    event_type = event.get("event_type") or "event"
+    previous = _journal_json_dict(event.get("previous_value_json"))
+    new = _journal_json_dict(event.get("new_value_json"))
+    metadata = _journal_json_dict(event.get("metadata_json"))
+    state_changes = _journal_state_changes(previous, new)
+    if event_type == "lead_qualification_updated":
+        return "changement_etat", "Statuts modifiés : " + (" · ".join(state_changes) or "mise à jour qualification/contact")
+    if event_type == "conversation_status_changed":
+        return "changement_etat", "Conversation mise à jour : " + (" · ".join(state_changes) or _journal_label(new.get("status")))
+    if event_type == "temporary_identity_updated":
+        return "changement_etat", "Identité temporaire mise à jour"
+    if event_type in {"reply_action_created_from_inbound", "contact_review_created_from_inbound", "terminal_status_review_created_from_inbound"}:
+        return "evenement_systeme", f"Effet système : {_journal_label(event_type)}"
+    if event_type in {
+        "followup_scheduled",
+        "followup_scheduled_from_schooldrive_autoresponder",
+        "course_start_followup_scheduled",
+        "next_action_created_by_workflow",
+        "next_action_created_by_sales_stage_force",
+        "next_action_created_by_lead_status_force",
+    }:
+        sequence = new.get("sequence_code") or metadata.get("sequence_code")
+        suffix = f" · flux {sequence}" if sequence else ""
+        return "evenement_systeme", f"Flux / prochaine action programmé{suffix}"
+    if event_type in {"action_completed_with_workflow", "action_completed_by_outbound_message", "next_actions_completed"}:
+        outcome = new.get("outcome") or metadata.get("outcome")
+        suffix = f" · résultat : {_journal_label(str(outcome))}" if outcome else ""
+        return "action_humaine", f"Action clôturée{suffix}"
+    if event_type == "sequence_step_skipped":
+        return "action_humaine", "Étape de flux ignorée"
+    if event_type in {"template_request_created", "template_request_approved", "template_request_status_updated"}:
+        status = new.get("status")
+        suffix = f" · statut : {_journal_label(str(status))}" if status else ""
+        return "evenement_systeme", f"Demande de template{suffix}"
+    if event_type in {"twilio_message_status_updated", "twilio_message_status_ignored", "whatsapp_send_failed"}:
+        status = new.get("status") or new.get("twilio_status")
+        suffix = f" · statut : {_journal_label(str(status))}" if status else ""
+        return "evenement_systeme", f"Statut WhatsApp mis à jour{suffix}"
+    if event_type.startswith("schooldrive_") or event_type == "schooldrive_snapshot_ingested":
+        return "evenement_systeme", f"SchoolDrive : {_journal_label(event_type)}"
+    if state_changes:
+        return "changement_etat", "Changement d'état : " + " · ".join(state_changes)
+    return "evenement_systeme", f"Événement système : {_journal_label(event_type)}"
+
+
+def _journal_effects_from_payload(new: dict[str, Any], metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    effects: list[dict[str, Any]] = []
+    task_id = new.get("task_id") or metadata.get("task_id") or metadata.get("action_id") or metadata.get("created_action_id")
+    if task_id:
+        effects.append({"kind": "task", "id": task_id})
+    if new.get("status"):
+        effects.append({"kind": "status", "value": new.get("status")})
+    if new.get("outcome"):
+        effects.append({"kind": "outcome", "value": new.get("outcome")})
+    if new.get("sequence_code") or metadata.get("sequence_code"):
+        effects.append({"kind": "sequence", "code": new.get("sequence_code") or metadata.get("sequence_code")})
+    if new.get("message_id") or metadata.get("message_id"):
+        effects.append({"kind": "message", "id": new.get("message_id") or metadata.get("message_id")})
+    return effects
+
+
+def list_conversation_journal_events(conversation_id: int) -> list[dict[str, Any]]:
+    conv = get_conversation(conversation_id)
+    if not conv:
+        return []
+    lead_id = int(conv["lead_id"])
+    events: list[dict[str, Any]] = []
+    with connect() as conn:
+        messages = rows_to_dicts(
+            conn.execute(
+                """
+                SELECT
+                    m.*,
+                    u.full_name AS sender_name,
+                    u.email AS sender_email,
+                    wt.name AS template_name
+                FROM messages m
+                LEFT JOIN users u ON u.id = m.sender_user_id
+                LEFT JOIN whatsapp_templates wt ON wt.id = m.template_id
+                WHERE m.conversation_id = ?
+                ORDER BY datetime(coalesce(m.sent_at, m.received_at, m.created_at)), m.id
+                """,
+                (conversation_id,),
+            ).fetchall()
+        )
+        tasks = rows_to_dicts(
+            conn.execute(
+                """
+                SELECT
+                    t.*,
+                    assigned.full_name AS assigned_to_name,
+                    assigned.email AS assigned_to_email,
+                    created.full_name AS created_by_name,
+                    created.email AS created_by_email
+                FROM tasks t
+                LEFT JOIN users assigned ON assigned.id = t.assigned_to_user_id
+                LEFT JOIN users created ON created.id = t.created_by_user_id
+                WHERE t.lead_id = ?
+                  AND (t.conversation_id = ? OR t.conversation_id IS NULL)
+                ORDER BY datetime(t.created_at), t.id
+                """,
+                (lead_id, conversation_id),
+            ).fetchall()
+        )
+        lead_events = rows_to_dicts(
+            conn.execute(
+                """
+                SELECT
+                    le.*,
+                    u.full_name AS user_name,
+                    u.email AS user_email
+                FROM lead_events le
+                LEFT JOIN users u ON u.id = le.user_id
+                WHERE le.lead_id = ?
+                ORDER BY datetime(le.created_at), le.id
+                """,
+                (lead_id,),
+            ).fetchall()
+        )
+        webhooks = rows_to_dicts(
+            conn.execute(
+                """
+                SELECT *
+                FROM schooldrive_webhook_events
+                WHERE lead_id = ?
+                ORDER BY datetime(coalesce(occurred_at, received_at)), id
+                """,
+                (lead_id,),
+            ).fetchall()
+        )
+        front_messages = rows_to_dicts(
+            conn.execute(
+                """
+                SELECT *
+                FROM front_messages
+                WHERE lead_id = ?
+                  AND (conversation_id = ? OR conversation_id IS NULL)
+                  AND imported_message_id IS NULL
+                ORDER BY datetime(coalesce(front_created_at, created_at)), id
+                """,
+                (lead_id, conversation_id),
+            ).fetchall()
+        )
+
+    for message in messages:
+        category, event_type, description, metadata = _journal_message_description(message)
+        occurred_at = (
+            message.get("received_at")
+            if message.get("direction") == "inbound"
+            else message.get("sent_at") or message.get("created_at")
+        )
+        actor = _journal_actor(
+            user_id=message.get("sender_user_id"),
+            user_name=message.get("sender_name"),
+            user_email=message.get("sender_email"),
+            fallback_type="client" if message.get("direction") == "inbound" else "system",
+            fallback_label="Client" if message.get("direction") == "inbound" else "Système",
+        )
+        events.append(
+            _journal_event(
+                occurred_at=occurred_at or message.get("created_at"),
+                category=category,
+                event_type=event_type,
+                source_table="messages",
+                source_id=message.get("id"),
+                lead_id=lead_id,
+                conversation_id=conversation_id,
+                message_id=message.get("id"),
+                actor=actor,
+                description=description,
+                metadata=metadata,
+            )
+        )
+
+    for front_message in front_messages:
+        direction = front_message.get("direction")
+        category = "message_client" if direction == "inbound" else "message_libre"
+        actor = _journal_actor(
+            fallback_type="client" if direction == "inbound" else "external",
+            fallback_label="Client" if direction == "inbound" else (front_message.get("author_name") or "Front.io"),
+        )
+        description = "Historique Front : message client" if direction == "inbound" else "Historique Front : message sortant"
+        events.append(
+            _journal_event(
+                occurred_at=front_message.get("front_created_at") or front_message.get("created_at"),
+                category=category,
+                event_type="front_message_imported_reference",
+                source_table="front_messages",
+                source_id=front_message.get("id"),
+                lead_id=lead_id,
+                conversation_id=conversation_id,
+                actor=actor,
+                description=description,
+                metadata={
+                    "front_message_id": front_message.get("front_message_id"),
+                    "front_type": front_message.get("front_type"),
+                },
+            )
+        )
+
+    for task in tasks:
+        task_metadata = _journal_json_dict(task.get("metadata_json"))
+        creator = _journal_actor(
+            user_id=task.get("created_by_user_id"),
+            user_name=task.get("created_by_name"),
+            user_email=task.get("created_by_email"),
+        )
+        task_new_state = {
+            "type": task.get("type"),
+            "status": task.get("status"),
+            "due_at": task.get("due_at"),
+            "assigned_to_user_id": task.get("assigned_to_user_id"),
+            "sequence_code": task.get("sequence_code"),
+            "sequence_step_index": task.get("sequence_step_index"),
+        }
+        events.append(
+            _journal_event(
+                occurred_at=task.get("created_at"),
+                category="action_humaine",
+                event_type="action_created",
+                source_table="tasks",
+                source_id=task.get("id"),
+                lead_id=lead_id,
+                conversation_id=task.get("conversation_id"),
+                task_id=task.get("id"),
+                actor=creator,
+                description=_journal_task_created_description(task),
+                new_state=task_new_state,
+                effects=[{"kind": "task", "id": task.get("id"), "status": task.get("status")}],
+                metadata=task_metadata,
+            )
+        )
+        if task.get("status") == "done":
+            events.append(
+                _journal_event(
+                    occurred_at=task.get("completed_at") or task.get("updated_at"),
+                    category="action_humaine",
+                    event_type="action_completed",
+                    source_table="tasks",
+                    source_id=task.get("id"),
+                    lead_id=lead_id,
+                    conversation_id=task.get("conversation_id"),
+                    task_id=task.get("id"),
+                    actor=_journal_actor(fallback_label="Système"),
+                    description=_journal_task_completed_description(task),
+                    previous_state={"status": "open"},
+                    new_state={**task_new_state, "status": "done", "outcome": task.get("outcome")},
+                    effects=[
+                        {"kind": "task", "id": task.get("id"), "status": "done"},
+                        {"kind": "outcome", "value": task.get("outcome")},
+                    ],
+                    metadata=task_metadata,
+                )
+            )
+        elif task.get("status") == "cancelled":
+            events.append(
+                _journal_event(
+                    occurred_at=task.get("updated_at") or task.get("created_at"),
+                    category="action_humaine",
+                    event_type="action_cancelled",
+                    source_table="tasks",
+                    source_id=task.get("id"),
+                    lead_id=lead_id,
+                    conversation_id=task.get("conversation_id"),
+                    task_id=task.get("id"),
+                    description=f"Action annulée : {_journal_compact(task.get('title'), 180)}",
+                    previous_state={"status": "open"},
+                    new_state={**task_new_state, "status": "cancelled", "cancelled_reason": task.get("cancelled_reason")},
+                    effects=[{"kind": "task", "id": task.get("id"), "status": "cancelled"}],
+                    metadata=task_metadata,
+                )
+            )
+        elif task.get("status") == "blocked":
+            events.append(
+                _journal_event(
+                    occurred_at=task.get("updated_at") or task.get("created_at"),
+                    category="evenement_systeme",
+                    event_type="action_blocked",
+                    source_table="tasks",
+                    source_id=task.get("id"),
+                    lead_id=lead_id,
+                    conversation_id=task.get("conversation_id"),
+                    task_id=task.get("id"),
+                    description=(
+                        f"Action bloquée : {_journal_compact(task.get('title'), 180)}"
+                        + (f" · {task.get('blocked_reason')}" if task.get("blocked_reason") else "")
+                    ),
+                    previous_state={"status": "open"},
+                    new_state={**task_new_state, "status": "blocked", "blocked_reason": task.get("blocked_reason")},
+                    effects=[{"kind": "task", "id": task.get("id"), "status": "blocked"}],
+                    metadata=task_metadata,
+                )
+            )
+
+    for event in lead_events:
+        event_type = event.get("event_type")
+        if event_type in JOURNAL_MESSAGE_EVENT_TYPES:
+            continue
+        previous = _journal_json_dict(event.get("previous_value_json"))
+        new = _journal_json_dict(event.get("new_value_json"))
+        metadata = _journal_json_dict(event.get("metadata_json"))
+        category, description = _journal_lead_event_description(event)
+        events.append(
+            _journal_event(
+                occurred_at=event.get("created_at"),
+                category=category,
+                event_type=event_type,
+                source_table="lead_events",
+                source_id=event.get("id"),
+                lead_id=lead_id,
+                conversation_id=metadata.get("conversation_id") or conversation_id,
+                task_id=metadata.get("task_id") or metadata.get("action_id") or new.get("task_id"),
+                actor=_journal_actor(
+                    user_id=event.get("user_id"),
+                    user_name=event.get("user_name"),
+                    user_email=event.get("user_email"),
+                ),
+                description=description,
+                previous_state=previous,
+                new_state=new,
+                effects=_journal_effects_from_payload(new, metadata),
+                metadata=metadata,
+            )
+        )
+
+    for webhook in webhooks:
+        status = webhook.get("status")
+        ignored_reason = webhook.get("ignored_reason")
+        description = "Webhook SchoolDrive traité"
+        if status == "ignored":
+            description = f"Webhook SchoolDrive ignoré : {ignored_reason or 'raison non précisée'}"
+        events.append(
+            _journal_event(
+                occurred_at=webhook.get("occurred_at") or webhook.get("received_at"),
+                category="evenement_systeme",
+                event_type=f"schooldrive_webhook_{status or 'received'}",
+                source_table="schooldrive_webhook_events",
+                source_id=webhook.get("id"),
+                lead_id=lead_id,
+                conversation_id=conversation_id,
+                description=description,
+                metadata={
+                    "event_id": webhook.get("event_id"),
+                    "environment": webhook.get("environment"),
+                    "status": status,
+                    "ignored_reason": ignored_reason,
+                },
+            )
+        )
+
+    def sort_key(item: dict[str, Any]) -> tuple[datetime, int, str]:
+        parsed = parse_dt(item.get("occurred_at")) if item.get("occurred_at") else None
+        source_order = {
+            "messages": 0,
+            "front_messages": 1,
+            "tasks": 2,
+            "lead_events": 3,
+            "schooldrive_webhook_events": 4,
+        }.get(str(item.get("source_table")), 9)
+        return (
+            parsed or datetime.min.replace(tzinfo=timezone.utc),
+            source_order,
+            f"{item.get('source_table')}:{item.get('source_id')}",
+        )
+
+    return sorted(events, key=sort_key)
+
+
 ADMIN_ACTION_OPEN_STATUSES = {"open", "in_progress", "blocked"}
 SAFEGUARD_DEFAULTS = {
     "outbound_global_block": "false",

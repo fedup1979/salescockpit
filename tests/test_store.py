@@ -1,4 +1,5 @@
-﻿from datetime import UTC, datetime, timedelta
+﻿import json
+from datetime import UTC, datetime, timedelta
 from urllib.parse import unquote
 from uuid import uuid4
 
@@ -31,6 +32,7 @@ from sales_cockpit.store import (
     handoff_to_closer,
     list_actions_for_lead,
     list_admin_actions,
+    list_conversation_journal_events,
     list_conversations,
     list_course_default_sessions,
     list_sequence_steps,
@@ -41,6 +43,7 @@ from sales_cockpit.store import (
     list_bug_reports,
     list_user_activity_log,
     list_users,
+    add_manual_note,
     record_inbound_message,
     reschedule_call_action,
     schedule_followup,
@@ -96,6 +99,74 @@ def test_bug_report_is_stored_with_activity_log() -> None:
     assert ok is True
     assert "termin" in message
     assert any(item["event_type"] == "bug_report_created" for item in list_user_activity_log())
+
+
+def test_conversation_journal_hides_whatsapp_body_and_keeps_internal_notes() -> None:
+    seed_initial_data()
+    user = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    inbound_body = "Message client confidentiel à ne pas dupliquer dans le journal."
+    result = record_inbound_message("+4179" + uuid4().hex[:7], inbound_body)
+    ok, message = add_manual_note(
+        result["conversation_id"],
+        user["id"],
+        "Note interne utile pour comprendre la décision.",
+        include_in_training=True,
+    )
+
+    assert ok is True
+    assert "Note" in message
+    events = list_conversation_journal_events(result["conversation_id"])
+    machine_payload = json.dumps(events, ensure_ascii=False)
+
+    assert events
+    assert all(
+        {
+            "occurred_at",
+            "category",
+            "event_type",
+            "source_table",
+            "source_id",
+            "lead_id",
+            "conversation_id",
+            "actor_type",
+            "description",
+            "metadata",
+        }.issubset(event)
+        for event in events
+    )
+    assert any(event["category"] == "message_client" for event in events)
+    assert any("WhatsApp client reçu" in event["description"] for event in events)
+    assert inbound_body not in machine_payload
+    assert any(event["category"] == "note_interne" for event in events)
+    assert "Note interne utile" in machine_payload
+
+
+def test_conversation_journal_uses_template_name_without_template_body() -> None:
+    seed_initial_data()
+    user = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message("+4179" + uuid4().hex[:7], "Client à relancer avec template.")
+    template_name = "journal_template_test"
+    template_body = "Corps de template qui ne doit pas apparaître dans le journal machine."
+    template_id = create_template(
+        user["id"],
+        template_name,
+        template_body,
+        status="approved",
+        twilio_content_sid="HXjournaltemplate000000000000000000000",
+        twilio_content_type="twilio/text",
+    )
+
+    ok, message = send_template_message(result["conversation_id"], user["id"], template_id, {})
+
+    assert ok is True, message
+    events = list_conversation_journal_events(result["conversation_id"])
+    machine_payload = json.dumps(events, ensure_ascii=False)
+    assert any(
+        event["event_type"] == "whatsapp_template_sent"
+        and template_name in event["description"]
+        for event in events
+    )
+    assert template_body not in machine_payload
 
 
 def test_integration_readiness_summary_exposes_core_sections() -> None:

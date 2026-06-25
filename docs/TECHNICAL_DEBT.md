@@ -34,6 +34,21 @@ Current large files to split first: `sales_cockpit/store.py`, `sales_cockpit/ui/
 
 Do this as a cleanup phase before adding IA automation, PBX/softphone, A/B testing, or richer SchoolDrive write-back. The goal is to keep the V1 cutover stable while making V2 safer to extend.
 
+## Conversation Journal Analytics
+
+### V1 Implemented Guardrail
+
+The conversation journal is a deterministic projection over the existing canonical tables (`messages`, `tasks`, `lead_events`, SchoolDrive webhook records, and Front buffer records). It avoids creating a second source of truth and deliberately hides WhatsApp message bodies while keeping internal notes visible.
+
+### V2 Debt
+
+Before using the journal for heavy AI analytics or cross-conversation reporting:
+
+- audit historical conversations for missing `lead_events` and decide whether a backfill is worth the operational risk;
+- extract the journal projection out of `store.py` if it starts gaining more categorization rules;
+- consider a read-optimized materialized journal table only if projection queries become too slow or analytics require global scans;
+- add event-quality metrics so missing actor, effect, or sequence metadata is visible before training/evaluation.
+
 ## Identity Resolution
 
 ### V1 Implemented Guardrail

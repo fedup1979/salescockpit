@@ -74,7 +74,7 @@ from sales_cockpit.store import (
     list_template_requests,
     list_templates,
     list_bug_reports,
-    list_user_activity_log,
+    list_conversation_journal_events,
     list_users,
     reactivate_sequence_step,
     reschedule_call_action,
@@ -736,7 +736,7 @@ def render_conversation_detail(user: dict, conversation_id: int) -> None:
     render_next_action_summary(user, conv)
     render_planned_call_notice(conv)
 
-    tabs = st.tabs(["Conversation", "Actions", "Notes privées"])
+    tabs = st.tabs(["Conversation", "Actions", "Notes privées", "Journal"])
     with tabs[0]:
         show_internal_notes = st.checkbox(
             "Afficher les notes internes",
@@ -750,6 +750,8 @@ def render_conversation_detail(user: dict, conversation_id: int) -> None:
         render_next_action_box(user, conv)
     with tabs[2]:
         render_manual_note_box(user, conv)
+    with tabs[3]:
+        render_conversation_journal(conversation_id)
 
 
 def render_conversation_header(user: dict, conversation_id: int) -> None:
@@ -1037,6 +1039,60 @@ def render_messages(conversation_id: int, show_internal_notes: bool = True) -> N
             """,
             unsafe_allow_html=True,
         )
+
+
+def render_conversation_journal(conversation_id: int) -> None:
+    events = list_conversation_journal_events(conversation_id)
+    if not events:
+        st.info("Aucun événement journalisable pour cette conversation.")
+        return
+
+    st.caption(
+        "Lecture chronologique du parcours. Le contenu des messages WhatsApp n'est pas repris ici ; "
+        "les notes internes restent visibles."
+    )
+    jsonl_payload = "\n".join(json.dumps(event, ensure_ascii=False, sort_keys=True) for event in events)
+    st.download_button(
+        "Télécharger le journal machine JSONL",
+        data=jsonl_payload.encode("utf-8"),
+        file_name=f"conversation_{conversation_id}_journal.jsonl",
+        mime="application/x-ndjson",
+        use_container_width=False,
+    )
+
+    rows_html = [
+        """
+        <div class="sc-journal-table">
+          <div class="sc-journal-header">Date</div>
+          <div class="sc-journal-header">Catégorie</div>
+          <div class="sc-journal-header">Description</div>
+        """
+    ]
+    current_day = ""
+    for event in events:
+        day_label = journal_day_label(event.get("occurred_at"))
+        if day_label != current_day:
+            current_day = day_label
+            rows_html.append(
+                f'<div class="sc-journal-day" style="grid-column: 1 / -1;">{escape_html(day_label)}</div>'
+            )
+        category = escape_html(event.get("category_label") or labelize(event.get("category")))
+        description = escape_html(event.get("description") or "")
+        actor = event.get("actor_label")
+        actor_html = (
+            f'<span class="sc-journal-actor">{escape_html(actor)}</span>'
+            if actor and actor not in {"Système", "Client"}
+            else ""
+        )
+        rows_html.append(
+            f"""
+              <div class="sc-journal-cell sc-journal-time">{escape_html(journal_timestamp(event.get("occurred_at")))}</div>
+              <div class="sc-journal-cell"><span class="sc-journal-badge sc-journal-{escape_html(event.get("category") or "event")}">{category}</span></div>
+              <div class="sc-journal-cell sc-journal-description">{description}{actor_html}</div>
+            """
+        )
+    rows_html.append("</div>")
+    st.markdown("\n".join(rows_html), unsafe_allow_html=True)
 
 
 def message_display_timestamp(message: dict) -> str | None:
@@ -4872,9 +4928,6 @@ def render_admin(user: dict) -> None:
             st.dataframe(bug_reports, hide_index=True, use_container_width=True, height=320)
         else:
             st.info("Aucun signalement pour le moment.")
-        st.subheader("Journal utilisateur")
-        st.caption("Derniers événements métier, connexions et signalements. Les événements lead détaillés restent dans `lead_events`.")
-        st.dataframe(list_user_activity_log(200), hide_index=True, use_container_width=True, height=420)
 
     with tabs[9]:
         st.subheader("Intégrations")
@@ -5400,6 +5453,24 @@ def format_dt(value: str | None) -> str:
     if not parsed:
         return "Non disponible"
     return parsed.astimezone(DISPLAY_TZ).strftime("%d.%m.%Y %H:%M")
+
+
+def journal_timestamp(value: str | None) -> str:
+    if not value:
+        return "Date inconnue"
+    parsed = parse_dt(value)
+    if not parsed:
+        return "Date inconnue"
+    return parsed.astimezone(DISPLAY_TZ).strftime("%d.%m.%Y - %H:%M")
+
+
+def journal_day_label(value: str | None) -> str:
+    if not value:
+        return "Date inconnue"
+    parsed = parse_dt(value)
+    if not parsed:
+        return "Date inconnue"
+    return parsed.astimezone(DISPLAY_TZ).strftime("%d.%m.%Y")
 
 
 def format_window_boundary(value: str | None) -> str:
