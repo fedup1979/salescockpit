@@ -4,7 +4,7 @@ Last updated: 2026-06-25 Europe/Zurich.
 
 This is the first document to read when resuming Sales Cockpit.
 
-Important follow-up: the adversarial review findings from 2026-06-22 are preserved in `docs/ADVERSARIAL_REVIEW.md`. Several P0/P1 findings have now been implemented and tested locally for the V1 pre-cutover hardening, but they are not deployed yet. Read that file before declaring the system ready for live WhatsApp cutover.
+Important follow-up: the adversarial review findings from 2026-06-22 are preserved in `docs/ADVERSARIAL_REVIEW.md`. Several P0/P1 findings have now been implemented, tested locally, and deployed to staging for the V1 pre-cutover hardening, but they are not deployed to production. Read that file before declaring the system ready for live WhatsApp cutover.
 
 ## Executive Summary
 
@@ -13,9 +13,9 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 ## Production Readiness Snapshot
 
 - Latest checkpoint before hardening audit: `a02f10c`.
-- Latest deployed staging UI/API check: OK on commit `db6f03b`.
-- Latest deployed production cold check: OK on commit `db6f03b`, Twilio `mock`, no SchoolDrive/Front production traffic connected.
-- Latest local automated validation after the V1 pre-cutover hardening: `204 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\full`.
+- Latest deployed staging UI/API check: OK on commit `ddb657c`.
+- Latest observed production commit: `786f89c`; production was not touched by the V1 pre-cutover hardening deploy and remains cold/mock.
+- Latest local automated validation after the V1 pre-cutover hardening: `204 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\full`, `compileall` OK, Streamlit smoke OK, and local `pre_cutover_check --allow-cold-prod` OK.
 - Latest staging pre-cutover check before this audit: OK.
 - Staging Twilio mode: `mock`, no real WhatsApp send from Sales Cockpit.
 - Production Twilio mode: `mock`, prepared cold only.
@@ -27,8 +27,9 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 - Latest local V1 workflow update: `eligible` is now the default qualification; setting/closing indécis and no-show flows are distinct; call appointments can be rescheduled or cancelled; bug reports and template requests create admin actions; outbound WhatsApp safeguards are configurable in Admin.
 - Latest hardening update: no-show call retries are now scoped by `call_cycle_id`; business-rule seeds are versioned and migrate legacy `post_call_undecided` rows without overwriting existing real template mappings; Twilio template sync can unblock linked template requests; strict production cutover checks exist; SchoolDrive signed/do-not-contact/course-full/session-past signals are handled; follow-up quotas do not block human replies; outbound WhatsApp sends are claimed per active action before Twilio is called; core list queries now have indexes and pagination guards.
 - Latest workflow reconciliation update: Inbox/list and detail now use the same next-action priority; manual lift of `Ne plus contacter` closes obsolete contact reviews and recreates a reply only when the last inbound is unanswered; inbound on terminal qualifications creates a review instead of a normal reply; reopening a resolved conversation refuses terminal contact/qualification states; linked template requests/admin actions are cancelled when their blocked follow-up becomes obsolete.
-- Staging pre-cutover after deployment: OK, including API security and seed checks.
-- Production cold pre-cutover after deployment with `--allow-cold-prod`: OK, including API security, seed checks, and zero active workflow anomalies.
+- Staging pre-cutover after deployment to `ddb657c`: OK, including API security, seed checks, and zero active workflow anomalies.
+- Staging template mapping snapshot before/after deployment was identical; the seed did not overwrite the fine-tuned Twilio mappings.
+- Production was not redeployed in this pass. Keep production cold/mock until explicit GO.
 
 The main remaining blocker before operational production cutover is a fresh live end-to-end SchoolDrive validation after the SchoolDrive WhatsApp/projector worker is confirmed running:
 
@@ -44,7 +45,7 @@ Sales Cockpit has now encoded the canonical workflow model:
 
 Important runtime rule: a prospect message during an already planned setting/closing call creates an urgent `reply` action for Setter I but does not cancel the planned call. Course-start relances do not interrupt planned calls.
 
-Latest local implementation status: code and documentation have been updated locally for the refined V1 model, but these changes must still be deployed to staging/prod before they are assumed live on DigitalOcean.
+Latest implementation status: the V1 pre-cutover hardening is deployed to staging on `ddb657c` and pushed to GitHub. It is not deployed to production.
 
 ## Repositories And Environments
 

@@ -24,7 +24,7 @@ DigitalOcean staging:
 - Host: `salescockpit-prod-01`
 - Services: `sales-cockpit-ui@prod.service`, `sales-cockpit-api@prod.service`, `sales-cockpit-ui@staging.service`, `sales-cockpit-api@staging.service`
 
-PROD is prepared cold on `8501` / `8601` with its own database and `SALES_COCKPIT_TWILIO_MODE=mock`. It is not connected to production SchoolDrive, production Front import, or real ESSR WhatsApp traffic.
+PROD is prepared cold on `8501` / `8601` with its own database and `SALES_COCKPIT_TWILIO_MODE=mock`. It is not connected to production SchoolDrive, production Front import, or real ESSR WhatsApp traffic. The V1 pre-cutover hardening was deployed to staging only.
 
 The app has been iteratively reviewed by François and is currently in a good staging prototype state.
 
@@ -50,6 +50,8 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 ## Important Recent Decisions
 
 - Latest local hardening validation: `204 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\full`, plus `compileall` OK after the V1 pre-cutover hardening.
+- Latest staging deployment: commit `ddb657c`, API/UI OK, `scripts/pre_cutover_check.py --api-base http://127.0.0.1:8602 --ui-url http://127.0.0.1:8502 --allow-cold-prod` OK.
+- The staging template mapping snapshot before/after deployment was identical; existing real Twilio mappings were preserved.
 - Status / qualification / reactivation saves were hardened: terminal qualifications and contact statuses now keep `Parcours`, conversation status, and next action aligned. `init_db()` also normalizes existing impossible terminal combinations, such as signed leads not shown as `won`, `Ne plus contacter` leads not shown as `blacklist`, and sequence-completed conversations not shown as `lost`.
 - Use `--basetemp=.pytest-tmp\run` on Windows if Pytest fails after successful test execution because it cannot clean `pytest-current` in `%TEMP%`.
 - Workflow reconciliation after the latest review: a terminal qualification or `Ne plus contacter` can no longer silently coexist with ordinary commercial sends/actions; inbound on those states creates a human review; manually lifting `Ne plus contacter` closes the stale review and recreates `reply` only if the last inbound is unanswered; template requests/admin actions linked to obsolete follow-ups are cancelled.
@@ -220,8 +222,8 @@ Latest known local validation after the V1 pre-cutover hardening:
 - `git diff --check`: passed.
 - BOM scan: clean for tracked/project files.
 - Staging deploy source: `main` branch via `deploy/scripts/deploy_env.sh`.
-- Latest verified staging commit: `db6f03b`.
-- Latest verified cold production commit: `db6f03b`.
+- Latest verified staging commit: `ddb657c`.
+- Latest observed cold production commit: `786f89c`; production was not redeployed in this pass.
 - Staging `pre_cutover_check` passed after deployment.
 - Production `pre_cutover_check --allow-cold-prod` passed after deployment; Twilio remains `mock`, seed demo is false, and SchoolDrive/Front are intentionally not connected there yet.
 - Restore points live in `/opt/sales-cockpit/backups/staging/`.
