@@ -26,6 +26,7 @@ from sales_cockpit.ui.app import (
     labelize,
     local_due_at,
     message_display_timestamp,
+    message_body_html,
     simulated_template_label,
 )
 from sales_cockpit.ui.styles import APP_CSS
@@ -87,6 +88,14 @@ def test_message_body_cleanup_removes_trailing_orphan_html_tags_only() -> None:
     assert clean_message_body_text(raw) == "Bonjour Dévaki\n\nRépondez simplement 1 ou 2."
     assert clean_message_body_text("Je préfère <3\n</div>") == "Je préfère <3"
     assert clean_message_body_text("A < B et C > D") == "A < B et C > D"
+
+
+def test_message_body_html_preserves_line_breaks_without_raw_html() -> None:
+    html = message_body_html("Bonjour Dévaki,\n\nA < B\n\n          </div>\n        </div>")
+
+    assert html == "Bonjour Dévaki,<br><br>A &lt; B"
+    assert "\n" not in html
+    assert "</div>" not in html
 
 
 def test_reply_action_guides_to_conversation_send_without_generic_completion() -> None:

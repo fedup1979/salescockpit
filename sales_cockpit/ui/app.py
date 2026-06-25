@@ -1051,19 +1051,23 @@ def render_messages(conversation_id: int, show_internal_notes: bool = True) -> N
         template = f" · modèle: {message['template_name']}" if message.get("template_name") else ""
         delivery = render_delivery_status(message)
         attachments_html = render_message_attachments(message.get("attachments") or [])
-        body = clean_message_body_text(message["body"])
+        body = message_body_html(message["body"])
         st.markdown(
             f"""
             <div class="sc-message-row {row_css}">
               <div class="sc-message {css}">
                 <div class="sc-message-meta">{sender} · {created}{template}{delivery}</div>
-                <div>{escape_html(body)}</div>
+                <div>{body}</div>
                 {attachments_html}
               </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
+
+
+def message_body_html(value: str) -> str:
+    return escape_html(clean_message_body_text(value)).replace("\n", "<br>")
 
 
 def render_conversation_journal(conversation_id: int) -> None:
@@ -1351,7 +1355,7 @@ def render_composer(user: dict, conv: dict) -> None:
     resolved_body = render_template_body(template["body"], variables)
     st.markdown("Aperçu du message")
     st.markdown(
-        f'<div class="sc-template-preview">{escape_html(resolved_body)}</div>',
+        f'<div class="sc-template-preview">{message_body_html(resolved_body)}</div>',
         unsafe_allow_html=True,
     )
 
