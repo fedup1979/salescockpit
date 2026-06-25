@@ -177,7 +177,40 @@ h1, h2, h3 {
 
 .st-key-lead_state_header .sc-compact-state > span {
   width: 100%;
+  min-height: 2.25rem;
   justify-content: flex-start;
+}
+
+.st-key-lead_qualification_chip,
+.st-key-lead_contact_chip {
+  position: relative;
+}
+
+.st-key-lead_qualification_chip [data-testid="stPopover"],
+.st-key-lead_contact_chip [data-testid="stPopover"] {
+  position: absolute;
+  inset: .35rem 0 .7rem 0;
+  z-index: 2;
+  margin: 0;
+}
+
+.st-key-lead_qualification_chip [data-testid="stPopover"] button,
+.st-key-lead_contact_chip [data-testid="stPopover"] button {
+  width: 100%;
+  height: 100%;
+  min-height: 1.65rem;
+  padding: 0;
+  border: 0 !important;
+  background: transparent !important;
+  color: transparent !important;
+  box-shadow: none !important;
+  cursor: pointer;
+}
+
+.st-key-lead_qualification_chip:hover .sc-clickable-state > span,
+.st-key-lead_contact_chip:hover .sc-clickable-state > span {
+  border-color: oklch(0.68 0.05 250);
+  color: var(--sc-text);
 }
 
 .sc-compact-state > span > span,
@@ -190,29 +223,6 @@ h1, h2, h3 {
 .sc-compact-state strong {
   color: var(--sc-text);
   font-weight: 650;
-}
-
-.st-key-lead_state_header [data-testid="stPopover"] {
-  margin: .35rem 0 .7rem 0;
-}
-
-.st-key-lead_state_header [data-testid="stPopover"] button {
-  width: 100%;
-  min-height: 1.65rem;
-  padding: .18rem .5rem;
-  border: 1px solid var(--sc-border) !important;
-  border-radius: 6px;
-  background: oklch(0.99 0.004 250) !important;
-  color: var(--sc-muted) !important;
-  font-size: .78rem;
-  line-height: 1.15;
-  box-shadow: none !important;
-  justify-content: flex-start;
-}
-
-.st-key-lead_state_header [data-testid="stPopover"] button:hover {
-  border-color: oklch(0.68 0.05 250) !important;
-  color: var(--sc-text) !important;
 }
 
 .sc-planned-call-notice {
@@ -527,6 +537,14 @@ h1, h2, h3 {
 }
 
 .st-key-next_action_summary_box {
+  position: relative;
+}
+
+.sc-action-panel {
+  display: flex;
+  justify-content: space-between;
+  gap: .8rem;
+  align-items: flex-start;
   border: 1px solid var(--sc-border);
   border-radius: 8px;
   padding: .75rem .85rem;
@@ -535,9 +553,12 @@ h1, h2, h3 {
 }
 
 .st-key-next_action_summary_box [data-testid="stPopover"] {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: .42rem;
+  position: absolute;
+  top: 2.45rem;
+  right: .85rem;
+  z-index: 2;
+  width: 2rem;
+  margin: 0;
 }
 
 .st-key-next_action_summary_box [data-testid="stPopover"] button {
@@ -551,6 +572,17 @@ h1, h2, h3 {
   box-shadow: none !important;
   font-size: .98rem;
   font-weight: 760;
+  justify-content: center;
+}
+
+.st-key-next_action_summary_box [data-testid="stPopover"] button [aria-hidden="true"],
+.st-key-next_action_summary_box [data-testid="stPopover"] button [data-testid="stIconMaterial"] {
+  display: none;
+}
+
+.st-key-next_action_summary_box [data-testid="stPopover"] button > div {
+  width: 100%;
+  justify-content: center;
 }
 
 .st-key-next_action_summary_box [data-testid="stPopover"] button:hover {
@@ -759,8 +791,8 @@ div[data-testid="stCheckbox"] span {
     max-width: 94%;
   }
 
-  .st-key-next_action_summary_box [data-testid="column"] {
-    width: 100% !important;
+  .sc-action-panel {
+    flex-direction: column;
   }
 
   .sc-action-badges {

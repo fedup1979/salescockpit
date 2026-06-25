@@ -919,7 +919,7 @@ def render_compact_lead_state(user: dict, conv: dict) -> None:
             "Parcours",
             labelize(conv["sales_stage"]),
         )
-        state_cols = st.columns([1, 1, 1, 0.8], vertical_alignment="center")
+        state_cols = st.columns([1, 1, 1, 0.8], vertical_alignment="top")
         with state_cols[0]:
             st.markdown(
                 f'<div class="sc-compact-state">{stage_html}</div>',
@@ -938,60 +938,70 @@ def render_compact_lead_state(user: dict, conv: dict) -> None:
 
 
 def render_qualification_popover(user: dict, conv: dict) -> None:
-    trigger_label = f"Qualification · {labelize(conv['lead_status'])} ▾"
-    with st.popover(trigger_label, help="Modifier la qualification", use_container_width=True):
-        lead_status_key = f"quick_lead_status_{conv['lead_id']}"
-        with st.form(f"quick_lead_status_edit_{conv['lead_id']}"):
-            lead_status = st.selectbox(
-                "Qualification",
-                LEAD_STATUSES,
-                index=safe_index(LEAD_STATUSES, conv["lead_status"]),
-                format_func=labelize,
-                help=HELP_TEXTS["lead_status"],
-                key=lead_status_key,
-            )
-            submitted = st.form_submit_button("Mettre à jour")
-        if submitted:
-            update_lead_qualification(
-                conv["lead_id"],
-                user["id"],
-                conv["sales_stage"],
-                lead_status,
-                contact_status=conv.get("contact_status") or "contact_allowed",
-                honor_sales_stage_terminal_mapping=False,
-            )
-            st.success("Qualification mise à jour.")
-            clear_widget_keys(lead_status_key)
-            st.rerun()
+    qualification_value = f"{labelize(conv['lead_status'])} ▾"
+    with st.container(key="lead_qualification_chip"):
+        st.markdown(
+            f'<div class="sc-compact-state sc-clickable-state">{state_chip_html("Qualification", qualification_value)}</div>',
+            unsafe_allow_html=True,
+        )
+        with st.popover("Modifier la qualification", help="Modifier la qualification", use_container_width=True):
+            lead_status_key = f"quick_lead_status_{conv['lead_id']}"
+            with st.form(f"quick_lead_status_edit_{conv['lead_id']}"):
+                lead_status = st.selectbox(
+                    "Qualification",
+                    LEAD_STATUSES,
+                    index=safe_index(LEAD_STATUSES, conv["lead_status"]),
+                    format_func=labelize,
+                    help=HELP_TEXTS["lead_status"],
+                    key=lead_status_key,
+                )
+                submitted = st.form_submit_button("Mettre à jour")
+            if submitted:
+                update_lead_qualification(
+                    conv["lead_id"],
+                    user["id"],
+                    conv["sales_stage"],
+                    lead_status,
+                    contact_status=conv.get("contact_status") or "contact_allowed",
+                    honor_sales_stage_terminal_mapping=False,
+                )
+                st.success("Qualification mise à jour.")
+                clear_widget_keys(lead_status_key)
+                st.rerun()
 
 
 def render_contact_popover(user: dict, conv: dict) -> None:
     current_contact_status = conv.get("contact_status") or "contact_allowed"
-    trigger_label = f"Contact · {labelize(current_contact_status)} ▾"
-    with st.popover(trigger_label, help="Modifier le statut de contact", use_container_width=True):
-        contact_status_key = f"quick_contact_status_{conv['lead_id']}"
-        with st.form(f"quick_contact_status_edit_{conv['lead_id']}"):
-            contact_status = st.selectbox(
-                "Contact",
-                CONTACT_STATUS_VALUES,
-                index=safe_index(CONTACT_STATUS_VALUES, current_contact_status),
-                format_func=labelize,
-                help=HELP_TEXTS["contact_status"],
-                key=contact_status_key,
-            )
-            submitted = st.form_submit_button("Mettre à jour")
-        if submitted:
-            update_lead_qualification(
-                conv["lead_id"],
-                user["id"],
-                conv["sales_stage"],
-                conv["lead_status"],
-                contact_status=contact_status,
-                honor_sales_stage_terminal_mapping=False,
-            )
-            st.success("Contact mis à jour.")
-            clear_widget_keys(contact_status_key)
-            st.rerun()
+    contact_value = f"{labelize(current_contact_status)} ▾"
+    with st.container(key="lead_contact_chip"):
+        st.markdown(
+            f'<div class="sc-compact-state sc-clickable-state">{state_chip_html("Contact", contact_value)}</div>',
+            unsafe_allow_html=True,
+        )
+        with st.popover("Modifier le contact", help="Modifier le statut de contact", use_container_width=True):
+            contact_status_key = f"quick_contact_status_{conv['lead_id']}"
+            with st.form(f"quick_contact_status_edit_{conv['lead_id']}"):
+                contact_status = st.selectbox(
+                    "Contact",
+                    CONTACT_STATUS_VALUES,
+                    index=safe_index(CONTACT_STATUS_VALUES, current_contact_status),
+                    format_func=labelize,
+                    help=HELP_TEXTS["contact_status"],
+                    key=contact_status_key,
+                )
+                submitted = st.form_submit_button("Mettre à jour")
+            if submitted:
+                update_lead_qualification(
+                    conv["lead_id"],
+                    user["id"],
+                    conv["sales_stage"],
+                    conv["lead_status"],
+                    contact_status=contact_status,
+                    honor_sales_stage_terminal_mapping=False,
+                )
+                st.success("Contact mis à jour.")
+                clear_widget_keys(contact_status_key)
+                st.rerun()
 
 
 def render_messages(conversation_id: int, show_internal_notes: bool = True) -> None:
@@ -1400,30 +1410,27 @@ def render_next_action_summary(user: dict, conv: dict) -> None:
     summary_actions = [action] if action else []
     skip_section = build_action_tab_presentation(conv, action, summary_actions)["sections"]["skip_step"]
     with st.container(key="next_action_summary_box"):
-        action_col, assignee_col = st.columns([0.72, 0.28], vertical_alignment="top")
-        with action_col:
-            st.markdown(
-                f"""
+        st.markdown(
+            f"""
+            <div class="sc-action-panel">
+              <div>
                 <div class="sc-compact-label">Prochaine action</div>
                 <div class="sc-action-title">{escape_html(title)}</div>
                 <div class="sc-row-meta">{escape_html(due)}</div>
-                """,
-                unsafe_allow_html=True,
-            )
-        with assignee_col:
-            st.markdown(
-                f"""
-                <div class="sc-action-badges">
-                  <span class="sc-badge sc-badge-muted">{escape_html(assignee)}</span>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            if skip_section["enabled"]:
-                render_delete_next_action_popover(user, skip_section["action"])
+              </div>
+              <div class="sc-action-badges">
+                <span class="sc-badge sc-badge-muted">{escape_html(assignee)}</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if action and conv.get("status") == "open":
+            disabled_reason = None if skip_section["enabled"] else skip_section["reason"]
+            render_delete_next_action_popover(user, action, disabled_reason)
 
 
-def render_delete_next_action_popover(user: dict, action: dict) -> None:
+def render_delete_next_action_popover(user: dict, action: dict, disabled_reason: str | None = None) -> None:
     action_id = action["id"]
     with st.popover("✕", help="Supprimer cette action", use_container_width=False):
         st.warning(
@@ -1432,18 +1439,22 @@ def render_delete_next_action_popover(user: dict, action: dict) -> None:
             "alors ne supprimez une tâche que dans des cas exceptionnels et si vous êtes "
             "tout à fait au clair quant aux implications système."
         )
+        if disabled_reason:
+            st.caption(disabled_reason)
         with st.form(f"delete_next_action_form_{action_id}"):
             note = st.text_area(
                 "Note obligatoire",
                 height=90,
                 key=f"delete_next_action_note_{action_id}",
+                disabled=disabled_reason is not None,
             )
             confirm = st.checkbox(
                 "Je confirme que cette action doit être supprimée.",
                 key=f"delete_next_action_confirm_{action_id}",
+                disabled=disabled_reason is not None,
             )
-            submitted = st.form_submit_button("Supprimer cette action")
-        if submitted:
+            submitted = st.form_submit_button("Supprimer cette action", disabled=disabled_reason is not None)
+        if submitted and not disabled_reason:
             if not confirm:
                 st.error("Confirme la suppression de cette action.")
                 return
