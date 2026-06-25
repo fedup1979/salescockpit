@@ -1060,39 +1060,25 @@ def render_conversation_journal(conversation_id: int) -> None:
         use_container_width=False,
     )
 
-    rows_html = [
-        """
-        <div class="sc-journal-table">
-          <div class="sc-journal-header">Date</div>
-          <div class="sc-journal-header">Catégorie</div>
-          <div class="sc-journal-header">Description</div>
-        """
-    ]
-    current_day = ""
+    rows = []
     for event in events:
-        day_label = journal_day_label(event.get("occurred_at"))
-        if day_label != current_day:
-            current_day = day_label
-            rows_html.append(
-                f'<div class="sc-journal-day" style="grid-column: 1 / -1;">{escape_html(day_label)}</div>'
-            )
-        category = escape_html(event.get("category_label") or labelize(event.get("category")))
-        description = escape_html(event.get("description") or "")
+        description = event.get("description") or ""
         actor = event.get("actor_label")
-        actor_html = (
-            f'<span class="sc-journal-actor">{escape_html(actor)}</span>'
-            if actor and actor not in {"Système", "Client"}
-            else ""
+        if actor and actor not in {"Système", "Client"}:
+            description = f"{description} · {actor}"
+        rows.append(
+            {
+                "Date": journal_timestamp(event.get("occurred_at")),
+                "Catégorie": event.get("category_label") or labelize(event.get("category")),
+                "Description": description,
+            }
         )
-        rows_html.append(
-            f"""
-              <div class="sc-journal-cell sc-journal-time">{escape_html(journal_timestamp(event.get("occurred_at")))}</div>
-              <div class="sc-journal-cell"><span class="sc-journal-badge sc-journal-{escape_html(event.get("category") or "event")}">{category}</span></div>
-              <div class="sc-journal-cell sc-journal-description">{description}{actor_html}</div>
-            """
-        )
-    rows_html.append("</div>")
-    st.markdown("\n".join(rows_html), unsafe_allow_html=True)
+    st.dataframe(
+        rows,
+        hide_index=True,
+        use_container_width=True,
+        height=min(720, max(240, 38 * len(rows) + 38)),
+    )
 
 
 def message_display_timestamp(message: dict) -> str | None:
@@ -5462,15 +5448,6 @@ def journal_timestamp(value: str | None) -> str:
     if not parsed:
         return "Date inconnue"
     return parsed.astimezone(DISPLAY_TZ).strftime("%d.%m.%Y - %H:%M")
-
-
-def journal_day_label(value: str | None) -> str:
-    if not value:
-        return "Date inconnue"
-    parsed = parse_dt(value)
-    if not parsed:
-        return "Date inconnue"
-    return parsed.astimezone(DISPLAY_TZ).strftime("%d.%m.%Y")
 
 
 def format_window_boundary(value: str | None) -> str:

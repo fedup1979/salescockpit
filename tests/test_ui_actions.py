@@ -197,7 +197,12 @@ def test_conversation_detail_exposes_journal_tab_in_inbox() -> None:
     assert "Notes privées" in tab_labels
     assert "Journal" in tab_labels
     assert joined_tabs.index("Notes privées") < joined_tabs.index("Journal")
-    assert "WhatsApp client reçu" in "\n".join(item.value for item in app.markdown)
+    journal_df = next(
+        dataframe.value
+        for dataframe in app.dataframe
+        if {"Date", "Catégorie", "Description"}.issubset(dataframe.value.columns)
+    )
+    assert "WhatsApp client reçu" in journal_df["Description"].to_string()
 
 
 def test_admin_bugs_logs_no_longer_shows_user_activity_log() -> None:
