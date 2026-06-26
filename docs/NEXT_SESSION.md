@@ -49,9 +49,10 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 
 ## Important Recent Decisions
 
-- Latest local hardening validation: `212 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\schooldrive-11-full`, plus `compileall` OK after the SchoolDrive schema `1.1` update.
-- Latest staging deployment: deployed from `main`; verify the exact commit with `git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD`. API/UI OK and `scripts/pre_cutover_check.py --api-base http://127.0.0.1:8602 --ui-url http://127.0.0.1:8502 --allow-cold-prod` OK.
-- The staging template mapping snapshot before/after deployment was identical; existing real Twilio mappings were preserved.
+- Latest local hardening validation: `214 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\schooldrive-review-conflict-full`, plus `compileall` OK after the SchoolDrive schema `1.1` update and human-review/follow-up conflict fix.
+- Latest staging deployment: commit `3c7070e`, deployed from `main`. API/UI OK and `scripts/pre_cutover_check.py --api-base http://127.0.0.1:8602 --ui-url http://127.0.0.1:8502 --allow-cold-prod` OK.
+- Latest staging template mapping check after deployment: `81` mappings total, `78` active, `78` active mappings linked to approved real Twilio templates; active split `APP=26`, `AS=26`, `FSM=26`. Existing real Twilio mappings were preserved.
+- Active SchoolDrive human reviews caused by `unconfigured_course_category`, `schooldrive_course_full`, or `schooldrive_related_subscription_signed` now block automatic follow-ups until review resolution; startup normalization cancels pre-existing conflicting follow-ups.
 - Status / qualification / reactivation saves were hardened: terminal qualifications and contact statuses now keep `Parcours`, conversation status, and next action aligned. `init_db()` also normalizes existing impossible terminal combinations, such as signed leads not shown as `won`, `Ne plus contacter` leads not shown as `blacklist`, and sequence-completed conversations not shown as `lost`.
 - Use `--basetemp=.pytest-tmp\run` on Windows if Pytest fails after successful test execution because it cannot clean `pytest-current` in `%TEMP%`.
 - Workflow reconciliation after the latest review: a terminal qualification or `Ne plus contacter` can no longer silently coexist with ordinary commercial sends/actions; inbound on those states creates a human review; manually lifting `Ne plus contacter` closes the stale review and recreates `reply` only if the last inbound is unanswered; template requests/admin actions linked to obsolete follow-ups are cancelled.

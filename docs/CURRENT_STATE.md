@@ -15,7 +15,7 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 - Latest checkpoint before hardening audit: `a02f10c`.
 - Latest deployed staging UI/API check: OK on latest `main`; verify the exact server commit with `git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD`.
 - Latest observed production commit: `786f89c`; production was not touched by the V1 pre-cutover hardening deploy and remains cold/mock.
-- Latest local automated validation after the SchoolDrive schema `1.1` update: `212 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\schooldrive-11-full`, and `compileall` OK.
+- Latest local automated validation after the SchoolDrive schema `1.1` update and SchoolDrive review/follow-up conflict fix: `214 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\schooldrive-review-conflict-full`, and `compileall` OK.
 - Latest staging pre-cutover check before this audit: OK.
 - Staging Twilio mode: `mock`, no real WhatsApp send from Sales Cockpit.
 - Production Twilio mode: `mock`, prepared cold only.
@@ -27,8 +27,9 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 - Latest local V1 workflow update: `eligible` is now the default qualification; setting/closing indécis and no-show flows are distinct; call appointments can be rescheduled or cancelled; bug reports and template requests create admin actions; outbound WhatsApp safeguards are configurable in Admin.
 - Latest hardening update: no-show call retries are now scoped by `call_cycle_id`; business-rule seeds are versioned and migrate legacy `post_call_undecided` rows without overwriting existing real template mappings; Twilio template sync can unblock linked template requests; strict production cutover checks exist; SchoolDrive signed/do-not-contact/course-full/session-past signals are handled; follow-up quotas do not block human replies; outbound WhatsApp sends are claimed per active action before Twilio is called; core list queries now have indexes and pagination guards.
 - Latest workflow reconciliation update: Inbox/list and detail now use the same next-action priority; manual lift of `Ne plus contacter` closes obsolete contact reviews and recreates a reply only when the last inbound is unanswered; inbound on terminal qualifications creates a review instead of a normal reply; reopening a resolved conversation refuses terminal contact/qualification states; linked template requests/admin actions are cancelled when their blocked follow-up becomes obsolete.
+- Latest recorded staging deployment: commit `3c7070e`, API/UI OK, `scripts/pre_cutover_check.py --allow-cold-prod` OK.
 - Latest recorded staging pre-cutover after deployment: OK, including API security, seed checks, and zero active workflow anomalies.
-- Staging template mapping snapshot before/after deployment was identical; the seed did not overwrite the fine-tuned Twilio mappings.
+- Latest staging template mapping check after deployment: `81` mappings total, `78` active, `78` active mappings linked to approved real Twilio templates; active split `APP=26`, `AS=26`, `FSM=26`. The seed did not overwrite the fine-tuned Twilio mappings.
 - Production was not redeployed in this pass. Keep production cold/mock until explicit GO.
 
 The main remaining blocker before operational production cutover is a fresh live end-to-end SchoolDrive validation after the SchoolDrive WhatsApp/projector worker is confirmed running:
@@ -45,7 +46,7 @@ Sales Cockpit has now encoded the canonical workflow model:
 
 Important runtime rule: a prospect message during an already planned setting/closing call creates an urgent `reply` action for Setter I but does not cancel the planned call. Course-start relances do not interrupt planned calls.
 
-Latest implementation status: the V1 pre-cutover hardening, reliable navigation fix, duplicate page-selector removal, message rendering fix, and SchoolDrive schema `1.1` support are pushed to GitHub and deployed to staging. They are not deployed to production.
+Latest implementation status: the V1 pre-cutover hardening, reliable navigation fix, duplicate page-selector removal, message rendering fix, SchoolDrive schema `1.1` support, and the SchoolDrive human-review/follow-up conflict guard are pushed to GitHub and deployed to staging. They are not deployed to production.
 
 ## Repositories And Environments
 
@@ -100,6 +101,8 @@ Working:
 - Front read-only buffer import foundation.
 - backup/restore scripts and cron.
 - pre-cutover readiness check.
+
+SchoolDrive human review rule: an active `contact_review` or `other` action caused by `unconfigured_course_category`, `schooldrive_course_full`, or `schooldrive_related_subscription_signed` blocks automatic follow-ups for that lead until the human review is resolved. `init_db()` also cancels pre-existing follow-ups that conflict with such an active review.
 
 Latest recorded staging check:
 

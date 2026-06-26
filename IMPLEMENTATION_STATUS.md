@@ -2,7 +2,7 @@
 
 ## Current Status
 
-V1 staging build is runnable. Staging is deployed from the `main` branch; verify the exact server commit with `git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD`. Production is deployed cold and remains in Twilio `mock` mode.
+V1 staging build is runnable. Staging is deployed from the `main` branch at commit `3c7070e`. Production is deployed cold and remains in Twilio `mock` mode.
 
 The current production gate is a fresh live SchoolDrive validation after the worker/projector is confirmed running: website form -> SchoolDrive lead/presubscription -> automatic WhatsApp AR -> AR sent snapshot -> Sales Cockpit thread + Tanjona follow-up.
 
@@ -14,8 +14,9 @@ Latest recorded staging deployment check:
 - Twilio mode on staging: `mock`.
 - Workflow consistency: no active conversation without action, no resolved conversation with active action, no conflicting main actions.
 - API security readiness checks app API tokens and mock webhook tokens outside local tests.
-- Latest local hardening validation: `212 passed`, `compileall` OK after the SchoolDrive schema `1.1` update. On Windows, run pytest with `--basetemp=.pytest-tmp\run` if `%TEMP%\pytest-current` cleanup raises a permission error after successful execution.
-- Staging is deployed from `main`; verify the exact commit on the server with `git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD`. Staging pre-cutover is OK. The staging template mapping snapshot before/after the hardening deploy was identical, so the seed did not overwrite the fine-tuned Twilio mappings.
+- Latest local hardening validation: `214 passed`, `compileall` OK after the SchoolDrive schema `1.1` update and human-review/follow-up conflict fix. On Windows, run pytest with `--basetemp=.pytest-tmp\run` if `%TEMP%\pytest-current` cleanup raises a permission error after successful execution.
+- Staging is deployed from `main` at commit `3c7070e`; API/UI health and staging pre-cutover are OK. Latest staging template mapping check: `81` mappings total, `78` active, `78` active mappings linked to approved real Twilio templates; active split `APP=26`, `AS=26`, `FSM=26`. The seed did not overwrite the fine-tuned Twilio mappings.
+- Active SchoolDrive human reviews caused by `unconfigured_course_category`, `schooldrive_course_full`, or `schooldrive_related_subscription_signed` block automatic follow-ups until review resolution; startup normalization cancels pre-existing conflicting follow-ups.
 - Production was not deployed in this pass. Latest observed production app commit is `786f89c`, with services active and Twilio still expected to remain in `mock` mode until explicit cutover.
 
 The canonical workflow model is now:
