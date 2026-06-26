@@ -492,6 +492,61 @@ def test_init_db_normalizes_existing_terminal_workflow_states() -> None:
     assert rows[lost_id]["sales_stage"] == "lost"
 
 
+def test_init_db_cancels_followup_when_schooldrive_review_is_active() -> None:
+    seed_initial_data()
+    with connect() as conn:
+        lead_id = conn.execute(
+            """
+            INSERT INTO leads (
+                schooldrive_lead_id, first_name, last_name, phone_e164,
+                source, lead_status, contact_status, sales_stage,
+                temperature, identity_status
+            ) VALUES ('subscription:review-conflict', 'Ludovic', 'Cesto', ?, 'schooldrive_webhook',
+                'eligible', 'contact_allowed', 'setting', 'warm', 'verified')
+            """,
+            (unique_phone(),),
+        ).lastrowid
+        conversation_id = conn.execute(
+            """
+            INSERT INTO conversations (lead_id, recipient_phone_e164, status)
+            VALUES (?, ?, 'open')
+            """,
+            (lead_id, unique_phone()),
+        ).lastrowid
+        review_id = conn.execute(
+            """
+            INSERT INTO tasks (
+                lead_id, conversation_id, type, title, assigned_to_user_id,
+                status, trigger_reason
+            ) VALUES (?, ?, 'other', 'Revoir la catégorie', 1, 'open', 'unconfigured_course_category')
+            """,
+            (lead_id, conversation_id),
+        ).lastrowid
+        followup_id = conn.execute(
+            """
+            INSERT INTO tasks (
+                lead_id, conversation_id, type, title, assigned_to_user_id,
+                status, trigger_reason, sequence_code
+            ) VALUES (?, ?, 'follow_up', 'Relancer avant début de cours', 1, 'open', 'course_start_approaching', 'course_start')
+            """,
+            (lead_id, conversation_id),
+        ).lastrowid
+
+    init_db()
+
+    with connect() as conn:
+        rows = {
+            row["id"]: row
+            for row in conn.execute(
+                "SELECT id, status, cancelled_reason FROM tasks WHERE id IN (?, ?)",
+                (review_id, followup_id),
+            ).fetchall()
+        }
+    assert rows[review_id]["status"] == "open"
+    assert rows[followup_id]["status"] == "cancelled"
+    assert rows[followup_id]["cancelled_reason"] == "Revue humaine SchoolDrive active"
+
+
 def test_resolution_requires_reason_and_reopen_requires_action() -> None:
     seed_initial_data()
     result = record_inbound_message(unique_phone(), "Conversation de test.")

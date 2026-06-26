@@ -332,6 +332,43 @@ def test_schooldrive_sent_whatsapp_for_unconfigured_category_creates_human_revie
     assert action["assigned_to_email"] == "service.etudiants@essr.ch"
 
 
+def test_schooldrive_active_human_review_blocks_later_course_start_followup() -> None:
+    seed_initial_data()
+    created = ingest_schooldrive_snapshot(
+        schooldrive_payload(
+            event_id="evt_unconfigured_then_course_start",
+            schooldrive_id="lead:unconfigured-then-course-start",
+            course_category="NUTR",
+        )
+    )
+    review = get_next_action_for_lead(created["lead_id"])
+    assert review["trigger_reason"] == "unconfigured_course_category"
+
+    update = schooldrive_payload(
+        event_id="evt_unconfigured_then_course_start_update",
+        occurred_at="2026-06-19T12:00:00Z",
+        aggregated_updated_at="2026-06-19T12:00:00Z",
+        schooldrive_id="lead:unconfigured-then-course-start",
+        course_category="APP",
+    )
+    update["data"]["course"].update(
+        {
+            "course_id": 1842,
+            "course_short_name": "APP-2026-09",
+            "category_short_title": "APP",
+            "start_date": "2026-06-20T08:00:00Z",
+        }
+    )
+
+    result = ingest_schooldrive_snapshot(update)
+
+    assert result["status"] == "updated"
+    actions = list_actions_for_lead(created["lead_id"], "all")
+    active = [item for item in actions if item["status"] in {"planned", "open", "in_progress", "blocked"}]
+    assert [item["trigger_reason"] for item in active] == ["unconfigured_course_category"]
+    assert all(item["sequence_code"] != "course_start" for item in active)
+
+
 def test_schooldrive_api_preserves_extra_fields_and_projects_capacity(monkeypatch) -> None:
     seed_initial_data()
     monkeypatch.setenv("SALES_COCKPIT_SCHOOLDRIVE_WEBHOOK_TOKEN", "sd-test-token")

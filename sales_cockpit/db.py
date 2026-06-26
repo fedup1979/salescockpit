@@ -805,6 +805,7 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
         )
     _backfill_sequence_step_offsets(conn)
     _normalize_terminal_workflow_states(conn)
+    _normalize_schooldrive_review_followup_conflicts(conn)
 
 
 def add_missing_columns(
@@ -1346,6 +1347,31 @@ def _normalize_terminal_workflow_states(conn: sqlite3.Connection) -> None:
             JOIN conversations c ON c.lead_id = l.id
             WHERE c.status = 'resolved'
               AND c.resolution_reason = 'sequence_completed_no_reply'
+          )
+        """
+    )
+
+
+def _normalize_schooldrive_review_followup_conflicts(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        UPDATE tasks
+        SET status = 'cancelled',
+            cancelled_reason = 'Revue humaine SchoolDrive active',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE status IN ('planned', 'open', 'in_progress', 'blocked')
+          AND type = 'follow_up'
+          AND EXISTS (
+            SELECT 1
+            FROM tasks review
+            WHERE review.lead_id = tasks.lead_id
+              AND review.status IN ('planned', 'open', 'in_progress', 'blocked')
+              AND review.type IN ('contact_review', 'other')
+              AND review.trigger_reason IN (
+                'unconfigured_course_category',
+                'schooldrive_course_full',
+                'schooldrive_related_subscription_signed'
+              )
           )
         """
     )

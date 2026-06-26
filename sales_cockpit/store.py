@@ -2315,6 +2315,8 @@ def _ensure_initial_schooldrive_followup(
     )
     if not lead or followups_are_blocked(lead):
         return
+    if _active_schooldrive_review_blocks_followups(conn, lead_id):
+        return
     if not _course_category_is_supported(conn, lead.get("course_category_short_title")):
         _ensure_unconfigured_course_category_review(
             conn,
@@ -2385,6 +2387,26 @@ def _ensure_initial_schooldrive_followup(
         metadata={"conversation_id": conversation_id},
     )
     _ensure_course_start_followup(conn, lead_id, conversation_id)
+
+
+def _active_schooldrive_review_blocks_followups(conn: Any, lead_id: int) -> bool:
+    row = conn.execute(
+        """
+        SELECT id
+        FROM tasks
+        WHERE lead_id = ?
+          AND status IN ('planned', 'open', 'in_progress', 'blocked')
+          AND type IN ('contact_review', 'other')
+          AND trigger_reason IN (
+            'unconfigured_course_category',
+            'schooldrive_course_full',
+            'schooldrive_related_subscription_signed'
+          )
+        LIMIT 1
+        """,
+        (lead_id,),
+    ).fetchone()
+    return bool(row)
 
 
 def _course_start_anchor_for_lead(conn: Any, lead_id: int) -> tuple[str | None, str | None]:
@@ -2483,6 +2505,8 @@ def _ensure_course_start_followup(
         ).fetchone()
     )
     if not lead or followups_are_blocked(lead):
+        return
+    if _active_schooldrive_review_blocks_followups(conn, lead_id):
         return
     if not _course_category_is_supported(conn, lead.get("course_category_short_title")):
         return
