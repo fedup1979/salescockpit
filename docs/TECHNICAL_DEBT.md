@@ -9,11 +9,10 @@ These items should be handled before or during the real cutover window because t
 ### SchoolDrive Signals
 
 - Confirm that SchoolDrive emits a fresh webhook when a WhatsApp autoresponder status changes to `sent`.
-- Confirm the exact signature/enrolment payload and trigger.
-- Confirm how course/session capacity is represented, including `capacity`, `is_full`, `available_seats`, and session-full cases.
-- Confirm whether a lead or presubscription can produce several enrolments.
-- Confirm the stable relationship from lead/presubscription to enrolment.
-- Confirm which IDs and timestamps are stable enough to use for idempotency and audit.
+- Validate Tiago's schema `1.1` on fresh staging records from the real website path.
+- Confirm the fresh website payload includes `course.course_id`, `course.course_short_name`, `course.seats_total`, `course.seats_occupied`, `course.seats_available`, `course.is_full`, `signed`, `do_not_contact.blocked`, and `related_subscriptions[]` when applicable.
+- Confirm operationally that a course crossing full/not-full causes SchoolDrive to re-emit affected leads/presubscriptions.
+- Confirm operationally that the top-level `signed` boolean appears for one signed presubscription and one lead-originated signature.
 
 ### Real Site Validation
 
@@ -136,7 +135,7 @@ V2 should add:
 
 V1 trusts the latest SchoolDrive webhook fields for capacity. Before automating course-start sends, add one of these safeguards:
 
-- SchoolDrive emits a webhook every time course/session capacity changes;
+- validate that SchoolDrive re-emits affected lead/presubscription snapshots when a course crosses the full/not-full boundary;
 - or Sales Cockpit performs a live SchoolDrive capacity lookup immediately before send.
 
 Without this, a course could become full after scheduling but before Setter II sends the message.

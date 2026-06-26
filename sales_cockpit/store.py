@@ -1870,7 +1870,11 @@ def _schooldrive_course_fields(data: dict[str, Any]) -> dict[str, Any]:
         )
         category_name = _clean_schooldrive_text(category_raw.get("name"))
     else:
-        category_short_name = _clean_schooldrive_text(category_raw)
+        category_short_name = _clean_schooldrive_text(
+            course.get("category_short_title")
+            or course.get("category_short_name")
+            or category_raw
+        )
 
     course_id = _clean_schooldrive_text(
         course.get("id")
@@ -1879,7 +1883,8 @@ def _schooldrive_course_fields(data: dict[str, Any]) -> dict[str, Any]:
         or category_short_name
     )
     course_title = _clean_schooldrive_text(
-        course.get("short_name")
+        course.get("course_short_name")
+        or course.get("short_name")
         or course.get("course_name")
         or course.get("session_name")
         or session.get("short_name")
@@ -1907,6 +1912,7 @@ def _schooldrive_course_fields(data: dict[str, Any]) -> dict[str, Any]:
         or session.get("course_start_date")
     )
     capacity_total = _schooldrive_first_int(
+        course.get("seats_total"),
         course.get("capacity_total"),
         course.get("total_capacity"),
         course.get("total_seats"),
@@ -1916,6 +1922,7 @@ def _schooldrive_course_fields(data: dict[str, Any]) -> dict[str, Any]:
         session.get("total_capacity"),
     )
     capacity_occupied = _schooldrive_first_int(
+        course.get("seats_occupied"),
         course.get("capacity_occupied"),
         course.get("occupied_capacity"),
         course.get("occupied_seats"),
@@ -1926,6 +1933,7 @@ def _schooldrive_course_fields(data: dict[str, Any]) -> dict[str, Any]:
         session.get("occupied_capacity"),
     )
     capacity_available = _schooldrive_first_int(
+        course.get("seats_available"),
         course.get("capacity_available"),
         course.get("available_capacity"),
         course.get("available_seats"),
@@ -1935,6 +1943,8 @@ def _schooldrive_course_fields(data: dict[str, Any]) -> dict[str, Any]:
         session.get("capacity_available"),
         session.get("available_capacity"),
     )
+    if capacity_available is None and capacity_total is not None and capacity_occupied is not None:
+        capacity_available = capacity_total - capacity_occupied
     is_full = any(
         _schooldrive_bool(value)
         for value in (
@@ -2709,8 +2719,9 @@ def _apply_schooldrive_business_signals(
     data: dict[str, Any],
 ) -> bool:
     now = iso_utc()
+    do_not_contact_detected, _dnc_source = _schooldrive_do_not_contact_signal(data)
     signed, signed_source = _schooldrive_signed_signal(data)
-    if signed:
+    if signed and not do_not_contact_detected:
         _complete_open_actions_for_lead(
             conn,
             lead_id,
@@ -2837,6 +2848,23 @@ def _apply_schooldrive_business_signals(
             )
         return True
 
+    related_signed, related_source = _schooldrive_related_signed_signal(data)
+    if related_signed:
+        _complete_open_actions_for_lead(
+            conn,
+            lead_id,
+            user_id=None,
+            outcome="Relances annulées : inscription liée déjà signée dans SchoolDrive",
+            included_types=("follow_up",),
+        )
+        _ensure_related_subscription_review(
+            conn,
+            lead_id=lead_id,
+            conversation_id=conversation_id,
+            source=related_source,
+        )
+        return True
+
     return False
 
 
@@ -2865,10 +2893,40 @@ def _schooldrive_signed_signal(data: dict[str, Any]) -> tuple[bool, str]:
     return False, ""
 
 
+def _schooldrive_related_signed_signal(data: dict[str, Any]) -> tuple[bool, str]:
+    related = data.get("related_subscriptions") or []
+    if not isinstance(related, list):
+        return False, ""
+    for index, item in enumerate(related):
+        if not isinstance(item, dict):
+            continue
+        if _schooldrive_bool(item.get("signed")):
+            parts = [f"related_subscriptions[{index}].signed"]
+            subscription_id = _clean_schooldrive_text(item.get("subscription_id"))
+            course_short_name = _clean_schooldrive_text(item.get("course_short_name"))
+            category_short_title = _clean_schooldrive_text(item.get("category_short_title"))
+            if subscription_id:
+                parts.append(f"subscription:{subscription_id}")
+            if course_short_name:
+                parts.append(f"course:{course_short_name}")
+            elif category_short_title:
+                parts.append(f"category:{category_short_title}")
+            return True, " ".join(parts)
+    return False, ""
+
+
 def _schooldrive_do_not_contact_signal(data: dict[str, Any]) -> tuple[bool, str]:
     contact = data.get("contact") or {}
+    do_not_contact = data.get("do_not_contact")
+    if isinstance(do_not_contact, dict):
+        if _schooldrive_bool(do_not_contact.get("blocked")):
+            reasons = do_not_contact.get("reasons") or []
+            reason_text = ""
+            if isinstance(reasons, list) and reasons:
+                reason_text = ":" + ",".join(str(item).strip() for item in reasons if str(item).strip())
+            return True, f"data.do_not_contact.blocked{reason_text}"
     candidates: list[tuple[str, Any]] = [
-        ("data.do_not_contact", data.get("do_not_contact")),
+        ("data.do_not_contact", do_not_contact),
         ("data.do_not_relaunch", data.get("do_not_relaunch")),
         ("data.email_opt_out", data.get("email_opt_out")),
         ("data.whatsapp_opt_out", data.get("whatsapp_opt_out")),
@@ -2919,7 +2977,7 @@ def _schooldrive_course_full_signal(data: dict[str, Any]) -> tuple[bool, str]:
             return True, f"course.session.{key}"
         if str(capacity.get(key) or "").strip().lower() in {"full", "complete", "complet", "sold_out"}:
             return True, f"course.capacity.{key}"
-    for key in ("available_seats", "capacity_available", "available_capacity", "remaining_seats"):
+    for key in ("seats_available", "available_seats", "capacity_available", "available_capacity", "remaining_seats"):
         seats = course.get(key) if key in course else capacity.get(key) if key in capacity else session.get(key)
         if seats is not None:
             try:
@@ -2983,6 +3041,64 @@ def _ensure_course_full_review(
         conn,
         lead_id,
         "schooldrive_course_full_review_created",
+        new={"task_id": action_id, "source": source},
+        metadata={"conversation_id": conversation_id},
+    )
+
+
+def _ensure_related_subscription_review(
+    conn: Any,
+    lead_id: int,
+    conversation_id: int,
+    source: str,
+) -> None:
+    existing = conn.execute(
+        """
+        SELECT id
+        FROM tasks
+        WHERE lead_id = ?
+          AND status IN ('open', 'planned', 'in_progress', 'blocked')
+          AND trigger_reason = 'schooldrive_related_subscription_signed'
+        LIMIT 1
+        """,
+        (lead_id,),
+    ).fetchone()
+    if existing:
+        return
+    lead = row_to_dict(conn.execute("SELECT * FROM leads WHERE id = ?", (lead_id,)).fetchone())
+    if not lead:
+        return
+    assignee_id = setter1_user_id(conn) or _default_active_user_id(conn, "setter")
+    if not assignee_id:
+        return
+    now = iso_utc()
+    action_id = _insert_next_action(
+        conn,
+        lead_id=lead_id,
+        conversation_id=conversation_id,
+        action_type="other",
+        title=f"Revoir l'inscription déjà signée de {lead_full_name(lead)}",
+        assigned_to_user_id=assignee_id,
+        created_by_user_id=None,
+        urgency="high",
+        due_at=now,
+        status="open",
+        trigger_reason="schooldrive_related_subscription_signed",
+        description="SchoolDrive indique que la personne a déjà une inscription signée sur un autre dossier. Ne pas lancer de relance concurrente ; lire le dossier et décider de la suite.",
+        metadata={"schooldrive_source": source},
+    )
+    _insert_internal_note_message(
+        conn,
+        lead_id,
+        conversation_id,
+        None,
+        f"SchoolDrive : inscription liée déjà signée ({source}). Relances automatiques stoppées, revue humaine nécessaire.",
+        now,
+    )
+    insert_event(
+        conn,
+        lead_id,
+        "schooldrive_related_subscription_review_created",
         new={"task_id": action_id, "source": source},
         metadata={"conversation_id": conversation_id},
     )

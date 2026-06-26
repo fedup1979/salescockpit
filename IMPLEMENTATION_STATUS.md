@@ -14,8 +14,8 @@ Latest recorded staging deployment check:
 - Twilio mode on staging: `mock`.
 - Workflow consistency: no active conversation without action, no resolved conversation with active action, no conflicting main actions.
 - API security readiness checks app API tokens and mock webhook tokens outside local tests.
-- Latest local hardening validation: `205 passed`, `compileall` OK. On Windows, run pytest with `--basetemp=.pytest-tmp\run` if `%TEMP%\pytest-current` cleanup raises a permission error after successful execution.
-- Staging is deployed on `b183939`; staging pre-cutover is OK after resetting the `SD-DEMO-*` demo scenarios. The staging template mapping snapshot before/after `ddb657c` deploy was identical, so the seed did not overwrite the fine-tuned Twilio mappings.
+- Latest local hardening validation: `212 passed`, `compileall` OK after the SchoolDrive schema `1.1` update. On Windows, run pytest with `--basetemp=.pytest-tmp\run` if `%TEMP%\pytest-current` cleanup raises a permission error after successful execution.
+- Staging is deployed from `main`; verify the exact commit on the server with `git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD`. Staging pre-cutover is OK. The staging template mapping snapshot before/after the hardening deploy was identical, so the seed did not overwrite the fine-tuned Twilio mappings.
 - Production was not deployed in this pass. Latest observed production app commit is `786f89c`, with services active and Twilio still expected to remain in `mock` mode until explicit cutover.
 
 The canonical workflow model is now:

@@ -19,14 +19,22 @@ Production should use HTTPS before cutover.
 
 - Snapshot envelope with `schema_version`, `event_id`, `occurred_at`, `environment`, and `data`.
 - Stable business key: `data.schooldrive_id`, for example `lead:137797` or `subscription:131885`.
+- Schema `1.1` is supported. Each webhook is the latest full snapshot of one record, not a delta.
+- Sales Cockpit upserts by `data.schooldrive_id` and accepts a snapshot only when `data.aggregated_updated_at` is newer than the stored version.
 - `data.status` is stored as `schooldrive_status`; it does not overwrite Sales Cockpit qualification.
 - `data.url` is stored as `schooldrive_url` and used by the UI SchoolDrive link.
-- `data.course` accepts both the original flat shape and the newer nested SchoolDrive shape.
+- There is no separate SchoolDrive `session` entity for V1. The course is the session/class. Sales Cockpit uses `course.course_id` as the stable course/session identifier and `course.course_short_name` as the display identity when present.
+- `data.course` accepts both the original flat shape, the nested SchoolDrive shape, and the schema `1.1` course shape.
 - New nested course shape:
-  - `course.id` is stored as `course_id`;
-  - `course.category.short_name` is stored as `course_category_short_title`;
-  - `course.short_name` is preferred as `course_title`, with fallbacks to `course.course_name`, `course.session_name`, `course.name`, `course.category.name`, then the category short name;
+  - `course.course_id` or `course.id` is stored as `course_id`;
+  - `course.category_short_title` or `course.category.short_name` is stored as `course_category_short_title`;
+  - `course.course_short_name` or `course.short_name` is preferred as `course_title`, with fallbacks to `course.course_name`, `course.session_name`, `course.name`, `course.category.name`, then the category short name;
   - `course.start_date` may be either an ISO date (`YYYY-MM-DD`) or a full ISO UTC timestamp.
+- Course capacity is read from `course.seats_total`, `course.seats_occupied`, `course.seats_available`, and `course.is_full`.
+- `course.is_full = true` stops automatic follow-ups and routes the record to human review, or annotates an already planned call.
+- `data.signed = true` is the canonical signed/enrolled signal and stops follow-ups by marking the current Sales Cockpit lead as signed.
+- `data.do_not_contact.blocked = true` is a hard commercial stop and sets the contact status to `do_not_contact`.
+- `data.related_subscriptions[]` is preserved in the raw payload. If a related subscription is already signed, Sales Cockpit stops automatic follow-ups for the current record and creates a human review instead of starting a competing commercial flow.
 - If `data.course` is absent and `data.product.roadmap_descriptive_id` is present, Sales Cockpit stores the roadmap identifier as an operational product title and routes the case to human review instead of starting a course-specific flux.
 
 ## Timestamp Convention

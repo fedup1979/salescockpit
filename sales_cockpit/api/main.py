@@ -72,10 +72,17 @@ class SchoolDrivePerson(BaseModel):
 class SchoolDriveCourse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
+    course_id: str | int | None = None
+    course_short_name: str | None = None
+    category_short_title: str | None = None
     category: str | dict[str, Any] | None = None
     course_name: str | None = None
     session_name: str | None = None
     start_date: str | None = None
+    seats_total: int | None = None
+    seats_occupied: int | None = None
+    seats_available: int | None = None
+    is_full: bool | None = None
 
 
 class SchoolDriveAutoresponder(BaseModel):
@@ -102,10 +109,14 @@ class SchoolDrivePayloadData(BaseModel):
     is_archived: bool = False
     archived_at: str | None = None
     archive_reason: str | None = None
+    signed: bool | dict[str, Any] | None = None
+    signed_at: str | None = None
+    do_not_contact: bool | dict[str, Any] | None = None
     person: SchoolDrivePerson
     course: SchoolDriveCourse = Field(default_factory=SchoolDriveCourse)
     product: dict[str, Any] = Field(default_factory=dict)
     status: str | None = None
+    related_subscriptions: list[dict[str, Any]] = Field(default_factory=list)
     whatsapp_autoresponders: list[SchoolDriveAutoresponder] = Field(default_factory=list)
 
 

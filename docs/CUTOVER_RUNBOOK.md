@@ -4,7 +4,7 @@ This runbook describes the controlled migration from Front.io to Sales Cockpit.
 
 ## Principles
 
-- SchoolDrive remains the source of truth for people, leads, presubscriptions, courses, sessions, enrolments and SchoolDrive URLs.
+- SchoolDrive remains the source of truth for people, leads, presubscriptions, courses/classes, enrolments and SchoolDrive URLs.
 - Front is historical input. It should not create leads by itself.
 - Front messages are imported first into buffer tables, then optionally attached as `front_history`.
 - The real ESSR Twilio account is read-only until explicit cutover. Template synchronization may read templates, but Sales Cockpit must not create, submit, delete, or send through the real account during staging validation.
@@ -25,7 +25,7 @@ Production should use HTTPS before final cutover.
 - SchoolDrive production webhook URL and token are configured.
 - SchoolDrive can backfill all active leads and presubscriptions.
 - SchoolDrive emits a fresh webhook when a WhatsApp autoresponder status changes to `sent`; this must be validated with a real AR status-change event, not only with synthetic replay.
-- SchoolDrive signature/enrolment, capacity, session-full, multi-enrolment, ID and timestamp semantics have been confirmed with Tiago.
+- SchoolDrive schema `1.1` semantics have been confirmed with Tiago: there is no separate session entity; `course.course_id` is the stable course/session identifier; capacity lives in every snapshot; `course.is_full` is the canonical full-course stop signal; `signed` is the canonical signature/enrolment signal; `do_not_contact.blocked` is the hard commercial stop; `related_subscriptions[]` carries other signed subscriptions for the same person; each webhook is an upsert keyed by `schooldrive_id` and ordered by `aggregated_updated_at`.
 - Staging has been cleaned after any historical event replay and rebuilt with records created on or after 2026-03-01.
 - Twilio WhatsApp sender for the production business is verified and approved.
 - Twilio templates from the real ESSR account are synchronized locally with `SALES_COCKPIT_TWILIO_CONTENT_READ_ONLY=true`.
@@ -39,22 +39,28 @@ Production should use HTTPS before final cutover.
 - Laura validates the final operational workflow with restored fake prospects, then with one real website lead and one real website presubscription.
 - HTTPS is in place before the real WhatsApp webhook switch.
 
-## Message To Tiago
+## Confirmation To Tiago
 
-Send this focused request before final staging validation:
+Send this confirmation before Tiago publishes schema `1.1`:
 
 ```text
 Hi Tiago,
 
-For the Sales Cockpit V1 cutover, can you please confirm only the following SchoolDrive webhook/data points?
+Thanks, this shape works for Sales Cockpit V1.
 
-1. Signature/enrolment: the exact event or payload that confirms a person has signed/enrolled.
-2. Capacity/session full: the exact fields that indicate capacity, remaining seats, session full, course full, and whether the canonical boolean is `is_full`.
-3. Multiple enrolments: whether one lead or presubscription can create multiple enrolments, and how they are represented.
-4. Linkage: the stable relationship from lead/presubscription to enrolment.
-5. IDs/timestamps: the stable IDs and timestamps we should use for idempotency, ordering, and audit.
+We confirm both points:
 
-We only need these points for V1 validation.
+- We will consume capacity directly from the existing lead/presubscription snapshot, using `course.is_full` as the canonical stop signal. No separate capacity event is needed.
+- We will treat each webhook as a full snapshot upsert keyed by `data.schooldrive_id`, with `data.aggregated_updated_at` as the version/order key. Older snapshots will be ignored.
+
+We will also adopt the SchoolDrive mental model you described:
+
+- no separate session entity; `course.course_id` is the stable session/class/course identifier and `course.course_short_name` is the display identity;
+- top-level `signed` is the canonical enrolment signal;
+- `do_not_contact.blocked = true` is a hard stop on commercial sends;
+- `related_subscriptions[]` will be used to prevent duplicate or competing follow-up flows.
+
+You can publish schema `1.1` to staging.
 ```
 
 ## T-2 Or Earlier: Prepare
@@ -235,7 +241,7 @@ sudo CONFIRM_RESTORE=1 bash /opt/sales-cockpit/prod/app/deploy/scripts/restore_s
 - HTTPS domain for production.
 - Production environment variables and secrets.
 - Real SchoolDrive AR-sent event trigger validation.
-- Tiago confirmation on signature/enrolment, capacity/session full, multiple enrolments, lead/presubscription to enrolment linkage, IDs, timestamps, capacity and `is_full`.
+- Fresh staging validation of Tiago's schema `1.1` through the real website lead and presubscription paths.
 - Real ESSR Twilio template synchronization in read-only mode.
 - Laura mapping of course/event/relance steps to real Twilio templates.
 - Final Twilio production sender verification.

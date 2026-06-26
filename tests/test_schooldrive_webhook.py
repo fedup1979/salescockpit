@@ -386,6 +386,143 @@ def test_schooldrive_api_preserves_extra_fields_and_projects_capacity(monkeypatc
     assert lead_payload["data"]["unexpected_root_field"] == {"kept": True}
 
 
+def test_schooldrive_schema_11_course_capacity_and_full_course_review() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload(
+        event_id="evt_schema_11_full_course",
+        occurred_at="2026-06-26T09:14:22Z",
+        aggregated_updated_at="2026-06-26T09:14:21Z",
+        schooldrive_id="lead:48213",
+        first_name="Jean",
+        last_name="Dupont",
+    )
+    payload["schema_version"] = "1.1"
+    payload["data"].update(
+        {
+            "signed": False,
+            "signed_at": None,
+            "do_not_contact": {"blocked": False, "reasons": []},
+            "status": "contacted",
+            "related_subscriptions": [
+                {
+                    "subscription_id": 33120,
+                    "course_id": 1790,
+                    "course_short_name": "FSM-2026-05",
+                    "category_short_title": "FSM",
+                    "status": "subscription",
+                    "signed": True,
+                    "signed_at": "2026-05-12T13:40:00Z",
+                    "is_archived": False,
+                }
+            ],
+        }
+    )
+    payload["data"]["course"] = {
+        "course_id": 1842,
+        "course_short_name": "APP-2026-09",
+        "category_short_title": "APP",
+        "start_date": "2026-09-01T06:00:00Z",
+        "seats_total": 20,
+        "seats_occupied": 20,
+        "seats_available": 0,
+        "is_full": True,
+    }
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["course_id"] == "1842"
+    assert conversation["course_title"] == "APP-2026-09"
+    assert conversation["course_category_short_title"] == "APP"
+    assert conversation["capacity_total"] == 20
+    assert conversation["capacity_occupied"] == 20
+    assert conversation["capacity_available"] == 0
+    assert conversation["is_full"] == 1
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "other"
+    assert action["trigger_reason"] == "schooldrive_course_full"
+    actions = list_actions_for_lead(result["lead_id"], "all")
+    assert all(item["type"] != "follow_up" or item["status"] == "done" for item in actions)
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT schooldrive_payload_json FROM leads WHERE id = ?",
+            (result["lead_id"],),
+        ).fetchone()
+    lead_payload = json.loads(row["schooldrive_payload_json"])
+    assert lead_payload["data"]["related_subscriptions"][0]["signed"] is True
+
+
+def test_schooldrive_do_not_contact_blocked_stops_commercial_flow() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload(
+        event_id="evt_schema_11_do_not_contact",
+        schooldrive_id="lead:dnc-blocked",
+    )
+    payload["schema_version"] = "1.1"
+    payload["data"]["signed"] = True
+    payload["data"]["do_not_contact"] = {
+        "blocked": True,
+        "reasons": ["customer_opt_out"],
+    }
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["contact_status"] == "do_not_contact"
+    assert conversation["status"] == "resolved"
+    assert conversation["resolution_reason"] == "do_not_contact"
+    assert get_next_action_for_lead(result["lead_id"]) is None
+
+
+def test_schooldrive_related_signed_subscription_routes_to_human_review() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload(
+        event_id="evt_schema_11_related_signed",
+        schooldrive_id="lead:related-signed",
+    )
+    payload["schema_version"] = "1.1"
+    payload["data"].update(
+        {
+            "signed": False,
+            "do_not_contact": {"blocked": False, "reasons": []},
+            "related_subscriptions": [
+                {
+                    "subscription_id": 33120,
+                    "course_id": 1790,
+                    "course_short_name": "FSM-2026-05",
+                    "category_short_title": "FSM",
+                    "status": "subscription",
+                    "signed": True,
+                    "signed_at": "2026-05-12T13:40:00Z",
+                    "is_archived": False,
+                }
+            ],
+        }
+    )
+    payload["data"]["course"].update(
+        {
+            "course_id": 1842,
+            "course_short_name": "APP-2026-09",
+            "category_short_title": "APP",
+            "seats_total": 20,
+            "seats_occupied": 8,
+            "seats_available": 12,
+            "is_full": False,
+        }
+    )
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["lead_status"] == "eligible"
+    assert conversation["status"] == "open"
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "other"
+    assert action["trigger_reason"] == "schooldrive_related_subscription_signed"
+    actions = list_actions_for_lead(result["lead_id"], "all")
+    assert all(item["type"] != "follow_up" or item["status"] == "done" for item in actions)
+
+
 def test_schooldrive_api_accepts_roadmap_product_without_course(monkeypatch) -> None:
     seed_initial_data()
     monkeypatch.setenv("SALES_COCKPIT_SCHOOLDRIVE_WEBHOOK_TOKEN", "sd-test-token")

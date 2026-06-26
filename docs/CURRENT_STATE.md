@@ -1,6 +1,6 @@
 # Current Project State
 
-Last updated: 2026-06-25 Europe/Zurich.
+Last updated: 2026-06-26 Europe/Zurich.
 
 This is the first document to read when resuming Sales Cockpit.
 
@@ -13,9 +13,9 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 ## Production Readiness Snapshot
 
 - Latest checkpoint before hardening audit: `a02f10c`.
-- Latest deployed staging UI/API check: OK on commit `b183939`.
+- Latest deployed staging UI/API check: OK on latest `main`; verify the exact server commit with `git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD`.
 - Latest observed production commit: `786f89c`; production was not touched by the V1 pre-cutover hardening deploy and remains cold/mock.
-- Latest local automated validation after the sidebar UX fix: `205 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\sidebar-full`, `compileall` OK, Streamlit smoke OK, and local `pre_cutover_check --allow-cold-prod` OK.
+- Latest local automated validation after the SchoolDrive schema `1.1` update: `212 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\schooldrive-11-full`, and `compileall` OK.
 - Latest staging pre-cutover check before this audit: OK.
 - Staging Twilio mode: `mock`, no real WhatsApp send from Sales Cockpit.
 - Production Twilio mode: `mock`, prepared cold only.
@@ -27,7 +27,7 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 - Latest local V1 workflow update: `eligible` is now the default qualification; setting/closing indécis and no-show flows are distinct; call appointments can be rescheduled or cancelled; bug reports and template requests create admin actions; outbound WhatsApp safeguards are configurable in Admin.
 - Latest hardening update: no-show call retries are now scoped by `call_cycle_id`; business-rule seeds are versioned and migrate legacy `post_call_undecided` rows without overwriting existing real template mappings; Twilio template sync can unblock linked template requests; strict production cutover checks exist; SchoolDrive signed/do-not-contact/course-full/session-past signals are handled; follow-up quotas do not block human replies; outbound WhatsApp sends are claimed per active action before Twilio is called; core list queries now have indexes and pagination guards.
 - Latest workflow reconciliation update: Inbox/list and detail now use the same next-action priority; manual lift of `Ne plus contacter` closes obsolete contact reviews and recreates a reply only when the last inbound is unanswered; inbound on terminal qualifications creates a review instead of a normal reply; reopening a resolved conversation refuses terminal contact/qualification states; linked template requests/admin actions are cancelled when their blocked follow-up becomes obsolete.
-- Staging pre-cutover after deployment to `b183939`: OK after resetting the `SD-DEMO-*` demo scenarios, including API security, seed checks, and zero active workflow anomalies.
+- Latest recorded staging pre-cutover after deployment: OK, including API security, seed checks, and zero active workflow anomalies.
 - Staging template mapping snapshot before/after deployment was identical; the seed did not overwrite the fine-tuned Twilio mappings.
 - Production was not redeployed in this pass. Keep production cold/mock until explicit GO.
 
@@ -45,7 +45,7 @@ Sales Cockpit has now encoded the canonical workflow model:
 
 Important runtime rule: a prospect message during an already planned setting/closing call creates an urgent `reply` action for Setter I but does not cancel the planned call. Course-start relances do not interrupt planned calls.
 
-Latest implementation status: the V1 pre-cutover hardening plus reliable navigation fix are deployed to staging on `b183939` and pushed to GitHub. They are not deployed to production.
+Latest implementation status: the V1 pre-cutover hardening, reliable navigation fix, duplicate page-selector removal, message rendering fix, and SchoolDrive schema `1.1` support are pushed to GitHub and deployed to staging. They are not deployed to production.
 
 ## Repositories And Environments
 
@@ -213,7 +213,7 @@ Important invariants:
 - Course-start relances may replace a lead/presubscription relance when they conflict within 24h, but they must not replace an already planned setting/closing call.
 - Course-start dates come first from SchoolDrive `data.course.start_date`; if a Lead only has a category, Sales Cockpit uses the active default session for that category.
 - If a default session date is already past, Sales Cockpit creates an admin action asking to update the default session instead of silently doing nothing.
-- If SchoolDrive marks a course/session full, Sales Cockpit cancels open follow-up relances and routes the case to Setter I to propose another session. If an appointment is already planned, that appointment remains the primary action and receives a visible course-full note.
+- If SchoolDrive marks a course full, Sales Cockpit cancels open follow-up relances and routes the case to Setter I to propose another course/class. If an appointment is already planned, that appointment remains the primary action and receives a visible course-full note.
 - A prospect marked `will_sign` must not silently downgrade to the generic setter no-next-step flux after a simple reply. Unless the prospect signs, is disqualified, asks not to be contacted, books an appointment, or a course-start conflict wins, follow-up context remains `closer_will_sign`.
 - A sequence step can be skipped with a mandatory note. Skipping means only "do not do this step"; the flux continues to the next active step if one exists.
 
@@ -233,8 +233,9 @@ Implemented locally for the refined V1:
 
 - SchoolDrive signed signal stops follow-ups and marks the lead `signed`.
 - SchoolDrive do-not-contact / opt-out signal sets contact status `do_not_contact`, closes follow-ups, and stores the source note.
-- SchoolDrive course/session-full signal stops follow-ups and creates a Setter I review action to propose another session.
+- SchoolDrive course-full signal stops follow-ups and creates a Setter I review action to propose another course/class.
 - SchoolDrive's updated nested `course` payload is supported locally: nested category, course id, course short/name, full ISO `start_date`, and Roadmap `product` records.
+- Tiago's schema `1.1` mental model is supported locally: no separate session entity is expected, `course.course_id` and `course.course_short_name` identify the class/session, `course.seats_*` and `course.is_full` feed capacity, `do_not_contact.blocked` is a stop signal, and signed `related_subscriptions[]` create human review instead of automatic competing follow-ups.
 
 Important timestamp decision:
 
