@@ -254,6 +254,8 @@ Historical note: Claude Code previously diagnosed `lead:124126` and proved that 
 
 Tiago later reported that the SchoolDrive event projector was published, including a filter to skip leads/subscriptions created before `2026-03-01`. A previous staging run received a large historical replay; the latest recorded staging check after cleanup/rebuild is small again and suitable for focused validation.
 
+François has sent Tiago the confirmation email accepting schema `1.1` and the canonical SchoolDrive mental model. We are waiting for Tiago's response/publication on staging; internal QA can continue in the meantime.
+
 Latest recorded staging state before this audit:
 
 ```text

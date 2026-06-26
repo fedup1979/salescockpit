@@ -32,6 +32,8 @@ The app has been iteratively reviewed by François and is currently in a good st
 
 Sales Cockpit is ready for the SchoolDrive payloads it receives. Tiago later reported that the SchoolDrive projector was published and filtered to skip leads/subscriptions created before `2026-03-01`, but the live website-form path still needs one clean validation after the SchoolDrive WhatsApp/projector worker is confirmed running.
 
+François has sent Tiago the schema `1.1` confirmation email. We are waiting for Tiago's response/publication on staging; continue internal QA while waiting.
+
 Validate this exact path before claiming operational production readiness:
 
 ```text

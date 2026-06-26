@@ -6,6 +6,8 @@ V1 staging build is runnable. Staging is deployed from the `main` branch at comm
 
 The current production gate is a fresh live SchoolDrive validation after the worker/projector is confirmed running: website form -> SchoolDrive lead/presubscription -> automatic WhatsApp AR -> AR sent snapshot -> Sales Cockpit thread + Tanjona follow-up.
 
+François has sent Tiago the schema `1.1` confirmation email. We are waiting for Tiago's response/publication on staging while internal QA continues.
+
 Latest recorded staging deployment check:
 
 - API health: OK.
