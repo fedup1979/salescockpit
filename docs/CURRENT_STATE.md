@@ -27,7 +27,7 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 - Latest local V1 workflow update: `eligible` is now the default qualification; setting/closing indécis and no-show flows are distinct; call appointments can be rescheduled or cancelled; bug reports and template requests create admin actions; outbound WhatsApp safeguards are configurable in Admin.
 - Latest hardening update: no-show call retries are now scoped by `call_cycle_id`; business-rule seeds are versioned and migrate legacy `post_call_undecided` rows without overwriting existing real template mappings; Twilio template sync can unblock linked template requests; strict production cutover checks exist; SchoolDrive signed/do-not-contact/course-full/session-past signals are handled; follow-up quotas do not block human replies; outbound WhatsApp sends are claimed per active action before Twilio is called; core list queries now have indexes and pagination guards.
 - Latest workflow reconciliation update: Inbox/list and detail now use the same next-action priority; manual lift of `Ne plus contacter` closes obsolete contact reviews and recreates a reply only when the last inbound is unanswered; inbound on terminal qualifications creates a review instead of a normal reply; reopening a resolved conversation refuses terminal contact/qualification states; linked template requests/admin actions are cancelled when their blocked follow-up becomes obsolete.
-- Latest recorded staging deployment: commit `3c7070e`, API/UI OK, `scripts/pre_cutover_check.py --allow-cold-prod` OK.
+- Latest recorded staging deployment: latest `main` after the transcript-driven E2E/UX update; API/UI OK, `scripts/pre_cutover_check.py --allow-cold-prod` OK. Verify the exact server commit with `git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD`.
 - Latest recorded staging pre-cutover after deployment: OK, including API security, seed checks, and zero active workflow anomalies.
 - Latest staging template mapping check after deployment: `81` mappings total, `78` active, `78` active mappings linked to approved real Twilio templates; active split `APP=26`, `AS=26`, `FSM=26`. The seed did not overwrite the fine-tuned Twilio mappings.
 - Production was not redeployed in this pass. Keep production cold/mock until explicit GO.
@@ -46,7 +46,7 @@ Sales Cockpit has now encoded the canonical workflow model:
 
 Important runtime rule: a prospect message during an already planned setting/closing call creates an urgent `reply` action for Setter I but does not cancel the planned call. Course-start relances do not interrupt planned calls.
 
-Latest implementation status: the V1 pre-cutover hardening, reliable navigation fix, duplicate page-selector removal, message rendering fix, SchoolDrive schema `1.1` support, and the SchoolDrive human-review/follow-up conflict guard are pushed to GitHub and deployed to staging. The transcript-driven E2E protocol, bug/admin fixes, vouvoiement cleanup, and skip-step consequence preview are implemented locally and tested, but not yet deployed to staging. Production is not touched.
+Latest implementation status: the V1 pre-cutover hardening, reliable navigation fix, duplicate page-selector removal, message rendering fix, SchoolDrive schema `1.1` support, SchoolDrive human-review/follow-up conflict guard, transcript-driven E2E protocol, bug/admin fixes, vouvoiement cleanup, and skip-step consequence preview are pushed to GitHub and deployed to staging. Production is not touched.
 
 ## Repositories And Environments
 
