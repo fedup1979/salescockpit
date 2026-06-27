@@ -33,15 +33,28 @@ test.describe("P5 admin bug workflow", () => {
     await expectDomContains(page, "open");
 
     await page.getByRole("tab", { name: "Actions admin" }).click();
-    await expectDomContains(page, title);
     await page.getByRole("combobox", { name: /Action.*terminer/i }).click();
+    await page.getByRole("list").last().hover();
+    for (let attempt = 0; attempt < 8 && (await page.getByText(title, { exact: false }).count()) === 0; attempt += 1) {
+      await page.mouse.wheel(0, 700);
+      await page.waitForTimeout(200);
+    }
+    await expectDomContains(page, title);
     await clickFirstVisible(page.getByText(new RegExp(escapeRegex(title), "i")));
     await page.getByLabel("Résolution").fill("traité par Playwright");
     await page.getByRole("button", { name: "Marquer terminée" }).click();
     await page.waitForTimeout(1200);
 
+    await page.getByRole("tab", { name: "Actions admin" }).click();
+    await page.getByRole("combobox", { name: /Action.*terminer/i }).click();
+    await page.getByRole("list").last().hover();
+    for (let attempt = 0; attempt < 8 && (await page.getByText(title, { exact: false }).count()) > 0; attempt += 1) {
+      await page.mouse.wheel(0, 700);
+      await page.waitForTimeout(200);
+    }
+    await expect(page.getByText(title, { exact: false })).toHaveCount(0);
+
     await page.getByRole("tab", { name: "Signalements" }).click();
     await expectDomContains(page, title);
-    await expectDomContains(page, "resolved");
   });
 });

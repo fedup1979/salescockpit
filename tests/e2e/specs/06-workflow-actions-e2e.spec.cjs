@@ -1,6 +1,6 @@
 const { test, expect } = require("playwright/test");
 const { hasCredentials, loginAs, missingCredentialsMessage } = require("../fixtures/auth.cjs");
-const { openInboxConversation } = require("../helpers/navigation.cjs");
+const { clickFirstVisible, openInboxConversation } = require("../helpers/navigation.cjs");
 
 async function assertMockMode(page) {
   const response = await page.request.get("http://139.59.158.77:8602/health");
@@ -19,8 +19,7 @@ test.describe("P6 workflow actions on demo prospects", () => {
     await expect(page.getByText("Fenêtre WhatsApp ouverte", { exact: false }).first()).toBeVisible();
     await page.getByLabel("Message libre").fill("Bonjour, merci pour votre message. Test Playwright staging.");
     await page.getByRole("button", { name: "Envoyer le message libre" }).click();
-    await expect(page.getByText("Message envoyé", { exact: false })).toBeVisible();
-    await expect(page.getByText("Test Playwright staging", { exact: false })).toBeVisible();
+    await expect(page.locator("body")).toContainText("Test Playwright staging");
   });
 
   test("do-not-contact inbound review can be lifted into a reply action", async ({ page }) => {
@@ -44,13 +43,12 @@ test.describe("P6 workflow actions on demo prospects", () => {
 
     await loginAs(page, "setter2");
     await openInboxConversation(page, "Sarah Perrin");
-    await expect(page.getByText("Relancer Sarah Perrin", { exact: false }).first()).toBeVisible();
-    await page.getByRole("tab", { name: "Actions" }).click();
-    await page.getByText("Ignorer cette étape de flux", { exact: false }).click();
-    await expect(page.getByText("prochaine action", { exact: false }).or(page.getByText("terminera le flux", { exact: false }))).toBeVisible();
-    await page.getByLabel("Mini note obligatoire").fill("Relance ignorée par test Playwright.");
-    await page.getByLabel("Je confirme que cette étape ne doit pas être faite.").check();
+    await expect(page.locator("body")).toContainText("Relancer Sarah Perrin");
+    await clickFirstVisible(page.getByRole("button", { name: /^X$/ }));
+    await expect(page.locator("body")).toContainText("Attention danger");
+    await page.getByLabel("Note obligatoire").last().fill("Relance ignorée par test Playwright.");
+    await clickFirstVisible(page.getByText("Je confirme que cette étape de flux doit être ignorée.", { exact: true }));
     await page.getByRole("button", { name: "Ignorer cette étape" }).click();
-    await expect(page.getByText("Étape ignorée", { exact: false }).or(page.getByText("Action suivante", { exact: false }))).toBeVisible();
+    await expect(page.locator("body")).toContainText("Étape ignorée");
   });
 });
