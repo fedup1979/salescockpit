@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta, time, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 from streamlit.testing.v1 import AppTest
@@ -25,6 +26,7 @@ from sales_cockpit.ui.app import (
     format_dt,
     format_due,
     labelize,
+    login_hint_text,
     local_due_at,
     message_display_timestamp,
     message_body_html,
@@ -70,6 +72,14 @@ def test_ui_dates_are_displayed_in_geneva_time() -> None:
         )
         == "2026-06-23T06:11:00Z"
     )
+
+
+def test_login_hint_uses_environment_seed_password_and_hides_prod() -> None:
+    staging = SimpleNamespace(environment="staging", twilio_mode="mock", seed_password="SharedSecret")
+    assert login_hint_text(staging) == "Mode staging mock. Mot de passe initial : SharedSecret"
+
+    production = SimpleNamespace(environment="production", twilio_mode="mock", seed_password="SharedSecret")
+    assert login_hint_text(production) is None
 
 
 def test_sidebar_reopen_control_is_not_hidden_and_page_selector_is_removed() -> None:

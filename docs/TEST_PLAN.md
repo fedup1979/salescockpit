@@ -2,8 +2,10 @@
 
 Objectif : valider l'expérience V1 de bout en bout avec des faux prospects restaurables, puis terminer par deux tests réels depuis le site web : un lead et une préinscription.
 
-Protocole E2E complet et automatisable : `docs/E2E_TEST_PROTOCOL.md`.
+Protocole E2E manuel complet : `docs/E2E_TEST_PROTOCOL.md`.
+Protocole Playwright automatisé cible : `docs/PLAYWRIGHT_E2E_PROTOCOL.md`.
 Spec du graphe parcours / flux / actions : `docs/WORKFLOW_GRAPH_SPEC.md`.
+Prompt IA pour générer l'image exhaustive : `docs/WORKFLOW_GRAPH_IMAGE_PROMPT.md`.
 
 ## Validation automatisée courante
 

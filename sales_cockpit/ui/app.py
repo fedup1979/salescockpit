@@ -451,6 +451,7 @@ def main() -> None:
 
 
 def render_login() -> None:
+    settings = get_settings()
     st.title("Sales Cockpit")
     st.caption("Interface interne ESSR pour WhatsApp, actions commerciales et qualification des leads.")
 
@@ -470,7 +471,19 @@ def render_login() -> None:
             st.rerun()
         st.error("Identifiants invalides.")
 
-    st.info("Mode local mock. Mot de passe initial par défaut : ChangeMe!2026")
+    login_hint = login_hint_text(settings)
+    if login_hint:
+        st.info(login_hint)
+
+
+def login_hint_text(settings) -> str | None:
+    environment = str(settings.environment or "local").strip().lower()
+    if environment in {"prod", "production"}:
+        return None
+
+    mode_label = str(settings.environment or "local").strip() or "local"
+    twilio_label = str(settings.twilio_mode or "mock").strip() or "mock"
+    return f"Mode {mode_label} {twilio_label}. Mot de passe initial : {settings.seed_password}"
 
 
 def render_shell() -> None:

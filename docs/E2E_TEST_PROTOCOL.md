@@ -28,7 +28,9 @@ Sur staging, le reset doit être lancé sur le serveur avec l'environnement stag
 - Setter II : `setter2@essr.ch`
 - Closer : `yasmine@essr.ch`
 
-Mot de passe de test : `ChangeMe!2026`.
+Mot de passe local seed : `ChangeMe!2026`.
+
+Sur staging, utiliser les mots de passe réels via variables d'environnement ou coffre d'équipe. Ne pas supposer que `ChangeMe!2026` fonctionne sur staging.
 
 ## Checklist De Retour
 
@@ -259,6 +261,8 @@ Résultat attendu : le lead réel arrive dans staging et suit le flux V1 attendu
 Résultat attendu : la préinscription réelle arrive dans staging et respecte les signaux SchoolDrive `1.1`.
 
 ## Automatisation Playwright Cible
+
+Protocole détaillé : `docs/PLAYWRIGHT_E2E_PROTOCOL.md`.
 
 Le protocole doit être automatisé par blocs indépendants, pas comme un seul scénario géant fragile.
 

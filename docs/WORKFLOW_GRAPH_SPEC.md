@@ -4,6 +4,8 @@ Cette spec formalise l'image `C:\Users\FD\Desktop\SC logic.png` et la logique d�
 
 Objectif : donner à l'équipe une représentation compréhensible du système, puis s'en servir pour expliquer les règles métier et sécuriser les tests.
 
+Prompt IA prêt à copier-coller pour générer une image exhaustive : `docs/WORKFLOW_GRAPH_IMAGE_PROMPT.md`.
+
 ## Modèle Mental
 
 Le système se lit comme une arête principale, orientée dans le temps.
