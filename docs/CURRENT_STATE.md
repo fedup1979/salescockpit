@@ -15,7 +15,7 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 - Latest checkpoint before hardening audit: `a02f10c`.
 - Latest deployed staging UI/API check: OK on latest `main`; verify the exact server commit with `git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD`.
 - Latest observed production commit: `786f89c`; production was not touched by the V1 pre-cutover hardening deploy and remains cold/mock.
-- Latest local automated validation after the SchoolDrive schema `1.1` update and SchoolDrive review/follow-up conflict fix: `214 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\schooldrive-review-conflict-full`, and `compileall` OK.
+- Latest local automated validation after the transcript-driven E2E/UX update: `215 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\transcript-full`, and `compileall` OK.
 - Latest staging pre-cutover check before this audit: OK.
 - Staging Twilio mode: `mock`, no real WhatsApp send from Sales Cockpit.
 - Production Twilio mode: `mock`, prepared cold only.
@@ -46,7 +46,7 @@ Sales Cockpit has now encoded the canonical workflow model:
 
 Important runtime rule: a prospect message during an already planned setting/closing call creates an urgent `reply` action for Setter I but does not cancel the planned call. Course-start relances do not interrupt planned calls.
 
-Latest implementation status: the V1 pre-cutover hardening, reliable navigation fix, duplicate page-selector removal, message rendering fix, SchoolDrive schema `1.1` support, and the SchoolDrive human-review/follow-up conflict guard are pushed to GitHub and deployed to staging. They are not deployed to production.
+Latest implementation status: the V1 pre-cutover hardening, reliable navigation fix, duplicate page-selector removal, message rendering fix, SchoolDrive schema `1.1` support, and the SchoolDrive human-review/follow-up conflict guard are pushed to GitHub and deployed to staging. The transcript-driven E2E protocol, bug/admin fixes, vouvoiement cleanup, and skip-step consequence preview are implemented locally and tested, but not yet deployed to staging. Production is not touched.
 
 ## Repositories And Environments
 
@@ -218,7 +218,7 @@ Important invariants:
 - If a default session date is already past, Sales Cockpit creates an admin action asking to update the default session instead of silently doing nothing.
 - If SchoolDrive marks a course full, Sales Cockpit cancels open follow-up relances and routes the case to Setter I to propose another course/class. If an appointment is already planned, that appointment remains the primary action and receives a visible course-full note.
 - A prospect marked `will_sign` must not silently downgrade to the generic setter no-next-step flux after a simple reply. Unless the prospect signs, is disqualified, asks not to be contacted, books an appointment, or a course-start conflict wins, follow-up context remains `closer_will_sign`.
-- A sequence step can be skipped with a mandatory note. Skipping means only "do not do this step"; the flux continues to the next active step if one exists.
+- A sequence step can be skipped with a mandatory note. Skipping means only "do not do this step"; the flux continues to the next active step if one exists. The UI now previews the next natural action, or tells the user that the flux will end, before confirmation.
 
 ### SchoolDrive
 

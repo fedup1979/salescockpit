@@ -1113,6 +1113,33 @@ def complete_admin_action(action_id: int, user_id: int, outcome: str = "done") -
                 now,
             ),
         )
+        if action.get("type") == "bug_report" and action.get("bug_report_id"):
+            conn.execute(
+                """
+                UPDATE bug_reports
+                SET status = 'resolved',
+                    updated_at = ?,
+                    resolved_at = coalesce(resolved_at, ?)
+                WHERE id = ?
+                """,
+                (now, now, action["bug_report_id"]),
+            )
+            conn.execute(
+                """
+                INSERT INTO user_activity_log (
+                    user_id, event_type, entity_type, entity_id,
+                    conversation_id, action_id, metadata_json, created_at
+                ) VALUES (?, 'bug_report_resolved', 'bug_report', ?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    action["bug_report_id"],
+                    action.get("conversation_id"),
+                    action.get("task_id"),
+                    json.dumps({"admin_action_id": action_id, "outcome": outcome}, ensure_ascii=False),
+                    now,
+                ),
+            )
     return True, "Action admin terminée."
 
 
@@ -4817,6 +4844,64 @@ def _advance_sequence_after_action(
         trigger_reason=trigger_reason,
         description=note or None,
     )
+
+
+def preview_skip_sequence_step_action(task_id: int) -> dict[str, Any]:
+    with connect() as conn:
+        task = row_to_dict(
+            conn.execute(
+                """
+                SELECT
+                    t.*,
+                    l.first_name,
+                    l.last_name
+                FROM tasks t
+                JOIN leads l ON l.id = t.lead_id
+                WHERE t.id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+        )
+        if not task:
+            return {"available": False, "reason": "Action introuvable."}
+        if not task.get("sequence_code") or not task.get("sequence_step_index"):
+            return {"available": False, "reason": "Cette action n'appartient pas à un flux."}
+        next_step = _next_sequence_step(
+            conn,
+            task.get("sequence_code"),
+            task.get("sequence_step_index"),
+        )
+        if not next_step:
+            return {
+                "available": True,
+                "has_next": False,
+                "sequence_code": task.get("sequence_code"),
+                "current_step_index": task.get("sequence_step_index"),
+            }
+        fallback_user_id = int(task.get("assigned_to_user_id") or task.get("created_by_user_id") or 0)
+        assignee_id = _sequence_action_assignee_id(
+            conn,
+            next_step.get("action_type"),
+            fallback_user_id,
+        )
+        assignee = row_to_dict(
+            conn.execute("SELECT id, full_name, email FROM users WHERE id = ?", (assignee_id,)).fetchone()
+        )
+        anchor = _sequence_anchor_from_action(task, iso_utc())
+        full_name = lead_full_name(task)
+        return {
+            "available": True,
+            "has_next": True,
+            "sequence_code": task.get("sequence_code"),
+            "current_step_index": task.get("sequence_step_index"),
+            "next_step_index": next_step.get("step_index"),
+            "next_action_type": next_step.get("action_type"),
+            "next_title": _sequence_action_title(next_step.get("action_type"), full_name),
+            "next_due_at": _due_for_sequence_step(anchor, next_step),
+            "next_assigned_to_user_id": assignee_id,
+            "next_assigned_to_name": assignee.get("full_name") if assignee else None,
+            "next_meaning": next_step.get("meaning"),
+        }
 
 
 def _validate_outbound_action_can_chain(

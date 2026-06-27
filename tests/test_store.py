@@ -45,6 +45,7 @@ from sales_cockpit.store import (
     list_user_activity_log,
     list_users,
     add_manual_note,
+    preview_skip_sequence_step_action,
     record_inbound_message,
     reschedule_call_action,
     schedule_followup,
@@ -197,10 +198,15 @@ def test_bug_report_is_stored_with_activity_log() -> None:
     bug_actions = [action for action in admin_actions if action["type"] == "bug_report"]
     assert bug_actions
     assert bug_actions[0]["bug_report_id"] == reports[0]["id"]
-    ok, message = complete_admin_action(admin_actions[0]["id"], user["id"], "Bug revu")
+    ok, message = complete_admin_action(bug_actions[0]["id"], user["id"], "Bug revu")
     assert ok is True
     assert "termin" in message
-    assert any(item["event_type"] == "bug_report_created" for item in list_user_activity_log())
+    reports = list_bug_reports()
+    assert reports[0]["status"] == "resolved"
+    assert reports[0]["resolved_at"] is not None
+    events = list_user_activity_log()
+    assert any(item["event_type"] == "bug_report_created" for item in events)
+    assert any(item["event_type"] == "bug_report_resolved" for item in events)
 
 
 def test_conversation_journal_hides_whatsapp_body_and_keeps_internal_notes() -> None:
@@ -2946,6 +2952,12 @@ def test_skip_sequence_step_requires_note_and_continues_flow() -> None:
     assert followup["type"] == "follow_up"
     assert followup["sequence_code"] == "setter_no_next_step"
     assert followup["sequence_step_index"] == 1
+    preview = preview_skip_sequence_step_action(followup["id"])
+    assert preview["available"] is True
+    assert preview["has_next"] is True
+    assert preview["next_action_type"] == "follow_up"
+    assert preview["next_step_index"] == 2
+    assert preview["next_due_at"]
 
     ok, message = skip_sequence_step_action(followup["id"], admin["id"], "")
     assert ok is False

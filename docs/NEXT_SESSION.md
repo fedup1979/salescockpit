@@ -51,10 +51,11 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 
 ## Important Recent Decisions
 
-- Latest local hardening validation: `214 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\schooldrive-review-conflict-full`, plus `compileall` OK after the SchoolDrive schema `1.1` update and human-review/follow-up conflict fix.
+- Latest local validation after the transcript-driven E2E/UX update: `215 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\transcript-full`, plus `compileall` OK.
 - Latest staging deployment: commit `3c7070e`, deployed from `main`. API/UI OK and `scripts/pre_cutover_check.py --api-base http://127.0.0.1:8602 --ui-url http://127.0.0.1:8502 --allow-cold-prod` OK.
 - Latest staging template mapping check after deployment: `81` mappings total, `78` active, `78` active mappings linked to approved real Twilio templates; active split `APP=26`, `AS=26`, `FSM=26`. Existing real Twilio mappings were preserved.
 - Active SchoolDrive human reviews caused by `unconfigured_course_category`, `schooldrive_course_full`, or `schooldrive_related_subscription_signed` now block automatic follow-ups until review resolution; startup normalization cancels pre-existing conflicting follow-ups.
+- Transcript-driven updates implemented locally: detailed E2E protocol in `docs/E2E_TEST_PROTOCOL.md`, graph spec in `docs/WORKFLOW_GRAPH_SPEC.md`, bug-report resolution now follows completed admin actions, admin actions are visible to all admins in `Tâches`, visible UI tutoiement was removed, and the skip-step cross now previews the next natural action or flux ending.
 - Status / qualification / reactivation saves were hardened: terminal qualifications and contact statuses now keep `Parcours`, conversation status, and next action aligned. `init_db()` also normalizes existing impossible terminal combinations, such as signed leads not shown as `won`, `Ne plus contacter` leads not shown as `blacklist`, and sequence-completed conversations not shown as `lost`.
 - Use `--basetemp=.pytest-tmp\run` on Windows if Pytest fails after successful test execution because it cannot clean `pytest-current` in `%TEMP%`.
 - Workflow reconciliation after the latest review: a terminal qualification or `Ne plus contacter` can no longer silently coexist with ordinary commercial sends/actions; inbound on those states creates a human review; manually lifting `Ne plus contacter` closes the stale review and recreates `reply` only if the last inbound is unanswered; template requests/admin actions linked to obsolete follow-ups are cancelled.
@@ -113,7 +114,7 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - Manual reprise steps are explicit action types: `manual_reprise_setter` for Setter I and `manual_reprise_closer` for the closer. They require a note and continue the flux if a next active step exists.
 - `post_setting_undecided` is now a Setter I manual reprise by default. `post_closing_undecided` is now a closer manual reprise by default.
 - If a prospect is `will_sign`, a simple reply without appointment must keep the follow-up context in `closer_will_sign`; it must not fall back to `setter_no_next_step`.
-- A sequence step can be skipped with mandatory note. Skipping means only "do not do this step"; the system advances to the next active step or resolves the sequence if none exists.
+- A sequence step can be skipped with mandatory note. Skipping means only "do not do this step"; the system advances to the next active step or resolves the sequence if none exists. The UI should show the next consequence before confirmation.
 - Pilotage lets admins assign approved real Twilio templates by flow, step, lead type and course category.
 - Pilotage > Logique métier includes a full business validation matrix from `PILOTAGE_VALIDATION_CASES` in `sales_cockpit/business_rules.py`: starting state, event, system response, user action, action resolution, and next action. Keep this matrix aligned with `WORKFLOW_TRANSITIONS` whenever workflow logic changes.
 - Template mappings must only use real Twilio templates approved by WhatsApp. Draft, pending, rejected, local demo, and `HX_MOCK_*` templates are deliberately ignored/rejected for operational recommendations.

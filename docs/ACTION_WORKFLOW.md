@@ -4,6 +4,7 @@ Ce document formalise la logique métier validée avec François autour des acti
 
 Pour la logique exhaustive validée, lire aussi `docs/BUSINESS_LOGIC.md`.
 Pour l'état d'implémentation et les écarts restants, lire `docs/GAP_ANALYSIS.md`.
+Pour la représentation graphique parcours / flux / actions, lire `docs/WORKFLOW_GRAPH_SPEC.md`.
 
 Il doit devenir la référence de travail pour toute évolution de `Tâches`, Inbox, automatisation Setter II, Twilio, SchoolDrive, Notion et futur setter IA.
 

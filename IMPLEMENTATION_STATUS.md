@@ -16,9 +16,10 @@ Latest recorded staging deployment check:
 - Twilio mode on staging: `mock`.
 - Workflow consistency: no active conversation without action, no resolved conversation with active action, no conflicting main actions.
 - API security readiness checks app API tokens and mock webhook tokens outside local tests.
-- Latest local hardening validation: `214 passed`, `compileall` OK after the SchoolDrive schema `1.1` update and human-review/follow-up conflict fix. On Windows, run pytest with `--basetemp=.pytest-tmp\run` if `%TEMP%\pytest-current` cleanup raises a permission error after successful execution.
+- Latest local validation: `215 passed`, `compileall` OK after the transcript-driven E2E/UX update. On Windows, run pytest with `--basetemp=.pytest-tmp\run` if `%TEMP%\pytest-current` cleanup raises a permission error after successful execution.
 - Staging is deployed from `main` at commit `3c7070e`; API/UI health and staging pre-cutover are OK. Latest staging template mapping check: `81` mappings total, `78` active, `78` active mappings linked to approved real Twilio templates; active split `APP=26`, `AS=26`, `FSM=26`. The seed did not overwrite the fine-tuned Twilio mappings.
 - Active SchoolDrive human reviews caused by `unconfigured_course_category`, `schooldrive_course_full`, or `schooldrive_related_subscription_signed` block automatic follow-ups until review resolution; startup normalization cancels pre-existing conflicting follow-ups.
+- Transcript-driven updates implemented locally: detailed E2E protocol in `docs/E2E_TEST_PROTOCOL.md`, graph spec in `docs/WORKFLOW_GRAPH_SPEC.md`, bug-report resolution follows completed admin actions, admin actions are visible to all admins in `Tâches`, visible UI tutoiement was removed, and the skip-step cross previews the next natural action or flux ending before confirmation.
 - Production was not deployed in this pass. Latest observed production app commit is `786f89c`, with services active and Twilio still expected to remain in `mock` mode until explicit cutover.
 
 The canonical workflow model is now:

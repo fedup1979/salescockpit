@@ -9,6 +9,7 @@ from sales_cockpit.services.message_text import clean_message_body_text
 from sales_cockpit.store import (
     authenticate,
     assign_standard_next_action,
+    create_bug_report,
     create_template_request,
     get_next_action_for_lead,
     list_sequence_steps,
@@ -298,6 +299,29 @@ def test_admin_navigation_is_reduced_to_operational_tabs() -> None:
     assert "Derniers événements métier" not in captions
 
 
+def test_admin_work_queue_is_visible_to_all_admins() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    ok, message = create_bug_report(
+        admin["id"],
+        "Tâches",
+        "Bug visible par tous les admins",
+        "Ce signalement doit apparaître dans la file admin globale.",
+    )
+    assert ok is True, message
+
+    app = AppTest.from_file("sales_cockpit/ui/app.py")
+    app.session_state["user"] = admin
+    app.run(timeout=10)
+
+    assert len(app.exception) == 0
+    titles = []
+    for dataframe in app.dataframe:
+        if "Titre" in dataframe.value:
+            titles.extend(dataframe.value["Titre"].tolist())
+    assert any("Bug visible par tous les admins" in title for title in titles)
+
+
 def test_pilotage_business_logic_shows_useful_references_without_transfer_rules() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
@@ -523,12 +547,14 @@ def test_skippable_flow_step_uses_red_delete_control_in_next_action_box() -> Non
     markup = "\n".join(item.value for item in app.markdown)
     button_labels = [item.label for item in app.button]
     warning_texts = [item.value for item in app.warning]
+    info_texts = [item.value for item in app.info]
     checkbox_labels = [item.label for item in app.checkbox]
     text_area_labels = [item.label for item in app.text_area]
 
     assert "Ignorer l'étape de flux actuelle" not in markup
     assert "Ignorer cette étape" in button_labels
     assert any("Attention danger" in text for text in warning_texts)
+    assert any("prochaine action sera" in text for text in info_texts)
     assert "Je confirme que cette étape de flux doit être ignorée." in checkbox_labels
     assert "Note obligatoire" in text_area_labels
 

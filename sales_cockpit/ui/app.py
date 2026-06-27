@@ -77,6 +77,7 @@ from sales_cockpit.store import (
     list_bug_reports,
     list_conversation_journal_events,
     list_users,
+    preview_skip_sequence_step_action,
     reactivate_sequence_step,
     reschedule_call_action,
     send_freeform_message,
@@ -1528,6 +1529,7 @@ def render_delete_next_action_popover(user: dict, action: dict, disabled_reason:
         )
         if disabled_reason:
             st.caption(disabled_reason)
+        render_skip_step_consequence(preview_skip_sequence_step_action(action_id))
         with st.form(f"delete_next_action_form_{action_id}"):
             note = st.text_area(
                 "Note obligatoire",
@@ -1543,10 +1545,10 @@ def render_delete_next_action_popover(user: dict, action: dict, disabled_reason:
             submitted = st.form_submit_button("Ignorer cette étape", disabled=disabled_reason is not None)
         if submitted and not disabled_reason:
             if not confirm:
-                st.error("Confirme que cette étape de flux doit être ignorée.")
+                st.error("Confirmez que cette étape de flux doit être ignorée.")
                 return
             if not note.strip():
-                st.error("Ajoute une note pour expliquer pourquoi cette étape est ignorée.")
+                st.error("Ajoutez une note pour expliquer pourquoi cette étape est ignorée.")
                 return
             ok, message = skip_sequence_step_action(action_id, user["id"], note.strip())
             show_result(ok, message)
@@ -1556,6 +1558,22 @@ def render_delete_next_action_popover(user: dict, action: dict, disabled_reason:
                     f"delete_next_action_confirm_{action_id}",
                 )
                 st.rerun()
+
+
+def render_skip_step_consequence(preview: dict) -> None:
+    if not preview.get("available"):
+        st.caption(preview.get("reason") or "Suite de flux non calculable.")
+        return
+    if not preview.get("has_next"):
+        st.info("Si aucun autre événement ne survient, cette étape ignorée terminera le flux.")
+        return
+    st.info(
+        "Si aucun autre événement ne survient, la prochaine action sera : "
+        f"{labelize(preview.get('next_action_type'))} · "
+        f"{preview.get('next_title') or 'Action suivante'} · "
+        f"{preview.get('next_assigned_to_name') or 'Responsable à confirmer'} · "
+        f"{format_due(preview.get('next_due_at'))}."
+    )
 
 
 def render_planned_call_notice(conv: dict) -> None:
@@ -1626,8 +1644,10 @@ def render_skip_sequence_step_control(
     if not disabled and (not action.get("sequence_code") or not action.get("sequence_step_index")):
         return
     action_id = action["id"]
-    with st.expander("Ne pas faire cette étape", expanded=disabled):
+    with st.expander("Ignorer cette étape de flux", expanded=disabled):
         st.caption("Ignore cette étape uniquement. Le flux continue à l'étape suivante s'il en existe une.")
+        if not disabled:
+            render_skip_step_consequence(preview_skip_sequence_step_action(action_id))
         with st.form(f"skip_sequence_step_form_{action_id}"):
             note = st.text_area(
                 "Mini note obligatoire",
@@ -1643,10 +1663,10 @@ def render_skip_sequence_step_control(
             submitted = st.form_submit_button("Ignorer cette étape", disabled=disabled)
         if submitted and not disabled:
             if not confirm:
-                st.error("Confirme l'abandon de cette étape.")
+                st.error("Confirmez l'abandon de cette étape.")
                 return
             if not note.strip():
-                st.error("Ajoute une mini note pour expliquer pourquoi cette étape est ignorée.")
+                st.error("Ajoutez une mini note pour expliquer pourquoi cette étape est ignorée.")
                 return
             ok, message = skip_sequence_step_action(action_id, user["id"], note.strip())
             show_result(ok, message)
@@ -2070,7 +2090,7 @@ def render_manual_reprise_action_form(user: dict, action: dict) -> None:
         submitted = st.form_submit_button("Marquer la reprise terminée")
     if submitted:
         if not note.strip():
-            st.error("Ajoute une note pour terminer cette reprise.")
+            st.error("Ajoutez une note pour terminer cette reprise.")
             return
         ok, message = complete_action_with_workflow(
             action["id"],
@@ -2104,7 +2124,7 @@ def render_manual_reprise_documentation_form(
         submitted = st.form_submit_button("Marquer la reprise terminée", disabled=disabled)
     if submitted and not disabled:
         if not note.strip():
-            st.error("Ajoute une note pour terminer cette reprise.")
+            st.error("Ajoutez une note pour terminer cette reprise.")
             return
         ok, message = complete_action_with_workflow(
             action["id"],
@@ -2587,11 +2607,6 @@ def render_work_queue(user: dict) -> None:
             if task.get("assigned_to_user_id") == assignee_filter["id"]
         ]
     admin_actions = list_admin_actions("open") if user.get("role") == "admin" else []
-    if assignee_filter["id"] != "all":
-        admin_actions = [
-            action for action in admin_actions
-            if action.get("assigned_to_user_id") == assignee_filter["id"]
-        ]
     tasks = sort_work_items(tasks, "attention")
 
     if admin_actions:
@@ -3366,7 +3381,7 @@ def render_pilotage_default_sessions(user: dict) -> None:
         ]
         st.dataframe(rows, hide_index=True, use_container_width=True, height=260)
     else:
-        st.info("Aucune session de référence configurée. Ajoute une session pour chaque cours traité avant le réglage fin des flux cours.")
+        st.info("Aucune session de référence configurée. Ajoutez une session pour chaque cours traité avant le réglage fin des flux cours.")
 
     missing_categories = [
         category for category in active_categories
@@ -3401,7 +3416,7 @@ def render_pilotage_default_sessions(user: dict) -> None:
         session_name = st.text_input(
             "Libellé complémentaire, optionnel",
             value=(current or {}).get("default_session_name") or "",
-            help="Champ libre si tu veux préciser un campus, une volée ou un libellé interne. Il n'est pas nécessaire si le nom de la session suffit.",
+            help="Champ libre si vous voulez préciser un campus, une volée ou un libellé interne. Il n'est pas nécessaire si le nom de la session suffit.",
         )
         start_date = st.date_input(
             "Date de début de référence",

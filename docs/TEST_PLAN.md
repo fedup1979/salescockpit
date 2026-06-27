@@ -2,9 +2,12 @@
 
 Objectif : valider l'expérience V1 de bout en bout avec des faux prospects restaurables, puis terminer par deux tests réels depuis le site web : un lead et une préinscription.
 
+Protocole E2E complet et automatisable : `docs/E2E_TEST_PROTOCOL.md`.
+Spec du graphe parcours / flux / actions : `docs/WORKFLOW_GRAPH_SPEC.md`.
+
 ## Validation automatisée courante
 
-Dernière validation locale connue : `205 passed`, `compileall` OK.
+Dernière validation locale connue : `215 passed`, `compileall` OK.
 
 Avant une validation manuelle propre :
 

@@ -145,22 +145,22 @@ def action_banner(
         return banner(
             "blue",
             "Répondre dans Conversation",
-            f"Le prospect attend une réponse WhatsApp. Envoie le message depuis Conversation ; l'envoi clôturera l'action.{suffix}",
+            f"Le prospect attend une réponse WhatsApp. Envoyez le message depuis Conversation ; l'envoi clôturera l'action.{suffix}",
         )
     if action_type == "follow_up":
         return banner(
             "blue",
             "Envoyer la relance dans Conversation",
-            "Relis la conversation, utilise le modèle recommandé si nécessaire, puis envoie depuis Conversation.",
+            "Relisez la conversation, utilisez le modèle recommandé si nécessaire, puis envoyez depuis Conversation.",
         )
     if action_type in CALL_ACTION_TYPES:
         label = "setting" if action_type == "setting_call" else "closing"
         if action_is_due(current_action, now):
-            return banner("blue", f"Appel {label} à documenter", "L'appel est dû. Appelle le prospect puis documente le résultat ci-dessous.")
-        return banner("blue", f"Appel {label} planifié", "Le rendez-vous est prévu plus tard. Tu peux modifier l'appel, mais la documentation reste grisée.")
+            return banner("blue", f"Appel {label} à documenter", "L'appel est dû. Appelez le prospect puis documentez le résultat ci-dessous.")
+        return banner("blue", f"Appel {label} planifié", "Le rendez-vous est prévu plus tard. Vous pouvez modifier l'appel, mais la documentation reste grisée.")
     if action_type in MANUAL_REPRISE_ACTION_TYPES:
         label = "setter" if action_type == "manual_reprise_setter" else "closer"
-        return banner("blue", f"Reprise manuelle {label}", "Relis la conversation, décide de la suite, puis documente la reprise avec une note.")
+        return banner("blue", f"Reprise manuelle {label}", "Relisez la conversation, décidez de la suite, puis documentez la reprise avec une note.")
     return banner(
         "red",
         "Action inconnue",
