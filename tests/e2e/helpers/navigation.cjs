@@ -71,7 +71,23 @@ async function clickFirstVisible(locator) {
   throw new Error("No visible element found for locator");
 }
 
+async function clickFirstEnabledVisible(locator) {
+  const count = await locator.count();
+  for (let index = 0; index < count; index += 1) {
+    const candidate = locator.nth(index);
+    if (
+      await candidate.isVisible().catch(() => false)
+      && await candidate.isEnabled().catch(() => false)
+    ) {
+      await candidate.click();
+      return;
+    }
+  }
+  throw new Error("No enabled visible element found for locator");
+}
+
 module.exports = {
+  clickFirstEnabledVisible,
   clickFirstVisible,
   expectAnyVisible,
   expectNoHtmlFragments,
