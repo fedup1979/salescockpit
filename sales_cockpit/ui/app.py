@@ -2552,6 +2552,11 @@ def render_next_action_box(user: dict, conv: dict) -> None:
     if action and action.get("status") == "blocked" and action.get("type") == "follow_up":
         render_blocked_action(user, conv, action)
 
+    if conv["status"] == "open" and action and action.get("type") == "contact_review":
+        st.divider()
+        render_contact_review_action(user, action)
+        return
+
     if conv["status"] == "open":
         st.divider()
         render_stable_action_block(user, conv, users, active_assignee_id, presentation)
