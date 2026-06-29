@@ -2628,7 +2628,11 @@ def render_work_queue(user: dict) -> None:
             task for task in tasks
             if task.get("assigned_to_user_id") == assignee_filter["id"]
         ]
-    admin_actions = list_admin_actions("open") if user.get("role") == "admin" else []
+    admin_actions = (
+        list_admin_actions("open")
+        if admin_work_queue_visible_for_filter(user, assignee_filter)
+        else []
+    )
     tasks = sort_work_items(tasks, "attention")
 
     if admin_actions:
@@ -2717,6 +2721,12 @@ def visible_work_queue_tasks_for_user(user: dict, tasks: list[dict]) -> list[dic
         task for task in tasks
         if task.get("assigned_to_role") != "admin"
     ]
+
+
+def admin_work_queue_visible_for_filter(user: dict, assignee_filter: dict) -> bool:
+    if user.get("role") != "admin":
+        return False
+    return assignee_filter.get("id") == "all" or assignee_filter.get("role") == "admin"
 
 
 def render_admin_work_queue(user: dict, actions: list[dict]) -> None:

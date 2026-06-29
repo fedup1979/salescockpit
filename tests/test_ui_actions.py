@@ -13,6 +13,7 @@ from sales_cockpit.store import (
     create_bug_report,
     create_template_request,
     get_next_action_for_lead,
+    list_users,
     list_tasks,
     list_sequence_steps,
     list_conversations,
@@ -22,6 +23,7 @@ from sales_cockpit.store import (
 )
 from sales_cockpit.ui.app import (
     CLOSURE_RESOLUTION_REASON_VALUES,
+    admin_work_queue_visible_for_filter,
     conversation_journal_table_html,
     format_action_datetime,
     format_dt,
@@ -322,6 +324,7 @@ def test_admin_navigation_is_reduced_to_operational_tabs() -> None:
 def test_admin_work_queue_is_visible_to_all_admins() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    setter = authenticate("service.etudiants@essr.ch", "ChangeMe!2026")
     title = "Bug visible par tous les admins"
     ok, message = create_bug_report(
         admin["id"],
@@ -344,13 +347,43 @@ def test_admin_work_queue_is_visible_to_all_admins() -> None:
         assert len(app.exception) == 0
         assert any(title in item for item in dataframe_titles(app))
 
-    setter = authenticate("service.etudiants@essr.ch", "ChangeMe!2026")
     app = AppTest.from_file("sales_cockpit/ui/app.py")
     app.session_state["user"] = setter
     app.run(timeout=10)
 
     assert len(app.exception) == 0
     assert not any(title in item for item in dataframe_titles(app))
+
+    app = AppTest.from_file("sales_cockpit/ui/app.py")
+    app.session_state["user"] = admin
+    app.session_state["work_queue_assignee_user_id"] = admin["id"]
+    app.session_state["work_queue_assignee_selected_id"] = setter["id"]
+    app.run(timeout=10)
+
+    assert len(app.exception) == 0
+    assert not any(title in item for item in dataframe_titles(app))
+
+
+def test_admin_work_queue_visibility_follows_selected_responsible_filter() -> None:
+    seed_initial_data()
+    users = {user["email"]: user for user in list_users()}
+    admin = users["francois.dupuis@essr.ch"]
+    setter = users["service.etudiants@essr.ch"]
+    setter2 = users["setter2@essr.ch"]
+    closer = users["yasmine@essr.ch"]
+    admin_filters = [
+        {"id": "all", "role": "all"},
+        users["laura.escariz@essr.ch"],
+        users["francois.dupuis@essr.ch"],
+        users["tiago.jacobs@gmail.com"],
+    ]
+
+    assert all(admin_work_queue_visible_for_filter(admin, item) for item in admin_filters)
+    assert not admin_work_queue_visible_for_filter(admin, setter)
+    assert not admin_work_queue_visible_for_filter(admin, setter2)
+    assert not admin_work_queue_visible_for_filter(admin, closer)
+    assert not admin_work_queue_visible_for_filter(setter, {"id": "all", "role": "all"})
+    assert not admin_work_queue_visible_for_filter(setter, users["laura.escariz@essr.ch"])
 
 
 def test_non_admin_work_queue_hides_admin_assigned_standard_tasks() -> None:
