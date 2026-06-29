@@ -1,6 +1,8 @@
 # Sales Cockpit - Protocole de test manuel V1
 
-Objectif : valider l'expérience V1 de bout en bout avec des faux prospects restaurables, puis terminer par deux tests réels depuis le site web : un lead et une préinscription.
+Objectif : valider l'expérience V1 de bout en bout avec des faux prospects restaurables, puis terminer obligatoirement par deux tests réels depuis le site web ESSR : un lead et une préinscription.
+
+Règle importante : lorsque François demande la batterie complète, les inscriptions réelles ESSR ne sont pas optionnelles. Elles doivent être faites sur les deux URL indiquées pour le test, avec les adresses e-mail indiquées pour le test. Ces inscriptions de test sont ensuite supprimées automatiquement dans le système.
 
 Protocole E2E manuel complet : `docs/E2E_TEST_PROTOCOL.md`.
 Protocole Playwright automatisé cible : `docs/PLAYWRIGHT_E2E_PROTOCOL.md`.
@@ -216,10 +218,10 @@ Résultat attendu : réactivation et clôture exigent une note interne. Les note
 
 ## P10 Lead Réel Site Web
 
-À exécuter seulement après réussite des faux prospects restaurables.
+À exécuter seulement après réussite des faux prospects restaurables. Ce test est obligatoire dans une batterie complète demandée par François.
 
-1. Depuis le site web, créer un vrai lead de test avec un nom explicite, par exemple `Test SalesCockpit Lead`.
-2. Utiliser un numéro WhatsApp et une adresse e-mail de test contrôlés par l'équipe.
+1. Depuis l'URL ESSR indiquée pour le test lead, créer un vrai lead de test avec un nom explicite, par exemple `Test SalesCockpit Lead`.
+2. Utiliser le numéro WhatsApp et l'adresse e-mail de test indiqués par François pour ce passage.
 3. Attendre le webhook SchoolDrive.
 4. Vérifier dans Sales Cockpit :
    - création ou mise à jour du lead ;
@@ -234,10 +236,10 @@ Résultat attendu : un lead réel du site web arrive dans le cockpit avec les bo
 
 ## P11 Préinscription Réelle Site Web
 
-À exécuter après P10.
+À exécuter après P10. Ce test est obligatoire dans une batterie complète demandée par François.
 
-1. Depuis le site web, créer une vraie préinscription de test avec un nom explicite, par exemple `Test SalesCockpit Presubscription`.
-2. Utiliser un numéro WhatsApp et une adresse e-mail de test contrôlés par l'équipe.
+1. Depuis l'URL ESSR indiquée pour le test préinscription, créer une vraie préinscription de test avec un nom explicite, par exemple `Test SalesCockpit Presubscription`.
+2. Utiliser le numéro WhatsApp et l'adresse e-mail de test indiqués par François pour ce passage.
 3. Attendre le webhook SchoolDrive.
 4. Vérifier dans Sales Cockpit :
    - création ou mise à jour de la préinscription ;

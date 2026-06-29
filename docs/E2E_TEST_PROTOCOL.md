@@ -19,6 +19,7 @@ Sur staging, le reset doit être lancé sur le serveur avec l'environnement stag
 - Les messages adressés aux prospects doivent toujours vouvoyer.
 - Les tests internes utilisent les faux prospects restaurables.
 - Les deux derniers tests seulement utilisent les vrais formulaires du site web : un lead et une préinscription.
+- Dans une batterie complète demandée par François, ces deux inscriptions réelles ESSR sont obligatoires. Elles doivent être faites sur les deux URL indiquées et avec les e-mails indiqués pour le test, car ces inscriptions sont ensuite supprimées automatiquement dans le système.
 - Les mappings Twilio réels et les templates ESSR ne doivent pas être modifiés pendant ce protocole.
 
 ## Comptes
@@ -221,16 +222,16 @@ Résultat attendu : navigation stable, recherche utile, journal lisible au minim
 
 ## P11 Lead Réel Site Web
 
-À exécuter seulement après réussite des faux prospects.
+À exécuter seulement après réussite des faux prospects. Obligatoire dans une batterie complète demandée par François.
 
-1. Aller sur la page ESSR de test convenue, par exemple la page `formation/secretaire-medical`.
+1. Aller sur l'URL ESSR indiquée pour le test lead, par exemple la page `formation/secretaire-medical`.
 2. Cliquer `Voir les dates de cours`.
 3. Faire une demande d'information avec :
    - civilité : Monsieur ;
    - nom : `Test` ;
    - prénom : `Test` ;
-   - email unique contrôlé, par exemple avec suffixe `+test-salescockpit-YYYY-MM-DD-HH-MM-lead` ;
-   - téléphone contrôlé ;
+   - email indiqué pour le test lead, ou email unique contrôlé avec suffixe `+test-salescockpit-YYYY-MM-DD-HH-MM-lead` si François demande une variante ;
+   - téléphone contrôlé indiqué pour le test ;
    - commentaire ou champ distinctif si disponible.
 4. Attendre l'arrivée SchoolDrive.
 5. Vérifier dans Sales Cockpit :
@@ -245,11 +246,11 @@ Résultat attendu : le lead réel arrive dans staging et suit le flux V1 attendu
 
 ## P12 Préinscription Réelle Site Web
 
-À exécuter après P11.
+À exécuter après P11. Obligatoire dans une batterie complète demandée par François.
 
-1. Refaire le parcours de site web avec l'option de préinscription.
-2. Utiliser un email unique distinct, par exemple suffixe `+test-salescockpit-YYYY-MM-DD-HH-MM-presubscription`.
-3. Utiliser le téléphone contrôlé.
+1. Aller sur l'URL ESSR indiquée pour le test préinscription et refaire le parcours avec l'option de préinscription.
+2. Utiliser l'email indiqué pour le test préinscription, ou un email unique distinct avec suffixe `+test-salescockpit-YYYY-MM-DD-HH-MM-presubscription` si François demande une variante.
+3. Utiliser le téléphone contrôlé indiqué pour le test.
 4. Attendre l'arrivée SchoolDrive.
 5. Vérifier dans Sales Cockpit :
    - `lead_type = presubscription` ;

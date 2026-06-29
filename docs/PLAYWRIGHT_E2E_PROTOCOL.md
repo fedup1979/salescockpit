@@ -32,7 +32,7 @@ Les tests doivent refuser de démarrer si ces conditions ne sont pas satisfaites
 - aucune spec ne modifie les vrais mappings Twilio ESSR ;
 - aucune spec ne crée ou soumet un vrai template Twilio ;
 - les envois WhatsApp réels sont désactivés par défaut ;
-- les tests site web réels sont désactivés par défaut.
+- les tests site web réels sont désactivés par défaut en CI générique, mais ils sont obligatoires dans une batterie complète demandée par François.
 
 Variables recommandées :
 
@@ -49,6 +49,10 @@ $env:SC_E2E_SHARED_PASSWORD = "<mot de passe staging affiché sur la page de log
 $env:SC_E2E_ALLOW_MUTATION = "true"
 $env:SC_E2E_ALLOW_WHATSAPP_SEND = "false"
 $env:SC_E2E_ALLOW_REAL_SITE = "false"
+$env:SC_E2E_SITE_LEAD_URL = "<URL ESSR indiquée pour le test lead>"
+$env:SC_E2E_SITE_PRESUBSCRIPTION_URL = "<URL ESSR indiquée pour le test préinscription>"
+$env:SC_E2E_SITE_LEAD_EMAIL = "<email indiqué pour le test lead>"
+$env:SC_E2E_SITE_PRESUBSCRIPTION_EMAIL = "<email indiqué pour le test préinscription>"
 $env:SC_E2E_SITE_TEST_PHONE = "<numéro contrôlé>"
 ```
 
@@ -566,17 +570,17 @@ Résultat attendu : pilotage consultable, modèles protégés, guide aligné ave
 
 ## 11 - Lead Et Préinscription Site Web
 
-Ces specs sont désactivées sauf `SC_E2E_ALLOW_REAL_SITE=true`.
+Ces specs sont désactivées sauf `SC_E2E_ALLOW_REAL_SITE=true` pour éviter les créations involontaires en CI. Quand François demande la batterie complète, `SC_E2E_ALLOW_REAL_SITE=true` doit être activé et ces deux tests doivent être exécutés. Les inscriptions créées avec les URL/e-mails indiqués sont ensuite supprimées automatiquement dans le système.
 
 ### Lead Réel
 
-1. Ouvrir la page ESSR convenue, par exemple `/formation/secretaire-medical`.
+1. Ouvrir `SC_E2E_SITE_LEAD_URL`, l'URL ESSR indiquée pour le test lead.
 2. Cliquer `Voir les dates de cours`.
 3. Remplir une demande d'information :
    - civilité : `Monsieur` ;
    - nom : `Test SalesCockpit` ;
    - prénom : `Lead` ;
-   - email unique avec suffixe `+test-salescockpit-YYYY-MM-DD-HH-MM-lead` ;
+   - email : `SC_E2E_SITE_LEAD_EMAIL` ;
    - téléphone : `SC_E2E_SITE_TEST_PHONE` ;
    - commentaire distinctif : `Playwright lead <timestamp>`.
 4. Soumettre.
@@ -592,8 +596,8 @@ Ces specs sont désactivées sauf `SC_E2E_ALLOW_REAL_SITE=true`.
 
 ### Préinscription Réelle
 
-1. Reprendre le parcours site avec option préinscription.
-2. Utiliser un email unique avec suffixe `+test-salescockpit-YYYY-MM-DD-HH-MM-presubscription`.
+1. Ouvrir `SC_E2E_SITE_PRESUBSCRIPTION_URL`, l'URL ESSR indiquée pour le test préinscription.
+2. Utiliser l'email `SC_E2E_SITE_PRESUBSCRIPTION_EMAIL`.
 3. Soumettre.
 4. Poller Sales Cockpit.
 5. Vérifier `lead_type=presubscription`.

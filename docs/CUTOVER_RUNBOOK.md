@@ -36,7 +36,7 @@ Production should use HTTPS before final cutover.
 - Production Twilio mode remains `mock` until the final switch, then must be `live` with HTTPS inbound and status callback URLs.
 - Front API read-only token is valid.
 - Backup and restore scripts have been tested.
-- Laura validates the final operational workflow with restored fake prospects, then with one real website lead and one real website presubscription.
+- Laura validates the final operational workflow with restored fake prospects, then with one real website lead and one real website presubscription. In a full test battery requested by François, the two real ESSR website submissions are mandatory and must use the indicated URLs and test emails; those test submissions are automatically deleted by the system afterward.
 - HTTPS is in place before the real WhatsApp webhook switch.
 
 ## Confirmation To Tiago
@@ -96,8 +96,8 @@ python scripts/schooldrive_replay_payloads.py payloads/schooldrive \
 
 6. Run the manual V1 protocol in `docs/TEST_PLAN.md`:
    - first with restored fake prospects;
-   - then with one real lead created from the website;
-   - then with one real presubscription created from the website.
+   - then with one real lead created from the indicated ESSR website URL and test email;
+   - then with one real presubscription created from the indicated ESSR website URL and test email.
 
 7. Run the automated pre-cutover check on the droplet:
 
