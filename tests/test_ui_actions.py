@@ -13,6 +13,7 @@ from sales_cockpit.store import (
     create_bug_report,
     create_template_request,
     get_next_action_for_lead,
+    list_tasks,
     list_sequence_steps,
     list_conversations,
     record_inbound_message,
@@ -31,6 +32,7 @@ from sales_cockpit.ui.app import (
     message_display_timestamp,
     message_body_html,
     simulated_template_label,
+    visible_work_queue_tasks_for_user,
 )
 from sales_cockpit.ui.styles import APP_CSS
 
@@ -55,6 +57,14 @@ def set_navigation(app: AppTest, page: str) -> None:
         "_last_desktop_navigation",
     ]:
         app.session_state[key] = page
+
+
+def dataframe_titles(app: AppTest) -> list[str]:
+    titles: list[str] = []
+    for dataframe in app.dataframe:
+        if "Titre" in dataframe.value:
+            titles.extend(dataframe.value["Titre"].tolist())
+    return titles
 
 
 def test_ui_dates_are_displayed_in_geneva_time() -> None:
@@ -312,24 +322,51 @@ def test_admin_navigation_is_reduced_to_operational_tabs() -> None:
 def test_admin_work_queue_is_visible_to_all_admins() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    title = "Bug visible par tous les admins"
     ok, message = create_bug_report(
         admin["id"],
         "Tâches",
-        "Bug visible par tous les admins",
+        title,
         "Ce signalement doit apparaître dans la file admin globale.",
     )
     assert ok is True, message
 
+    for email in [
+        "laura.escariz@essr.ch",
+        "francois.dupuis@essr.ch",
+        "tiago.jacobs@gmail.com",
+    ]:
+        current_admin = authenticate(email, "ChangeMe!2026")
+        app = AppTest.from_file("sales_cockpit/ui/app.py")
+        app.session_state["user"] = current_admin
+        app.run(timeout=10)
+
+        assert len(app.exception) == 0
+        assert any(title in item for item in dataframe_titles(app))
+
+    setter = authenticate("service.etudiants@essr.ch", "ChangeMe!2026")
     app = AppTest.from_file("sales_cockpit/ui/app.py")
-    app.session_state["user"] = admin
+    app.session_state["user"] = setter
     app.run(timeout=10)
 
     assert len(app.exception) == 0
-    titles = []
-    for dataframe in app.dataframe:
-        if "Titre" in dataframe.value:
-            titles.extend(dataframe.value["Titre"].tolist())
-    assert any("Bug visible par tous les admins" in title for title in titles)
+    assert not any(title in item for item in dataframe_titles(app))
+
+
+def test_non_admin_work_queue_hides_admin_assigned_standard_tasks() -> None:
+    seed_initial_data()
+    setter = authenticate("service.etudiants@essr.ch", "ChangeMe!2026")
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+
+    tasks = list_tasks("all")
+    assert any(task.get("assigned_to_role") == "admin" for task in tasks)
+    assert any("Relire la logique de transitions" in task.get("title", "") for task in tasks)
+
+    setter_tasks = visible_work_queue_tasks_for_user(setter, tasks)
+    admin_tasks = visible_work_queue_tasks_for_user(admin, tasks)
+
+    assert not any(task.get("assigned_to_role") == "admin" for task in setter_tasks)
+    assert any(task.get("assigned_to_role") == "admin" for task in admin_tasks)
 
 
 def test_pilotage_business_logic_shows_useful_references_without_transfer_rules() -> None:

@@ -2585,7 +2585,11 @@ def render_manual_note_box(user: dict, conv: dict) -> None:
 @st.fragment(run_every="10s")
 def render_work_queue(user: dict) -> None:
     users = list_users()
-    assignee_options = [{"id": "all", "full_name": "Tous", "role": "all"}] + users
+    visible_users = [
+        candidate for candidate in users
+        if user.get("role") == "admin" or candidate.get("role") != "admin"
+    ]
+    assignee_options = [{"id": "all", "full_name": "Tous", "role": "all"}] + visible_users
     assignee_by_id = {
         option["id"]: option
         for option in assignee_options
@@ -2618,7 +2622,7 @@ def render_work_queue(user: dict) -> None:
     st.session_state.work_queue_assignee_selected_id = selected_assignee_id
     assignee_filter = assignee_by_id[selected_assignee_id]
 
-    tasks = list_tasks("all")
+    tasks = visible_work_queue_tasks_for_user(user, list_tasks("all"))
     if assignee_filter["id"] != "all":
         tasks = [
             task for task in tasks
@@ -2706,9 +2710,18 @@ def render_action_rows(tasks: list[dict], bucket: str) -> None:
                     st.rerun()
 
 
+def visible_work_queue_tasks_for_user(user: dict, tasks: list[dict]) -> list[dict]:
+    if user.get("role") == "admin":
+        return tasks
+    return [
+        task for task in tasks
+        if task.get("assigned_to_role") != "admin"
+    ]
+
+
 def render_admin_work_queue(user: dict, actions: list[dict]) -> None:
     st.subheader("Actions admin")
-    st.caption("Demandes de modèles, bugs et revues techniques à traiter par un admin.")
+    st.caption("File globale des demandes de modèles, bugs et revues techniques. Visible par tous les admins uniquement.")
     rows = [
         {
             "ID": item["id"],
