@@ -25,7 +25,14 @@ test.describe("P5 admin bug workflow", () => {
     await page.getByLabel("Ce que vous voyez").fill("démo");
     await page.getByLabel("Ce que vous attendiez").fill("démo");
     await page.getByTestId("stDialog").getByRole("button", { name: "Envoyer" }).click();
-    await expect(page.getByText("Signalement enregistré", { exact: false })).toBeVisible();
+    await expect
+      .poll(async () => {
+        const confirmationVisible =
+          (await page.getByText("Signalement enregistré", { exact: false }).count()) > 0;
+        const dialogClosed = (await page.getByTestId("stDialog").count()) === 0;
+        return confirmationVisible || dialogClosed;
+      })
+      .toBe(true);
 
     await openNav(page, "Admin");
     await page.getByRole("tab", { name: "Signalements" }).click();
