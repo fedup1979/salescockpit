@@ -45,12 +45,20 @@ def test_schooldrive_smoke_steps_use_synthetic_ids_and_real_shape() -> None:
     queued = steps[5].payload
     archived = steps[-1].payload
 
+    assert lead_update["schema_version"] == "2.1"
     assert lead_update["environment"] == "staging"
     assert lead_update["data"]["schooldrive_id"] == "lead:smoke-test-lead"
+    assert lead_update["data"]["signed"] is False
+    assert lead_update["data"]["do_not_contact"] == {"blocked": False, "reasons": []}
+    assert lead_update["data"]["course"]["id"] is None
+    assert lead_update["data"]["course"]["category"]["short_name"] == "FSM"
+    assert lead_update["data"]["course"]["seats_total"] is None
     assert lead_update["data"]["whatsapp_autoresponders"][0]["status"] == "sent"
     assert lead_update["data"]["whatsapp_autoresponders"][0]["sent_at"] == "2026-06-19T09:00:00Z"
 
     assert queued["data"]["schooldrive_id"] == "subscription:smoke-test-presub-queued"
+    assert queued["data"]["course"]["id"] == "smoke-course-subscription-smoke-test-presub-queued"
+    assert queued["data"]["course"]["seats_available"] == 90
     assert queued["data"]["whatsapp_autoresponders"][0]["status"] == "queued"
     assert queued["data"]["whatsapp_autoresponders"][0]["sent_at"] is None
 

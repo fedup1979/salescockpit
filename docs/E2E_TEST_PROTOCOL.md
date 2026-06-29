@@ -236,7 +236,7 @@ Résultat attendu : navigation stable, recherche utile, journal lisible au minim
 5. Vérifier dans Sales Cockpit :
    - lead créé ou upserté ;
    - lien SchoolDrive correct ;
-   - cours et `course.course_id` cohérents si envoyés ;
+   - cours et `course.id` cohérents si envoyés ;
    - autoresponder affiché seulement s'il est `sent` ;
    - action Setter II créée au bon moment ;
    - aucun doublon.
@@ -258,7 +258,7 @@ Résultat attendu : le lead réel arrive dans staging et suit le flux V1 attendu
    - pas de flux normal si Roadmap ou produit hors V1 ;
    - arrêt strict si `signed = true` ou `do_not_contact.blocked = true`.
 
-Résultat attendu : la préinscription réelle arrive dans staging et respecte les signaux SchoolDrive `1.1`.
+Résultat attendu : la préinscription réelle arrive dans staging et respecte les signaux SchoolDrive `2.1`.
 
 ## Automatisation Playwright Cible
 

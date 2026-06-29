@@ -25,7 +25,7 @@ Production should use HTTPS before final cutover.
 - SchoolDrive production webhook URL and token are configured.
 - SchoolDrive can backfill all active leads and presubscriptions.
 - SchoolDrive emits a fresh webhook when a WhatsApp autoresponder status changes to `sent`; this must be validated with a real AR status-change event, not only with synthetic replay.
-- SchoolDrive schema `1.1` semantics have been confirmed with Tiago: there is no separate session entity; `course.course_id` is the stable course/session identifier; capacity lives in every snapshot; `course.is_full` is the canonical full-course stop signal; `signed` is the canonical signature/enrolment signal; `do_not_contact.blocked` is the hard commercial stop; `related_subscriptions[]` carries other signed subscriptions for the same person; each webhook is an upsert keyed by `schooldrive_id` and ordered by `aggregated_updated_at`.
+- SchoolDrive schema `2.1` semantics have been confirmed with Tiago: there is no separate session entity; `course.id` is the stable course/session identifier; capacity lives in every snapshot; `course.is_full` is the canonical full-course stop signal; capacity is three-state and `seats_total = null` means no seat limit/no course; `signed` is the canonical signature/enrolment signal; `do_not_contact.blocked` is the hard commercial stop; `do_not_contact.reasons[]` contains objects keyed by `type`; `related_subscriptions[]` carries other subscriptions for the same person with nested `course`; each webhook is an upsert keyed by `schooldrive_id` and ordered by `aggregated_updated_at`.
 - Staging has been cleaned after any historical event replay and rebuilt with records created on or after 2026-03-01.
 - Twilio WhatsApp sender for the production business is verified and approved.
 - Twilio templates from the real ESSR account are synchronized locally with `SALES_COCKPIT_TWILIO_CONTENT_READ_ONLY=true`.
@@ -41,26 +41,27 @@ Production should use HTTPS before final cutover.
 
 ## Confirmation To Tiago
 
-Send this confirmation before Tiago publishes schema `1.1`:
+Send this confirmation before Tiago publishes schema `2.1`:
 
 ```text
 Hi Tiago,
 
-Thanks, this shape works for Sales Cockpit V1.
+Thanks, this schema 2.1 shape works for Sales Cockpit V1.
 
 We confirm both points:
 
-- We will consume capacity directly from the existing lead/presubscription snapshot, using `course.is_full` as the canonical stop signal. No separate capacity event is needed.
+- We will consume capacity directly from the existing lead/presubscription snapshot, using `course.is_full` as the canonical stop signal. We will treat capacity as three-state: `seats_total = null` means no seat limit or no course, not "seats available". No separate capacity event is needed.
 - We will treat each webhook as a full snapshot upsert keyed by `data.schooldrive_id`, with `data.aggregated_updated_at` as the version/order key. Older snapshots will be ignored.
 
 We will also adopt the SchoolDrive mental model you described:
 
-- no separate session entity; `course.course_id` is the stable session/class/course identifier and `course.course_short_name` is the display identity;
+- no separate session entity; `course.id` is the stable session/class/course identifier and `course.short_name` is the display identity;
 - top-level `signed` is the canonical enrolment signal;
-- `do_not_contact.blocked = true` is a hard stop on commercial sends;
-- `related_subscriptions[]` will be used to prevent duplicate or competing follow-up flows.
+- `do_not_contact.blocked = true` is a hard stop on commercial sends, and `do_not_contact.reasons[]` is an array of objects keyed by `type`;
+- `related_subscriptions[]` with nested `course` will be used to prevent duplicate or competing follow-up flows;
+- `product` without `course` is treated as Roadmap/product-only and routed to human review, not the normal follow-up flow.
 
-You can publish schema `1.1` to staging.
+You can publish schema `2.1` to staging.
 ```
 
 ## T-2 Or Earlier: Prepare
@@ -241,7 +242,7 @@ sudo CONFIRM_RESTORE=1 bash /opt/sales-cockpit/prod/app/deploy/scripts/restore_s
 - HTTPS domain for production.
 - Production environment variables and secrets.
 - Real SchoolDrive AR-sent event trigger validation.
-- Fresh staging validation of Tiago's schema `1.1` through the real website lead and presubscription paths.
+- Fresh staging validation of Tiago's schema `2.1` through the real website lead and presubscription paths, before the one-time full resync.
 - Real ESSR Twilio template synchronization in read-only mode.
 - Laura mapping of course/event/relance steps to real Twilio templates.
 - Final Twilio production sender verification.

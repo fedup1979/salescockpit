@@ -1369,6 +1369,7 @@ def _normalize_schooldrive_review_followup_conflicts(conn: sqlite3.Connection) -
               AND review.type IN ('contact_review', 'other')
               AND review.trigger_reason IN (
                 'unconfigured_course_category',
+                'schooldrive_roadmap_product',
                 'schooldrive_course_full',
                 'schooldrive_related_subscription_signed'
               )

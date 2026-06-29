@@ -17,24 +17,25 @@ Production should use HTTPS before cutover.
 
 ## Implemented Contract
 
-- Snapshot envelope with `schema_version`, `event_id`, `occurred_at`, `environment`, and `data`.
+- Snapshot envelope with `schema_version`, optional `event_id`, optional `occurred_at`, `environment`, and `data`. If `event_id` is absent, Sales Cockpit synthesizes a stable event id from `data.schooldrive_id`, `data.aggregated_updated_at`, and the effective `occurred_at`.
 - Stable business key: `data.schooldrive_id`, for example `lead:137797` or `subscription:131885`.
-- Schema `1.1` is supported. Each webhook is the latest full snapshot of one record, not a delta.
+- Schema `2.1` is supported. It is treated as an additive full snapshot contract. Each webhook is the latest full snapshot of one record, not a delta.
 - Sales Cockpit upserts by `data.schooldrive_id` and accepts a snapshot only when `data.aggregated_updated_at` is newer than the stored version.
 - `data.status` is stored as `schooldrive_status`; it does not overwrite Sales Cockpit qualification.
 - `data.url` is stored as `schooldrive_url` and used by the UI SchoolDrive link.
-- There is no separate SchoolDrive `session` entity for V1. The course is the session/class. Sales Cockpit uses `course.course_id` as the stable course/session identifier and `course.course_short_name` as the display identity when present.
-- `data.course` accepts both the original flat shape, the nested SchoolDrive shape, and the schema `1.1` course shape.
+- There is no separate SchoolDrive `session` entity for V1. The course is the session/class. Sales Cockpit uses `course.id` or legacy `course.course_id` as the stable course/session identifier and `course.short_name` or legacy `course.course_short_name` as the display identity when present.
+- `data.course` accepts the original flat shape, the legacy schema `1.1` shape, and the schema `2.1` nested SchoolDrive shape.
 - New nested course shape:
-  - `course.course_id` or `course.id` is stored as `course_id`;
+  - `course.id` or legacy `course.course_id` is stored as `course_id`;
   - `course.category_short_title` or `course.category.short_name` is stored as `course_category_short_title`;
-  - `course.course_short_name` or `course.short_name` is preferred as `course_title`, with fallbacks to `course.course_name`, `course.session_name`, `course.name`, `course.category.name`, then the category short name;
+  - `course.short_name` or legacy `course.course_short_name` is preferred as `course_title`, with fallbacks to `course.course_name`, `course.session_name`, `course.name`, `course.category.name`, then the category short name;
   - `course.start_date` may be either an ISO date (`YYYY-MM-DD`) or a full ISO UTC timestamp.
 - Course capacity is read from `course.seats_total`, `course.seats_occupied`, `course.seats_available`, and `course.is_full`.
+- Capacity is three-state: `seats_total = null` means there is no seat limit or no course yet. Sales Cockpit does not infer "full" from `seats_available` unless `seats_total` is present.
 - `course.is_full = true` stops automatic follow-ups and routes the record to human review, or annotates an already planned call.
 - `data.signed = true` is the canonical signed/enrolled signal and stops follow-ups by marking the current Sales Cockpit lead as signed.
-- `data.do_not_contact.blocked = true` is a hard commercial stop and sets the contact status to `do_not_contact`.
-- `data.related_subscriptions[]` is preserved in the raw payload. If a related subscription is already signed, Sales Cockpit stops automatic follow-ups for the current record and creates a human review instead of starting a competing commercial flow.
+- `data.do_not_contact.blocked = true` is a hard commercial stop and sets the contact status to `do_not_contact`. `data.do_not_contact.reasons[]` may contain objects keyed by `type`; Sales Cockpit summarizes the reason type and opt-out group in the internal note while preserving the full raw payload.
+- `data.related_subscriptions[]` is preserved in the raw payload. If a non-archived related subscription is already signed, Sales Cockpit stops automatic follow-ups for the current record and creates a human review instead of starting a competing commercial flow. The nested `related_subscriptions[].course` shape is supported.
 - If `data.course` is absent and `data.product.roadmap_descriptive_id` is present, Sales Cockpit stores the roadmap identifier as an operational product title and routes the case to human review instead of starting a course-specific flux.
 
 ## Timestamp Convention

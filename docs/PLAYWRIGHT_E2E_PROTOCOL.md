@@ -524,17 +524,18 @@ Compte : admin puis Setter I.
 3. Vérifier action de revue humaine.
 4. Vérifier absence de flux normal `lead_no_reply`.
 
-### Payload SchoolDrive 1.1 Par API
+### Payload SchoolDrive 2.1 Par API
 
 À automatiser côté API puis vérifier côté UI :
 
-1. Envoyer un webhook lead `schema_version=1.1` avec `course.is_full=true`.
+1. Envoyer un webhook lead `schema_version=2.1` avec `course.id`, `course.short_name`, `course.seats_*` et `course.is_full=true`.
 2. Vérifier upsert par `schooldrive_id`.
 3. Rejouer le même payload : vérifier absence de doublon.
 4. Rejouer avec `aggregated_updated_at` plus ancien : vérifier ignore.
 5. Rejouer avec `signed=true` : vérifier arrêt des relances.
-6. Rejouer avec `do_not_contact.blocked=true` : vérifier blocage des envois.
-7. Ajouter `related_subscriptions[].signed=true` : vérifier signal d'évitement de relance concurrente.
+6. Rejouer avec `do_not_contact.blocked=true` et `do_not_contact.reasons[]` objet : vérifier blocage des envois et note lisible.
+7. Ajouter `related_subscriptions[].signed=true` avec `related_subscriptions[].course` imbriqué : vérifier signal d'évitement de relance concurrente.
+8. Envoyer `product` sans `course` : vérifier revue humaine Roadmap et absence de flux normal.
 
 Résultat attendu : SchoolDrive reste source de vérité, capacité et statuts arrêtent les relances au bon moment.
 
@@ -711,7 +712,7 @@ La suite Playwright est verte seulement si :
 4. Rejouer P0 à P10.
 5. Exécuter P11 lead réel.
 6. Exécuter P11 préinscription réelle.
-7. Attendre confirmation finale SchoolDrive/Tiago sur le contrat 1.1.
-8. Rejouer SchoolDrive payload 1.1 si possible.
+7. Attendre confirmation finale SchoolDrive/Tiago sur le contrat 2.1.
+8. Rejouer SchoolDrive payload 2.1 si possible.
 9. Faire le recheck équipe.
 10. Tourner la clé seulement si tous les critères sont verts.

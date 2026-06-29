@@ -74,6 +74,71 @@ def schooldrive_payload(
     }
 
 
+def schooldrive_payload_21(
+    schooldrive_id: str,
+    lead_type: str = "lead",
+    aggregated_updated_at: str = "2026-06-28T01:01:30Z",
+    occurred_at: str | None = "2026-06-28T01:01:31Z",
+    event_id: str | None = "evt_schema_21",
+    autoresponders: list[dict] | None = None,
+) -> dict:
+    payload = {
+        "schema_version": "2.1",
+        "environment": "staging",
+        "data": {
+            "schooldrive_id": schooldrive_id,
+            "lead_type": lead_type,
+            "aggregated_updated_at": aggregated_updated_at,
+            "is_archived": False,
+            "archived_at": None,
+            "archive_reason": None,
+            "signed": False,
+            "signed_at": None,
+            "person": {
+                "title": "M.",
+                "first_name": "Jean",
+                "last_name": "Dupont",
+                "email": "jean.dupont@example.com",
+                "phone": "+41790000000",
+            },
+            "do_not_contact": {"blocked": False, "reasons": []},
+            "status": "prospect",
+            "whatsapp_autoresponders": autoresponders
+            if autoresponders is not None
+            else [
+                {
+                    "message_id": f"armsg:{schooldrive_id}",
+                    "autoresponder_id": 2063,
+                    "short_name": "mkt_app_ln_subs_01",
+                    "status": "sent",
+                    "sent_at": "2026-06-28T01:01:30Z",
+                }
+            ],
+            "course": {
+                "id": 7921,
+                "category": {
+                    "id": 1,
+                    "short_name": "APP",
+                    "name": "Anatomie - Physiologie - Pathologie",
+                },
+                "short_name": "APP VISIO E26",
+                "name": "Anatomie Physiologie ASCA Visioconférence Intensif Eté 2026",
+                "start_date": "2026-07-11T08:30:00Z",
+                "seats_total": 32,
+                "seats_occupied": 20,
+                "seats_available": 12,
+                "is_full": False,
+            },
+            "related_subscriptions": [],
+        },
+    }
+    if event_id is not None:
+        payload["event_id"] = event_id
+    if occurred_at is not None:
+        payload["occurred_at"] = occurred_at
+    return payload
+
+
 def test_schooldrive_snapshot_creates_lead_conversation_messages_and_followup() -> None:
     seed_initial_data()
 
@@ -560,6 +625,222 @@ def test_schooldrive_related_signed_subscription_routes_to_human_review() -> Non
     assert all(item["type"] != "follow_up" or item["status"] == "done" for item in actions)
 
 
+def test_schooldrive_schema_21_nested_course_capacity_and_optional_event_id() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload_21(
+        schooldrive_id="lead:schema-21-capacity",
+        event_id=None,
+        occurred_at=None,
+    )
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    assert result["status"] == "created"
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["course_id"] == "7921"
+    assert conversation["course_category_short_title"] == "APP"
+    assert conversation["course_title"] == "APP VISIO E26"
+    assert conversation["course_start_date"].startswith("2026-07-11T08:30:00")
+    assert conversation["capacity_total"] == 32
+    assert conversation["capacity_occupied"] == 20
+    assert conversation["capacity_available"] == 12
+    assert conversation["is_full"] == 0
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT event_id, occurred_at
+            FROM schooldrive_webhook_events
+            WHERE schooldrive_id = ?
+            """,
+            ("lead:schema-21-capacity",),
+        ).fetchone()
+    assert row["event_id"].startswith("schooldrive:lead:schema-21-capacity:")
+    assert row["occurred_at"].startswith("2026-06-28T01:01:30")
+
+
+def test_schooldrive_schema_21_do_not_contact_reason_objects_are_consumed() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload_21(
+        schooldrive_id="subscription:schema-21-dnc",
+        lead_type="presubscription",
+        event_id="evt_schema_21_dnc",
+    )
+    payload["data"]["do_not_contact"] = {
+        "blocked": True,
+        "reasons": [
+            {
+                "type": "customer_opt_out",
+                "customer_id": 38459,
+                "opt_out_group_id": 22,
+                "opt_out_group": "ESSR - Marketing - AS",
+                "record_id": 3,
+                "since": "2023-01-26T09:30:58Z",
+            }
+        ],
+    }
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["contact_status"] == "do_not_contact"
+    assert conversation["status"] == "resolved"
+    assert conversation["resolution_reason"] == "do_not_contact"
+    assert "customer_opt_out/ESSR - Marketing - AS" in conversation["resolution_note"]
+    assert "{" not in conversation["resolution_note"]
+    assert get_next_action_for_lead(result["lead_id"]) is None
+
+
+def test_schooldrive_schema_21_capacity_null_does_not_imply_full_course() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload_21(
+        schooldrive_id="lead:schema-21-category-only",
+        event_id="evt_schema_21_category_only",
+    )
+    payload["data"]["course"] = {
+        "id": None,
+        "category": {
+            "id": 1,
+            "short_name": "APP",
+            "name": "Anatomie - Physiologie - Pathologie",
+        },
+        "short_name": None,
+        "name": None,
+        "start_date": None,
+        "seats_total": None,
+        "seats_occupied": None,
+        "seats_available": None,
+        "is_full": None,
+    }
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["course_id"] is None
+    assert conversation["course_category_short_title"] == "APP"
+    assert conversation["capacity_total"] is None
+    assert conversation["capacity_available"] is None
+    assert conversation["is_full"] == 0
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "follow_up"
+    assert action["trigger_reason"] == "schooldrive_initial_autoresponder_sent"
+
+
+def test_schooldrive_schema_21_roadmap_without_course_creates_review_without_autoresponder() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload_21(
+        schooldrive_id="lead:schema-21-roadmap",
+        event_id="evt_schema_21_roadmap",
+        autoresponders=[],
+    )
+    payload["data"].pop("course")
+    payload["data"]["product"] = {"roadmap_descriptive_id": "ASCA_RME"}
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    assert result["status"] == "created"
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["course_id"] == "ASCA_RME"
+    assert conversation["course_title"] == "Roadmap ASCA_RME"
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "other"
+    assert action["trigger_reason"] == "schooldrive_roadmap_product"
+
+
+def test_schooldrive_schema_21_roadmap_without_identity_is_still_ignored() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload_21(
+        schooldrive_id="lead:schema-21-roadmap-no-identity",
+        event_id="evt_schema_21_roadmap_no_identity",
+        autoresponders=[],
+    )
+    payload["data"].pop("course")
+    payload["data"]["product"] = {"roadmap_descriptive_id": "ASCA_RME"}
+    payload["data"]["person"] = {
+        "title": None,
+        "first_name": "",
+        "last_name": "",
+        "email": None,
+        "phone": None,
+    }
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    assert result["status"] == "ignored"
+    assert result["ignored_reason"] == "missing_identity"
+
+
+def test_schooldrive_schema_21_related_subscription_nested_course_routes_to_review() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload_21(
+        schooldrive_id="subscription:schema-21-related-active",
+        lead_type="presubscription",
+        event_id="evt_schema_21_related_active",
+    )
+    payload["data"]["related_subscriptions"] = [
+        {
+            "subscription_id": 129076,
+            "status": "in_class",
+            "signed": True,
+            "signed_at": "2026-04-23T07:44:00Z",
+            "is_archived": False,
+            "course": {
+                "id": 8133,
+                "category": {"id": 29, "short_name": "AMS", "name": "Ausbildung Medizinisches Sekretariat"},
+                "short_name": "AMS Fernkurs F26",
+                "name": "Ausbildung Medizinisches Sekretariat Fernkurs Frühjahr 2026",
+                "start_date": "2026-04-20T08:30:00Z",
+                "seats_total": 100,
+                "seats_occupied": 5,
+                "seats_available": 95,
+                "is_full": False,
+            },
+        }
+    ]
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "other"
+    assert action["trigger_reason"] == "schooldrive_related_subscription_signed"
+    actions = list_actions_for_lead(result["lead_id"], "all")
+    assert all(item["type"] != "follow_up" or item["status"] == "done" for item in actions)
+
+
+def test_schooldrive_schema_21_archived_related_subscription_does_not_block_flow() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload_21(
+        schooldrive_id="subscription:schema-21-related-archived",
+        lead_type="presubscription",
+        event_id="evt_schema_21_related_archived",
+    )
+    payload["data"]["related_subscriptions"] = [
+        {
+            "subscription_id": 131972,
+            "status": "subscription",
+            "signed": True,
+            "signed_at": "2026-06-26T10:11:46Z",
+            "is_archived": True,
+            "course": {
+                "id": 7344,
+                "category": {"id": 38, "short_name": "MP", "name": "Modules Préparatoires"},
+                "short_name": "MP DISTANCE E26",
+                "name": "Modules Préparatoires à distance Été 2026",
+                "start_date": "2026-07-13T08:30:00Z",
+                "seats_total": 100,
+                "seats_occupied": 42,
+                "seats_available": 58,
+                "is_full": False,
+            },
+        }
+    ]
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "follow_up"
+    assert action["trigger_reason"] == "schooldrive_initial_autoresponder_sent"
+
+
 def test_schooldrive_api_accepts_roadmap_product_without_course(monkeypatch) -> None:
     seed_initial_data()
     monkeypatch.setenv("SALES_COCKPIT_SCHOOLDRIVE_WEBHOOK_TOKEN", "sd-test-token")
@@ -583,7 +864,7 @@ def test_schooldrive_api_accepts_roadmap_product_without_course(monkeypatch) -> 
     conversation = get_conversation(result["conversation_id"])
     assert conversation["course_title"] == "Roadmap ASCA_RME"
     action = get_next_action_for_lead(result["lead_id"])
-    assert action["trigger_reason"] == "unconfigured_course_category"
+    assert action["trigger_reason"] == "schooldrive_roadmap_product"
 
 
 def test_schooldrive_later_autoresponder_does_not_recreate_initial_followup() -> None:
@@ -766,7 +1047,7 @@ def test_schooldrive_snapshot_accepts_nested_fsm_lead_with_linked_subscription()
         },
         "short_name": "FSM DISTANCE E26",
         "name": "Formation Secretaire Medicale a distance Ete 2026",
-        "start_date": "2026-07-13T08:30:00Z",
+        "start_date": "2026-12-13T08:30:00Z",
     }
 
     result = ingest_schooldrive_snapshot(payload)
@@ -804,7 +1085,7 @@ def test_schooldrive_snapshot_accepts_nested_fsm_lead_without_linked_subscriptio
 
     assert result["status"] == "created"
     conversation = get_conversation(result["conversation_id"])
-    assert conversation["course_id"] == "5"
+    assert conversation["course_id"] is None
     assert conversation["course_category_short_title"] == "FSM"
     assert conversation["course_title"] == "Formation Secretaire Medicale"
     action = get_next_action_for_lead(result["lead_id"])
@@ -831,7 +1112,7 @@ def test_schooldrive_snapshot_accepts_roadmap_product_without_course() -> None:
     assert conversation["course_title"] == "Roadmap ASCA_RME"
     action = get_next_action_for_lead(result["lead_id"])
     assert action["type"] == "other"
-    assert action["trigger_reason"] == "unconfigured_course_category"
+    assert action["trigger_reason"] == "schooldrive_roadmap_product"
 
 
 def test_schooldrive_snapshot_accepts_roadmap_product_with_non_identity_course_fields() -> None:
@@ -855,7 +1136,7 @@ def test_schooldrive_snapshot_accepts_roadmap_product_with_non_identity_course_f
     assert conversation["course_start_date"].startswith("2026-10-01")
     action = get_next_action_for_lead(result["lead_id"])
     assert action["type"] == "other"
-    assert action["trigger_reason"] == "unconfigured_course_category"
+    assert action["trigger_reason"] == "schooldrive_roadmap_product"
 
 
 def test_schooldrive_snapshot_detects_top_level_course_full_without_course_object() -> None:

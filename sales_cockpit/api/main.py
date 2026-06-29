@@ -72,8 +72,11 @@ class SchoolDrivePerson(BaseModel):
 class SchoolDriveCourse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
+    id: str | int | None = None
     course_id: str | int | None = None
+    short_name: str | None = None
     course_short_name: str | None = None
+    name: str | None = None
     category_short_title: str | None = None
     category: str | dict[str, Any] | None = None
     course_name: str | None = None
@@ -124,8 +127,8 @@ class SchoolDriveWebhookEnvelope(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     schema_version: str
-    event_id: str
-    occurred_at: str
+    event_id: str | None = None
+    occurred_at: str | None = None
     environment: str
     data: SchoolDrivePayloadData
 

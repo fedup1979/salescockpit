@@ -9,8 +9,8 @@ These items should be handled before or during the real cutover window because t
 ### SchoolDrive Signals
 
 - Confirm that SchoolDrive emits a fresh webhook when a WhatsApp autoresponder status changes to `sent`.
-- Validate Tiago's schema `1.1` on fresh staging records from the real website path.
-- Confirm the fresh website payload includes `course.course_id`, `course.course_short_name`, `course.seats_total`, `course.seats_occupied`, `course.seats_available`, `course.is_full`, `signed`, `do_not_contact.blocked`, and `related_subscriptions[]` when applicable.
+- Validate Tiago's schema `2.1` on fresh staging records from the real website path before the one-time full resync.
+- Confirm the fresh website payload includes `course.id`, `course.short_name`, `course.seats_total`, `course.seats_occupied`, `course.seats_available`, `course.is_full`, `signed`, `do_not_contact.blocked`, object `do_not_contact.reasons[]`, and nested `related_subscriptions[]` when applicable.
 - Confirm operationally that a course crossing full/not-full causes SchoolDrive to re-emit affected leads/presubscriptions.
 - Confirm operationally that the top-level `signed` boolean appears for one signed presubscription and one lead-originated signature.
 

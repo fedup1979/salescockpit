@@ -263,7 +263,7 @@ def _payload(
     start_date: str | None = None,
 ) -> dict[str, Any]:
     return {
-        "schema_version": "1.0",
+        "schema_version": "2.1",
         "event_id": event_id,
         "occurred_at": _iso(occurred_at),
         "environment": environment,
@@ -275,6 +275,8 @@ def _payload(
             "is_archived": False,
             "archived_at": None,
             "archive_reason": None,
+            "signed": False,
+            "signed_at": None,
             "person": {
                 "title": "mrs",
                 "first_name": first_name,
@@ -282,14 +284,25 @@ def _payload(
                 "phone": phone,
                 "email": f"{first_name.lower()}.{last_name.lower()}@example.com",
             },
+            "do_not_contact": {"blocked": False, "reasons": []},
             "course": {
-                "category": course_category,
-                "course_name": course_name,
-                "session_name": None,
+                "id": _smoke_course_id(schooldrive_id, course_name),
+                "category": {
+                    "id": None,
+                    "short_name": course_category,
+                    "name": course_category,
+                },
+                "short_name": course_name,
+                "name": course_name,
                 "start_date": start_date,
+                "seats_total": 100 if course_name else None,
+                "seats_occupied": 10 if course_name else None,
+                "seats_available": 90 if course_name else None,
+                "is_full": False if course_name else None,
             },
             "status": status,
             "whatsapp_autoresponders": autoresponders,
+            "related_subscriptions": [],
         },
     }
 
@@ -398,6 +411,12 @@ def _schooldrive_url(schooldrive_id: str) -> str:
         "https://schooldrive.essr.ch/sd/customers/customers"
         f"(p1:sd/customers/customers/subscription/view/{raw_id})"
     )
+
+
+def _smoke_course_id(schooldrive_id: str, course_name: str | None) -> str | None:
+    if not course_name:
+        return None
+    return f"smoke-course-{schooldrive_id.replace(':', '-')}"
 
 
 def _iso(value: datetime | str) -> str:

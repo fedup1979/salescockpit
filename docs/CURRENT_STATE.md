@@ -46,7 +46,7 @@ Sales Cockpit has now encoded the canonical workflow model:
 
 Important runtime rule: a prospect message during an already planned setting/closing call creates an urgent `reply` action for Setter I but does not cancel the planned call. Course-start relances do not interrupt planned calls.
 
-Latest implementation status: the V1 pre-cutover hardening, reliable navigation fix, duplicate page-selector removal, message rendering fix, SchoolDrive schema `1.1` support, SchoolDrive human-review/follow-up conflict guard, transcript-driven E2E protocol, bug/admin fixes, vouvoiement cleanup, and skip-step consequence preview are pushed to GitHub and deployed to staging. Production is not touched.
+Latest implementation status: the V1 pre-cutover hardening, reliable navigation fix, duplicate page-selector removal, message rendering fix, SchoolDrive schema `2.1` support, SchoolDrive human-review/follow-up conflict guard, transcript-driven E2E protocol, bug/admin fixes, vouvoiement cleanup, and skip-step consequence preview are pushed to GitHub and deployed to staging. Production is not touched.
 
 ## Repositories And Environments
 
@@ -102,7 +102,7 @@ Working:
 - backup/restore scripts and cron.
 - pre-cutover readiness check.
 
-SchoolDrive human review rule: an active `contact_review` or `other` action caused by `unconfigured_course_category`, `schooldrive_course_full`, or `schooldrive_related_subscription_signed` blocks automatic follow-ups for that lead until the human review is resolved. `init_db()` also cancels pre-existing follow-ups that conflict with such an active review.
+SchoolDrive human review rule: an active `contact_review` or `other` action caused by `unconfigured_course_category`, `schooldrive_roadmap_product`, `schooldrive_course_full`, or `schooldrive_related_subscription_signed` blocks automatic follow-ups for that lead until the human review is resolved. `init_db()` also cancels pre-existing follow-ups that conflict with such an active review.
 
 Latest recorded staging check:
 
@@ -238,7 +238,7 @@ Implemented locally for the refined V1:
 - SchoolDrive do-not-contact / opt-out signal sets contact status `do_not_contact`, closes follow-ups, and stores the source note.
 - SchoolDrive course-full signal stops follow-ups and creates a Setter I review action to propose another course/class.
 - SchoolDrive's updated nested `course` payload is supported locally: nested category, course id, course short/name, full ISO `start_date`, and Roadmap `product` records.
-- Tiago's schema `1.1` mental model is supported locally: no separate session entity is expected, `course.course_id` and `course.course_short_name` identify the class/session, `course.seats_*` and `course.is_full` feed capacity, `do_not_contact.blocked` is a stop signal, and signed `related_subscriptions[]` create human review instead of automatic competing follow-ups.
+- Tiago's schema `2.1` mental model is supported locally: no separate session entity is expected, `course.id` and `course.short_name` identify the class/session, `course.seats_*` and `course.is_full` feed capacity, capacity is three-state when `seats_total` is null, `do_not_contact.blocked` is a stop signal with object `reasons[]`, non-archived signed `related_subscriptions[]` create human review instead of automatic competing follow-ups, and `product` without `course` is routed to Roadmap human review.
 
 Important timestamp decision:
 
@@ -254,7 +254,7 @@ Historical note: Claude Code previously diagnosed `lead:124126` and proved that 
 
 Tiago later reported that the SchoolDrive event projector was published, including a filter to skip leads/subscriptions created before `2026-03-01`. A previous staging run received a large historical replay; the latest recorded staging check after cleanup/rebuild is small again and suitable for focused validation.
 
-François has sent Tiago the confirmation email accepting schema `1.1` and the canonical SchoolDrive mental model. We are waiting for Tiago's response/publication on staging; internal QA can continue in the meantime.
+Tiago has provided schema `2.1`. SchoolDrive has not deployed it yet; deployment starts only after François gives the go-ahead. Sales Cockpit must be deployed with schema `2.1` support before that go-ahead, then validated on fresh organic lead/presubscription events before Tiago runs the one-time full resync.
 
 Latest recorded staging state before this audit:
 

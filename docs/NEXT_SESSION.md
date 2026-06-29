@@ -30,9 +30,9 @@ The app has been iteratively reviewed by François and is currently in a good st
 
 ## Current Operational Gate
 
-Sales Cockpit is ready for the SchoolDrive payloads it receives. Tiago later reported that the SchoolDrive projector was published and filtered to skip leads/subscriptions created before `2026-03-01`, but the live website-form path still needs one clean validation after the SchoolDrive WhatsApp/projector worker is confirmed running.
+Sales Cockpit is ready for the SchoolDrive payloads it receives. Tiago has provided schema `2.1`; SchoolDrive will deploy it only after François gives the go-ahead. The live website-form path still needs one clean validation after schema `2.1` is deployed and before the one-time full resync.
 
-François has sent Tiago the schema `1.1` confirmation email. We are waiting for Tiago's response/publication on staging; continue internal QA while waiting.
+Before giving the go-ahead, deploy the Cockpit schema `2.1` support to staging. After Tiago deploys, validate organic lead and presubscription payloads, then ask Tiago for the full resync.
 
 Validate this exact path before claiming operational production readiness:
 
@@ -54,7 +54,7 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - Latest local validation after the transcript-driven E2E/UX update: `215 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\transcript-full`, plus `compileall` OK.
 - Latest staging deployment: latest `main` after the transcript-driven E2E/UX update. API/UI OK and `scripts/pre_cutover_check.py --api-base http://127.0.0.1:8602 --ui-url http://127.0.0.1:8502 --allow-cold-prod` OK. Verify the exact server commit with `git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD`.
 - Latest staging template mapping check after deployment: `81` mappings total, `78` active, `78` active mappings linked to approved real Twilio templates; active split `APP=26`, `AS=26`, `FSM=26`. Existing real Twilio mappings were preserved.
-- Active SchoolDrive human reviews caused by `unconfigured_course_category`, `schooldrive_course_full`, or `schooldrive_related_subscription_signed` now block automatic follow-ups until review resolution; startup normalization cancels pre-existing conflicting follow-ups.
+- Active SchoolDrive human reviews caused by `unconfigured_course_category`, `schooldrive_roadmap_product`, `schooldrive_course_full`, or `schooldrive_related_subscription_signed` now block automatic follow-ups until review resolution; startup normalization cancels pre-existing conflicting follow-ups.
 - Transcript-driven updates deployed to staging: detailed E2E protocol in `docs/E2E_TEST_PROTOCOL.md`, graph spec in `docs/WORKFLOW_GRAPH_SPEC.md`, bug-report resolution now follows completed admin actions, admin actions are visible to all admins in `Tâches`, visible UI tutoiement was removed, and the skip-step cross now previews the next natural action or flux ending.
 - Status / qualification / reactivation saves were hardened: terminal qualifications and contact statuses now keep `Parcours`, conversation status, and next action aligned. `init_db()` also normalizes existing impossible terminal combinations, such as signed leads not shown as `won`, `Ne plus contacter` leads not shown as `blacklist`, and sequence-completed conversations not shown as `lost`.
 - Use `--basetemp=.pytest-tmp\run` on Windows if Pytest fails after successful test execution because it cannot clean `pytest-current` in `%TEMP%`.

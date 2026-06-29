@@ -1622,18 +1622,22 @@ def followups_are_blocked(record: dict[str, Any]) -> bool:
 
 
 def ingest_schooldrive_snapshot(envelope: dict[str, Any]) -> dict[str, Any]:
-    event_id = str(envelope.get("event_id") or "").strip()
     environment = str(envelope.get("environment") or "").strip()
-    occurred_at = _normalize_required_iso(envelope.get("occurred_at"), "occurred_at")
     data = envelope.get("data") or {}
     schooldrive_id = str(data.get("schooldrive_id") or "").strip()
     lead_type = str(data.get("lead_type") or "").strip()
     aggregated_updated_at = _normalize_required_iso(
         data.get("aggregated_updated_at"), "data.aggregated_updated_at"
     )
+    occurred_at = _normalize_required_iso(
+        envelope.get("occurred_at") or aggregated_updated_at,
+        "occurred_at",
+    )
+    event_id = str(
+        envelope.get("event_id")
+        or f"schooldrive:{schooldrive_id}:{aggregated_updated_at}:{occurred_at}"
+    ).strip()
 
-    if not event_id:
-        raise ValueError("event_id is required.")
     if not schooldrive_id:
         raise ValueError("data.schooldrive_id is required.")
     if lead_type not in {"lead", "presubscription"}:
@@ -1906,8 +1910,6 @@ def _schooldrive_course_fields(data: dict[str, Any]) -> dict[str, Any]:
     course_id = _clean_schooldrive_text(
         course.get("id")
         or course.get("course_id")
-        or category_id
-        or category_short_name
     )
     course_title = _clean_schooldrive_text(
         course.get("course_short_name")
@@ -1984,7 +1986,17 @@ def _schooldrive_course_fields(data: dict[str, Any]) -> dict[str, Any]:
             data.get("session_full"),
         )
     )
-    if capacity_available is not None and capacity_available <= 0:
+    if (
+        capacity_total is not None
+        and capacity_available is not None
+        and capacity_available <= 0
+    ):
+        is_full = True
+    if (
+        capacity_total is not None
+        and capacity_occupied is not None
+        and capacity_occupied >= capacity_total
+    ):
         is_full = True
 
     roadmap_id = _clean_schooldrive_text(product.get("roadmap_descriptive_id"))
@@ -2426,6 +2438,7 @@ def _active_schooldrive_review_blocks_followups(conn: Any, lead_id: int) -> bool
           AND type IN ('contact_review', 'other')
           AND trigger_reason IN (
             'unconfigured_course_category',
+            'schooldrive_roadmap_product',
             'schooldrive_course_full',
             'schooldrive_related_subscription_signed'
           )
@@ -2730,6 +2743,62 @@ def _ensure_unconfigured_course_category_review(
     )
 
 
+def _ensure_roadmap_product_review(
+    conn: Any,
+    lead_id: int,
+    conversation_id: int,
+    source: str,
+) -> None:
+    existing = conn.execute(
+        """
+        SELECT id
+        FROM tasks
+        WHERE lead_id = ?
+          AND status IN ('open', 'planned', 'in_progress', 'blocked')
+          AND trigger_reason = 'schooldrive_roadmap_product'
+        LIMIT 1
+        """,
+        (lead_id,),
+    ).fetchone()
+    if existing:
+        return
+    lead = row_to_dict(
+        conn.execute(
+            "SELECT first_name, last_name, course_title FROM leads WHERE id = ?",
+            (lead_id,),
+        ).fetchone()
+    )
+    assignee_id = setter1_user_id(conn) or _default_active_user_id(conn, "setter")
+    if not lead or not assignee_id:
+        return
+    now = iso_utc()
+    product_label = (lead.get("course_title") or source or "Roadmap").strip()
+    action_id = _insert_next_action(
+        conn,
+        lead_id=lead_id,
+        conversation_id=conversation_id,
+        action_type="other",
+        title=f"Revoir produit Roadmap pour {lead_full_name(lead)}",
+        assigned_to_user_id=assignee_id,
+        created_by_user_id=None,
+        urgency="normal",
+        due_at=now,
+        status="open",
+        trigger_reason="schooldrive_roadmap_product",
+        description=(
+            f"SchoolDrive a envoyé un produit sans cours/session ({product_label}). "
+            "Ne pas lancer le flux commercial normal ; décider du suivi manuel."
+        ),
+    )
+    insert_event(
+        conn,
+        lead_id,
+        "schooldrive_roadmap_product_review_created",
+        new={"task_id": action_id, "source": source},
+        metadata={"conversation_id": conversation_id},
+    )
+
+
 def _apply_schooldrive_archive(
     conn: Any,
     lead_id: int,
@@ -2916,6 +2985,23 @@ def _apply_schooldrive_business_signals(
         )
         return True
 
+    roadmap_product, roadmap_source = _schooldrive_roadmap_product_signal(data)
+    if roadmap_product:
+        _complete_open_actions_for_lead(
+            conn,
+            lead_id,
+            user_id=None,
+            outcome="Relances annulées : produit Roadmap sans cours SchoolDrive",
+            included_types=("follow_up",),
+        )
+        _ensure_roadmap_product_review(
+            conn,
+            lead_id=lead_id,
+            conversation_id=conversation_id,
+            source=roadmap_source,
+        )
+        return True
+
     return False
 
 
@@ -2951,11 +3037,28 @@ def _schooldrive_related_signed_signal(data: dict[str, Any]) -> tuple[bool, str]
     for index, item in enumerate(related):
         if not isinstance(item, dict):
             continue
+        if _schooldrive_bool(item.get("is_archived")):
+            continue
         if _schooldrive_bool(item.get("signed")):
             parts = [f"related_subscriptions[{index}].signed"]
             subscription_id = _clean_schooldrive_text(item.get("subscription_id"))
-            course_short_name = _clean_schooldrive_text(item.get("course_short_name"))
-            category_short_title = _clean_schooldrive_text(item.get("category_short_title"))
+            course = item.get("course") or {}
+            if not isinstance(course, dict):
+                course = {}
+            category = course.get("category") or {}
+            if not isinstance(category, dict):
+                category = {}
+            course_short_name = _clean_schooldrive_text(
+                item.get("course_short_name")
+                or course.get("short_name")
+                or course.get("course_short_name")
+                or course.get("name")
+            )
+            category_short_title = _clean_schooldrive_text(
+                item.get("category_short_title")
+                or category.get("short_name")
+                or category.get("short_title")
+            )
             if subscription_id:
                 parts.append(f"subscription:{subscription_id}")
             if course_short_name:
@@ -2966,6 +3069,16 @@ def _schooldrive_related_signed_signal(data: dict[str, Any]) -> tuple[bool, str]
     return False, ""
 
 
+def _schooldrive_do_not_contact_reason_label(reason: Any) -> str | None:
+    if isinstance(reason, dict):
+        parts = [
+            _clean_schooldrive_text(reason.get("type")),
+            _clean_schooldrive_text(reason.get("opt_out_group")),
+        ]
+        return "/".join(part for part in parts if part)
+    return _clean_schooldrive_text(reason)
+
+
 def _schooldrive_do_not_contact_signal(data: dict[str, Any]) -> tuple[bool, str]:
     contact = data.get("contact") or {}
     do_not_contact = data.get("do_not_contact")
@@ -2974,7 +3087,13 @@ def _schooldrive_do_not_contact_signal(data: dict[str, Any]) -> tuple[bool, str]
             reasons = do_not_contact.get("reasons") or []
             reason_text = ""
             if isinstance(reasons, list) and reasons:
-                reason_text = ":" + ",".join(str(item).strip() for item in reasons if str(item).strip())
+                labels = [
+                    label
+                    for label in (_schooldrive_do_not_contact_reason_label(item) for item in reasons)
+                    if label
+                ]
+                if labels:
+                    reason_text = ":" + ",".join(labels)
             return True, f"data.do_not_contact.blocked{reason_text}"
     candidates: list[tuple[str, Any]] = [
         ("data.do_not_contact", do_not_contact),
@@ -3028,15 +3147,51 @@ def _schooldrive_course_full_signal(data: dict[str, Any]) -> tuple[bool, str]:
             return True, f"course.session.{key}"
         if str(capacity.get(key) or "").strip().lower() in {"full", "complete", "complet", "sold_out"}:
             return True, f"course.capacity.{key}"
+    total = None
+    for key in ("seats_total", "total_seats", "capacity_total", "total_capacity"):
+        raw_total = course.get(key) if key in course else capacity.get(key) if key in capacity else session.get(key)
+        total = _schooldrive_int(raw_total)
+        if total is not None:
+            break
     for key in ("seats_available", "available_seats", "capacity_available", "available_capacity", "remaining_seats"):
         seats = course.get(key) if key in course else capacity.get(key) if key in capacity else session.get(key)
         if seats is not None:
             try:
-                if int(seats) <= 0:
+                if total is not None and int(seats) <= 0:
                     return True, f"course.{key}"
             except (TypeError, ValueError):
                 pass
     return False, ""
+
+
+def _schooldrive_roadmap_product_signal(data: dict[str, Any]) -> tuple[bool, str]:
+    product = data.get("product") or {}
+    if not isinstance(product, dict):
+        return False, ""
+    roadmap_id = _clean_schooldrive_text(product.get("roadmap_descriptive_id"))
+    if not roadmap_id:
+        return False, ""
+    course = data.get("course") or {}
+    if not isinstance(course, dict):
+        course = {}
+    category = course.get("category") or {}
+    if not isinstance(category, dict):
+        category = {}
+    has_course_identity = any(
+        _clean_schooldrive_text(value)
+        for value in (
+            course.get("id"),
+            course.get("course_id"),
+            course.get("short_name"),
+            course.get("course_short_name"),
+            course.get("name"),
+            course.get("course_name"),
+            category.get("short_name"),
+        )
+    )
+    if has_course_identity:
+        return False, ""
+    return True, f"product.roadmap_descriptive_id:{roadmap_id}"
 
 
 def _ensure_course_full_review(
@@ -5595,6 +5750,9 @@ def _new_schooldrive_snapshot_ignore_reason(
     )
     if not has_identity:
         return "missing_identity"
+
+    if _schooldrive_roadmap_product_signal(data)[0]:
+        return None
 
     autoresponders = data.get("whatsapp_autoresponders") or []
     if not autoresponders:
