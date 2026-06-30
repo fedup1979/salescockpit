@@ -93,12 +93,13 @@ def test_demo_seed_covers_v1_cutover_manual_scenarios() -> None:
                 t.type,
                 t.trigger_reason
             FROM leads l
-            JOIN tasks t ON t.lead_id = l.id
+            LEFT JOIN tasks t
+              ON t.lead_id = l.id
+             AND t.status IN ('open', 'planned', 'in_progress', 'blocked')
             WHERE l.schooldrive_lead_id IN (
                 'SD-DEMO-4020', 'SD-DEMO-4021', 'SD-DEMO-4022',
                 'SD-DEMO-4023', 'SD-DEMO-4024', 'SD-DEMO-4025'
             )
-              AND t.status IN ('open', 'planned', 'in_progress', 'blocked')
             """
         ).fetchall()
 
@@ -108,14 +109,13 @@ def test_demo_seed_covers_v1_cutover_manual_scenarios() -> None:
     assert by_id["SD-DEMO-4021"]["type"] == "setting_call"
     assert by_id["SD-DEMO-4022"]["type"] == "manual_reprise_setter"
     assert by_id["SD-DEMO-4023"]["type"] == "manual_reprise_closer"
-    assert by_id["SD-DEMO-4024"]["type"] == "other"
-    assert by_id["SD-DEMO-4024"]["trigger_reason"] == "schooldrive_course_full"
+    assert by_id["SD-DEMO-4024"]["type"] is None
+    assert by_id["SD-DEMO-4024"]["trigger_reason"] is None
     assert by_id["SD-DEMO-4024"]["session_name"] == "APP GE P26"
     assert by_id["SD-DEMO-4024"]["capacity_total"] == 20
     assert by_id["SD-DEMO-4024"]["capacity_available"] == 0
     assert by_id["SD-DEMO-4024"]["is_full"] == 1
-    assert by_id["SD-DEMO-4025"]["type"] == "other"
-    assert by_id["SD-DEMO-4025"]["trigger_reason"] == "unconfigured_course_category"
+    assert by_id["SD-DEMO-4025"]["type"] != "follow_up"
 
 
 def test_seed_preserves_existing_real_template_mapping_fine_tuning() -> None:
@@ -498,7 +498,7 @@ def test_init_db_normalizes_existing_terminal_workflow_states() -> None:
     assert rows[lost_id]["sales_stage"] == "lost"
 
 
-def test_init_db_cancels_followup_when_schooldrive_review_is_active() -> None:
+def test_init_db_cancels_schooldrive_silent_stop_review_and_followup() -> None:
     seed_initial_data()
     with connect() as conn:
         lead_id = conn.execute(
@@ -548,9 +548,18 @@ def test_init_db_cancels_followup_when_schooldrive_review_is_active() -> None:
                 (review_id, followup_id),
             ).fetchall()
         }
-    assert rows[review_id]["status"] == "open"
+    assert rows[review_id]["status"] == "cancelled"
     assert rows[followup_id]["status"] == "cancelled"
-    assert rows[followup_id]["cancelled_reason"] == "Revue humaine SchoolDrive active"
+    assert rows[followup_id]["cancelled_reason"] == (
+        "Contrat SchoolDrive V1 : arrêt silencieux sans revue automatique"
+    )
+    with connect() as conn:
+        conversation = conn.execute(
+            "SELECT status, resolution_reason FROM conversations WHERE id = ?",
+            (conversation_id,),
+        ).fetchone()
+    assert conversation["status"] == "resolved"
+    assert conversation["resolution_reason"] == "handled_elsewhere"
 
 
 def test_resolution_requires_reason_and_reopen_requires_action() -> None:
@@ -2190,6 +2199,9 @@ def test_course_default_session_can_be_configured_and_deactivated() -> None:
         "2026-07-11",
         default_session_name="APP Ã©tÃ© 2026",
         schooldrive_url="https://schooldrive.essr.ch/sd/example",
+        default_capacity_total=24,
+        default_capacity_occupied=17,
+        default_capacity_available=7,
         note="Session par dÃ©faut pour les leads APP.",
     )
 
@@ -2200,6 +2212,10 @@ def test_course_default_session_can_be_configured_and_deactivated() -> None:
     assert sessions[0]["course_category"] == "APP"
     assert sessions[0]["default_course_name"] == "APP VISIO E26"
     assert sessions[0]["default_start_date"] == "2026-07-11"
+    assert sessions[0]["default_capacity_total"] == 24
+    assert sessions[0]["default_capacity_occupied"] == 17
+    assert sessions[0]["default_capacity_available"] == 7
+    assert sessions[0]["default_is_full"] == 0
 
     ok, message = deactivate_course_default_session(admin["id"], sessions[0]["id"])
 
@@ -2999,11 +3015,11 @@ def test_schooldrive_business_signals_stop_or_route_work() -> None:
 
     course_full_payload = schooldrive_signal_payload({"course": {"category": "APP", "course_name": "APP TEST", "is_full": True}})
     course_full_result = ingest_schooldrive_snapshot(course_full_payload)
-    next_action = get_next_action_for_lead(course_full_result["lead_id"])
-    assert next_action["type"] == "other"
-    assert next_action["trigger_reason"] == "schooldrive_course_full"
-    ok, _ = complete_action_with_workflow(next_action["id"], 1, "done", note="Autre session proposee.")
-    assert ok is True
+    actions = list_actions_for_lead(course_full_result["lead_id"], "all")
+    assert all(
+        item["type"] != "follow_up" or item["status"] == "done"
+        for item in actions
+    )
 
 
 def test_course_full_keeps_planned_call_as_primary_action() -> None:

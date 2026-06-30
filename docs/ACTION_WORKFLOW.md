@@ -211,7 +211,10 @@ Cette table décrit le chaînage cible. Elle doit rester lisible par l'équipe m
 | Date de cours approche | `course_start_approaching` | Lead non signé, date pertinente connue, aucun appel planifié | `follow_up` lead-relative concurrente | `follow_up` cours | Setter II ou IA | J-14/J-7/J-3/J-1 | Ouverte | Template cours | La relance cours gagne le conflit sauf si un appel est déjà planifié |
 | SchoolDrive indique signé | `schooldrive_signed` | Vente confirmée dans SchoolDrive | Toutes actions ouvertes | Aucune | Personne | Aucun | Résolue | Événement SchoolDrive | Qualification `signed`, stop relances |
 | SchoolDrive indique ne pas relancer / opt-out | `schooldrive_do_not_contact` | Flag ou opt-out externe | Toutes actions ouvertes | Aucune | Personne | Aucun | Résolue | Événement SchoolDrive | Statut `do_not_contact`, note de provenance |
-| SchoolDrive indique cours complet | `schooldrive_course_full` | Session/cours complet | Relances ouvertes | `other` revue si aucun appel ; sinon note sur l'appel prévu | Setter I ou responsable de l'appel | Maintenant ou heure de l'appel | Ouverte | Note SchoolDrive | Proposer une autre session |
+| SchoolDrive indique cours complet | `schooldrive_course_full` | Session/cours complet | Relances ouvertes | Aucune | Personne | Aucun | Visible sans flux automatique | Capacité SchoolDrive | Hard stop relance, pas de revue admin ni proposition automatique ; seul un inbound crée `reply` |
+| SchoolDrive indique hors V1 | `schooldrive_out_of_v1_or_missing_category` | Roadmap, produit sans cours, catégorie absente ou catégorie hors APP/FSM/AS | Aucune | Aucune | Personne | Aucun | Stockée et visible | Snapshot SchoolDrive | Aucun flux Setter II, aucune revue admin automatique ; seul un inbound crée `reply` |
+| Signature liée même catégorie | `related_subscription_signed_same_category` | Fiche non archivée signée pour la même personne et la même catégorie | Relances même catégorie | Aucune | Personne | Aucun | Visible sans flux automatique | Signature SchoolDrive | Hard stop catégorie, fiches archivées ignorées |
+| Fiche archivée | `schooldrive_archived_record` | Snapshot ou fiche SchoolDrive archivée | Relances ouvertes | Aucune | Personne | Aucun | Ignorée pour nouveaux flux | Archive SchoolDrive | Pas de relance, pas de revue admin, pas d'arbitrage de doublon |
 | Bug signalé | `bug_report_created` | Signalement utilisateur | Aucune | Action admin | Admin | Maintenant | Inchangée | Rapport de bug | À terminer par admin |
 | Qualification stop à tout moment | `qualification_updated` | `not_relevant`, `do_not_contact`, `signed` | Toutes actions ouvertes | Aucune | Personne | Aucun | Résolue | Qualification | Stopper relances |
 | Conversation résolue manuellement | `conversation_resolved` | Utilisateur clôture | Toutes actions ouvertes | Aucune | Personne | Aucun | Résolue | Option note | Historiser la résolution |
@@ -260,6 +263,10 @@ Déclencheur : date de début de cours connue depuis SchoolDrive.
 Cadence à confirmer : J-14, J-7, J-3, J-1.
 
 Règle : une relance de cours gagne contre une relance relative au lead dans une fenêtre de 24h. La relance perdante est annulée, pas décalée. Cette règle ne remplace jamais un appel setting ou closing déjà planifié.
+
+Périmètre V1 strict : seuls `APP`, `FSM` et `AS` déclenchent les flux structurés. Roadmap, produit sans cours, catégorie absente et catégorie hors V1 restent visibles sans relance structurée ni revue admin automatique, sauf réponse entrante du prospect.
+
+Si un Lead APP/FSM/AS n'a pas de session précise, le cockpit utilise la session par défaut configurée dans Pilotage. La capacité SchoolDrive reste prioritaire : une session complète arrête les relances sans créer de proposition automatique d'autre session.
 
 ## Points Encore À Confirmer
 

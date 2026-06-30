@@ -178,6 +178,10 @@ PILOTAGE_SEQUENCE_OWNER_LABELS = {
 }
 PILOTAGE_CONFLICT_RULES = [
     {
+        "Situation": "Cours V1 stricts",
+        "Règle": "En V1, seuls APP, FSM et AS déclenchent des flux structurés. Roadmap, catégorie absente et toute catégorie hors V1 restent stockés et visibles, sans relance structurée ni revue admin automatique.",
+    },
+    {
         "Situation": "Le prospect répond",
         "Règle": "La réponse entrante interrompt les relances futures et crée une action Répondre au message pour Setter I. Si un appel setting ou closing est déjà planifié, cet appel reste actif et visible.",
     },
@@ -199,11 +203,19 @@ PILOTAGE_CONFLICT_RULES = [
     },
     {
         "Situation": "Signature, non pertinent ou conversation close",
-        "Règle": "Toutes les actions ouvertes ou futures liées à la conversation sont arrêtées.",
+        "Règle": "Hard stop global : signé, non pertinent, Ne plus contacter, opt-out, fiche archivée et session complète arrêtent les relances ouvertes ou futures concernées.",
     },
     {
         "Situation": "Signature confirmée par SchoolDrive",
         "Règle": "La donnée SchoolDrive gagne : le prospect passe en A signé, les relances sont arrêtées et la conversation est clôturée.",
+    },
+    {
+        "Situation": "Signature même personne et même catégorie",
+        "Règle": "Une fiche non archivée signée pour la même personne et la même catégorie bloque les relances concurrentes de cette catégorie. Les fiches archivées sont ignorées dans cet arbitrage.",
+    },
+    {
+        "Situation": "Plusieurs fiches actives même personne et catégorie",
+        "Règle": "La multiplicité est tolérée en V1 : pas de fusion, pas de revue admin automatique et pas de relance créée uniquement parce que plusieurs fiches actives existent. Seul un hard stop ou un inbound crée une décision opérationnelle.",
     },
     {
         "Situation": "Opt-out ou Ne pas relancer transmis par SchoolDrive",
@@ -211,7 +223,7 @@ PILOTAGE_CONFLICT_RULES = [
     },
     {
         "Situation": "Cours ou session complète",
-        "Règle": "Les relances automatiques s'arrêtent. Setter I reçoit une action pour proposer une autre session au prospect.",
+        "Règle": "Aucune relance ne démarre ou ne continue sur une session complète. Le cockpit conserve l'information de capacité visible, sans créer de revue admin ni proposer automatiquement une autre session ; seule une réponse entrante crée une action à traiter.",
     },
     {
         "Situation": "Garde-fous d'envoi",
@@ -3271,7 +3283,7 @@ def render_pilotage_overview() -> None:
         1. **Définir les flux** : décider combien de messages existent dans chaque flux et à quel moment ils partent.
         2. **Appliquer les flux aux cours** : pour chaque flux, chaque événement et chaque cours traité, choisir le template précis à envoyer.
 
-        Cours actuellement pilotés : **{category_text}**. Les autres catégories reçues depuis SchoolDrive restent visibles, mais passent en revue humaine tant qu'elles ne sont pas ajoutées ici.
+        Cours actuellement pilotés : **{category_text}**. En V1, seuls APP, FSM et AS doivent porter des flux structurés. Les autres catégories, Roadmap ou catégories absentes restent visibles, sans relance structurée ni revue admin automatique ; seule une réponse entrante crée une action à traiter.
 
         À ne pas confondre : le **Parcours** est l'état commercial visible sur la fiche du prospect, le **Flux** est le scénario de relance réglé ici, et l'**Action** est la tâche concrète qui apparaît dans la file de travail.
 
@@ -3358,7 +3370,7 @@ def render_pilotage_course_categories(user: dict) -> None:
     st.markdown("### Cours traités")
     st.caption(
         "Une catégorie active signifie que Sales Cockpit peut appliquer les flux structurés. "
-        "Une catégorie reçue depuis SchoolDrive mais non active reste visible et crée une revue humaine pour Setter I."
+        "En V1, les flux structurés sont limités à APP, FSM et AS. Les autres catégories restent visibles, sans relance ni revue admin automatique."
     )
     categories = list_course_categories(active_only=False)
     active_categories = [item for item in categories if item.get("active")]
@@ -3374,7 +3386,7 @@ def render_pilotage_course_categories(user: dict) -> None:
         ]
         st.dataframe(rows, hide_index=True, use_container_width=True, height=240)
     else:
-        st.warning("Aucun cours n'est piloté. Les leads SchoolDrive seront tous mis en revue humaine.")
+        st.warning("Aucun cours n'est piloté. Les leads SchoolDrive resteront visibles, sans flux structuré ni revue admin automatique.")
 
     with st.form("pilotage_course_category_form"):
         st.markdown("**Ajouter ou réactiver une catégorie**")
@@ -3426,6 +3438,10 @@ def render_pilotage_default_sessions(user: dict) -> None:
                 "Session par défaut": item["default_course_name"],
                 "Nom session": item.get("default_session_name") or "",
                 "Début": item["default_start_date"],
+                "Capacité": optional_int_text(item.get("default_capacity_total")),
+                "Occupées": optional_int_text(item.get("default_capacity_occupied")),
+                "Disponibles": optional_int_text(item.get("default_capacity_available")),
+                "Complet": "Oui" if item.get("default_is_full") else "Non",
                 "URL SchoolDrive": item.get("schooldrive_url") or "",
                 "Note": item.get("note") or "",
             }
@@ -3475,6 +3491,27 @@ def render_pilotage_default_sessions(user: dict) -> None:
             value=parse_iso_date_or_today((current or {}).get("default_start_date")),
             format=DATE_INPUT_FORMAT,
         )
+        capacity_cols = st.columns(4)
+        capacity_total = capacity_cols[0].text_input(
+            "Capacité totale",
+            value=optional_int_text((current or {}).get("default_capacity_total")),
+            help="Nombre total de places connu dans SchoolDrive. Laisser vide si inconnu.",
+        )
+        capacity_occupied = capacity_cols[1].text_input(
+            "Places occupées",
+            value=optional_int_text((current or {}).get("default_capacity_occupied")),
+            help="Places déjà occupées dans la session de référence. Laisser vide si inconnu.",
+        )
+        capacity_available = capacity_cols[2].text_input(
+            "Places disponibles",
+            value=optional_int_text((current or {}).get("default_capacity_available")),
+            help="Places restantes. Si vide, le cockpit la calcule quand total et occupées sont renseignés.",
+        )
+        default_is_full = capacity_cols[3].checkbox(
+            "Session complète",
+            value=bool((current or {}).get("default_is_full")),
+            help="Bloque les relances automatiques quand cette session de référence est utilisée.",
+        )
         schooldrive_url = st.text_input(
             "Lien SchoolDrive de la session, optionnel",
             value=(current or {}).get("schooldrive_url") or "",
@@ -3488,15 +3525,26 @@ def render_pilotage_default_sessions(user: dict) -> None:
         )
         submitted = st.form_submit_button("Enregistrer la session par défaut")
     if submitted:
-        ok, message = upsert_course_default_session(
-            user["id"],
-            category,
-            course_name,
-            start_date.isoformat(),
-            default_session_name=session_name,
-            schooldrive_url=schooldrive_url,
-            note=note,
-        )
+        parsed_total, total_error = parse_optional_non_negative_int(capacity_total, "Capacité totale")
+        parsed_occupied, occupied_error = parse_optional_non_negative_int(capacity_occupied, "Places occupées")
+        parsed_available, available_error = parse_optional_non_negative_int(capacity_available, "Places disponibles")
+        capacity_error = total_error or occupied_error or available_error
+        if capacity_error:
+            ok, message = False, capacity_error
+        else:
+            ok, message = upsert_course_default_session(
+                user["id"],
+                category,
+                course_name,
+                start_date.isoformat(),
+                default_session_name=session_name,
+                schooldrive_url=schooldrive_url,
+                note=note,
+                default_capacity_total=parsed_total,
+                default_capacity_occupied=parsed_occupied,
+                default_capacity_available=parsed_available,
+                default_is_full=default_is_full,
+            )
         show_result(ok, message)
         if ok:
             st.rerun()
@@ -3753,7 +3801,7 @@ def render_pilotage_conflict_rules() -> None:
     st.caption(
         "Cette section sert à valider la logique complète : état de départ, événement, réponse du système, "
         "geste utilisateur, résolution et prochaine action. Les cas utilisent un seul cours de référence, "
-        "car la logique est identique pour APP, FSM, AS et les autres cours une fois configurés."
+        "avec un périmètre V1 strict : APP, FSM et AS seulement pour les flux structurés."
     )
 
     st.markdown("### Règles transversales")
@@ -3911,6 +3959,30 @@ def render_wrapped_table(rows: list[dict], max_height_rem: int = 42) -> None:
     )
 
 
+PILOTAGE_TABLE_COLUMN_LABELS = {
+    "validation_case": {
+        "statut": "Statut",
+        "validation": "Validation",
+        "depart": "Départ",
+        "evenement": "Événement",
+        "reponse_systeme": "Réponse système",
+        "utilisateur": "Utilisateur",
+        "resolution_action": "Résolution action",
+        "prochaine_action": "Prochaine action",
+    }
+}
+PILOTAGE_VALIDATION_CASE_COLUMN_ORDER = [
+    "statut",
+    "validation",
+    "depart",
+    "evenement",
+    "reponse_systeme",
+    "utilisateur",
+    "resolution_action",
+    "prochaine_action",
+]
+
+
 def pilotage_rows_with_natural_language(rows: list[dict], kind: str) -> list[dict]:
     output = []
     for row in rows:
@@ -3918,9 +3990,44 @@ def pilotage_rows_with_natural_language(rows: list[dict], kind: str) -> list[dic
             key: pilotage_function_text(value)
             for key, value in row.items()
         }
-        normalized["Langage naturel"] = pilotage_natural_language(normalized, kind)
-        output.append(normalized)
+        if kind == "validation_case" and "validation" not in normalized:
+            normalized["validation"] = pilotage_validation_status_text(normalized)
+        natural_language = pilotage_natural_language(normalized, kind)
+        output.append(pilotage_display_row(normalized, kind, natural_language))
     return output
+
+
+def pilotage_display_row(row: dict, kind: str, natural_language: str) -> dict:
+    labels = PILOTAGE_TABLE_COLUMN_LABELS.get(kind, {})
+    if kind == "validation_case":
+        ordered_keys = [
+            key for key in PILOTAGE_VALIDATION_CASE_COLUMN_ORDER
+            if key in row
+        ]
+        ordered_keys.extend(
+            key for key in row
+            if key not in ordered_keys
+        )
+    else:
+        ordered_keys = list(row.keys())
+
+    display = {
+        labels.get(key, key): row.get(key, "")
+        for key in ordered_keys
+    }
+    display["Langage naturel"] = natural_language
+    return display
+
+
+def pilotage_validation_status_text(row: dict) -> str:
+    status = str(row.get("statut") or "").strip()
+    if status == "Actif":
+        return "Contrat V1 actif."
+    if status.startswith("Partiel"):
+        return "À valider avant automatisation."
+    if status.startswith("V2"):
+        return "Hors V1."
+    return status or "À valider."
 
 
 def pilotage_natural_language(row: dict, kind: str) -> str:
@@ -4146,22 +4253,57 @@ VALIDATION_CASE_NATURAL_LANGUAGE = {
         "Catégorie de cours active sans date SchoolDrive explicite",
         "Un Lead arrive avec seulement une catégorie de cours.",
     ): (
-        "Lorsqu'un Lead arrive avec une catégorie de cours mais sans session précise, Sales Cockpit utilise la session de référence définie dans Pilotage pour cette catégorie. "
-        "Cette date sert à calculer les relances liées au début du cours. L'admin doit donc garder ces sessions de référence à jour."
+        "Lorsqu'un Lead APP, FSM ou AS arrive avec une catégorie de cours mais sans session précise, Sales Cockpit utilise la session de référence définie dans Pilotage. "
+        "Cette date sert à calculer les relances liées au début du cours, sauf si la capacité SchoolDrive indique que la session est complète."
     ),
     (
         "Catégorie de cours active",
         "La session de référence est déjà passée.",
     ): (
         "Lorsqu'une session de référence est déjà passée, Sales Cockpit ne doit pas lancer de relances Début de cours sur cette ancienne session. "
-        "L'admin doit sélectionner la prochaine session pertinente. En V1, cette correction s'applique seulement aux nouvelles actions créées après modification."
+        "Un admin peut corriger la session de référence pour les futurs flux. En V1, cette correction s'applique seulement aux nouvelles actions créées après modification."
     ),
     (
-        "Catégorie de cours non activée dans Pilotage",
+        "Catégorie hors V1 ou non active dans Pilotage",
         "SchoolDrive envoie un lead ou une préinscription pour cette catégorie.",
     ): (
-        "Lorsqu'un prospect arrive pour une catégorie de cours qui n'est pas encore pilotée dans Sales Cockpit, le système conserve la conversation mais ne lance pas de flux de relance structuré. "
-        "Setter I doit traiter le cas manuellement et décider de la prochaine action. L'admin pourra activer cette catégorie plus tard."
+        "Lorsqu'un prospect arrive pour une catégorie hors APP, FSM ou AS, Sales Cockpit conserve la conversation mais ne lance pas de flux de relance structuré. "
+        "Il ne crée pas de revue admin automatique. Une action est créée seulement si le prospect écrit et déclenche un reply inbound."
+    ),
+    (
+        "Produit Roadmap ou produit sans cours",
+        "SchoolDrive envoie un produit sans cours ou une fiche Roadmap.",
+    ): (
+        "Lorsqu'un snapshot SchoolDrive correspond à Roadmap ou à un produit sans cours, Sales Cockpit conserve la fiche et le transcript, mais ne lance pas de flux Setter II. "
+        "Il ne crée pas de revue admin automatique. Seule une réponse entrante du prospect crée une action à traiter."
+    ),
+    (
+        "Catégorie de cours absente du snapshot SchoolDrive",
+        "SchoolDrive envoie une fiche sans catégorie exploitable.",
+    ): (
+        "Lorsqu'une fiche arrive sans catégorie de cours exploitable, Sales Cockpit ne devine pas la catégorie et ne crée ni relance ni revue admin automatique. "
+        "La fiche reste visible. Si le prospect écrit, l'inbound crée une action Répondre."
+    ),
+    (
+        "Session ou cours complet dans SchoolDrive",
+        "Le dernier snapshot indique une capacité complète ou course.is_full.",
+    ): (
+        "Lorsqu'une session est complète, la capacité SchoolDrive sert de hard stop : aucune relance ne démarre ou ne continue pour cette session. "
+        "Sales Cockpit n'ouvre pas de revue admin et ne propose pas automatiquement une autre session. Une action humaine existe seulement si le prospect écrit."
+    ),
+    (
+        "Fiche non archivée signée pour la même personne et la même catégorie",
+        "SchoolDrive indique une inscription signée sur une fiche liée active.",
+    ): (
+        "Lorsqu'une fiche non archivée indique une signature pour la même personne et la même catégorie, Sales Cockpit arrête les relances concurrentes de cette catégorie. "
+        "Les fiches archivées sont ignorées dans cet arbitrage."
+    ),
+    (
+        "Plusieurs fiches actives même personne et même catégorie",
+        "SchoolDrive conserve plusieurs fiches non archivées pour cette personne et cette catégorie.",
+    ): (
+        "Lorsque plusieurs fiches actives existent pour une même personne et une même catégorie, Sales Cockpit les garde séparées et ne crée pas de revue automatique uniquement pour cela. "
+        "Un hard stop signé, session complète ou Ne plus contacter reste prioritaire ; sinon chaque fiche suit son propre snapshot."
     ),
     (
         "Appel setting planifié",
@@ -4293,7 +4435,7 @@ OPERATING_RULE_NATURAL_LANGUAGE = {
     ),
     "Lead vs Préinscription": (
         "Un Lead vient généralement des campagnes payantes, tandis qu'une Préinscription vient plutôt du trafic naturel et peut déjà être liée à une session précise. "
-        "Sales Cockpit affiche donc soit une catégorie de cours, soit un cours/session plus précis, puis applique les mêmes règles de suivi une fois la session de référence connue."
+        "Sales Cockpit affiche donc soit une catégorie de cours, soit un cours/session plus précis. Les flux structurés V1 restent limités à APP, FSM et AS, avec session de référence et capacité quand SchoolDrive ne donne pas de session précise."
     ),
     "Fenêtre WhatsApp": (
         "La fenêtre WhatsApp s'ouvre seulement quand le prospect écrit. Elle reste ouverte 24 heures après son dernier message entrant. "
@@ -4845,6 +4987,25 @@ def parse_iso_date_or_today(value: str | None):
         except ValueError:
             pass
     return utc_now().date()
+
+
+def optional_int_text(value) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def parse_optional_non_negative_int(value: str, label: str) -> tuple[int | None, str | None]:
+    text = (value or "").strip()
+    if not text:
+        return None, None
+    try:
+        parsed = int(text)
+    except ValueError:
+        return None, f"{label} doit être un nombre entier ou rester vide."
+    if parsed < 0:
+        return None, f"{label} ne peut pas être négatif."
+    return parsed, None
 
 
 def build_simulated_timeline(

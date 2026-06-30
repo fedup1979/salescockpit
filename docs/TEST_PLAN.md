@@ -11,7 +11,7 @@ Prompt IA pour générer l'image exhaustive : `docs/WORKFLOW_GRAPH_IMAGE_PROMPT.
 
 ## Validation automatisée courante
 
-Dernière validation locale connue : `215 passed`, `compileall` OK.
+Dernière validation locale connue : `compileall` OK, `239 passed` avec `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\full-schooldrive-v1-final-2`, `scripts/pre_cutover_check.py --allow-cold-prod` OK, Playwright local non-mutating `14 passed / 8 skipped`.
 
 Avant une validation manuelle propre :
 
@@ -74,8 +74,8 @@ Utiliser les fiches de démonstration suivantes après `reset_demo.py` :
 - `Mathieu Garnier` : closing `Va signer`, relance post-closing ;
 - `Sonia Mercier` : reprise manuelle setter ;
 - `Yves Caron` : reprise manuelle closer ;
-- `Emma Complet` : session complète, relances stoppées, revue humaine ;
-- `Rita Roadmap` : produit Roadmap hors flux V1, revue humaine.
+- `Emma Complet` : session complète, relances stoppées, aucune revue automatique ;
+- `Rita Roadmap` : produit Roadmap hors flux V1, aucune revue automatique.
 
 ## P0 Restauration
 

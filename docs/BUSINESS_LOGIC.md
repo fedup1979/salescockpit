@@ -137,6 +137,14 @@ Une relance liée au cours gagne toujours contre une relance relative au lead/pr
 
 Une relance liée au cours ne remplace pas un appel setting ou closing déjà planifié. Si un appel est prévu, l'appel reste prioritaire et visible.
 
+Le périmètre V1 des flux structurés est strict : `APP`, `FSM` et `AS`.
+
+Roadmap, les produits sans cours, les catégories absentes et les catégories hors V1 sont stockés et visibles, mais ne déclenchent ni relance structurée ni revue admin automatique. Seule une réponse entrante du prospect crée une action `reply`.
+
+Lorsqu'un Lead APP/FSM/AS arrive sans session précise, la session par défaut configurée dans Pilotage sert de couche de planification. La donnée SchoolDrive reste prioritaire dès qu'elle fournit une session, une date ou une capacité. Si SchoolDrive indique une session complète, c'est un hard stop de relance.
+
+Plusieurs fiches actives pour la même personne et la même catégorie peuvent coexister en V1. Cette multiplicité ne crée pas de fusion, de relance ou de revue automatique. Une fiche non archivée signée dans la même catégorie bloque les relances concurrentes de cette catégorie. Les fiches archivées sont ignorées dans ces arbitrages.
+
 ## Templates
 
 Setter II doit relire la conversation avant d'envoyer une relance et sélectionner le template approprié.
@@ -274,17 +282,23 @@ Lorsqu'une date de début de cours approche et que le prospect n'a pas signé, a
 
 Cette priorité ne remplace pas un appel setting ou closing déjà planifié. L'appel reste l'action principale ; la relance cours attendra un prochain déclencheur ou une décision humaine.
 
-Si la session de référence d'une catégorie est dépassée, le cockpit crée une action admin pour demander la mise à jour de cette session. Il ne lance pas une relance liée à une ancienne session.
+Si la session de référence d'une catégorie est dépassée, le cockpit ne lance pas une relance liée à une ancienne session. Un admin peut corriger la session pour les futurs flux, sans recalcul automatique des actions ouvertes en V1.
 
 ### Règle 23 bis : cours complet dans SchoolDrive
 
-Lorsque SchoolDrive indique que le cours ou la session est complet, Sales Cockpit annule les relances commerciales ouvertes et rend le cas très visible. Si aucun appel n'est planifié, Setter I reçoit une action pour proposer une autre session. Si un appel setting ou closing est déjà planifié, cet appel reste l'action principale et reçoit une note visible indiquant que la session est complète.
+Lorsque SchoolDrive indique que le cours ou la session est complet, Sales Cockpit arrête les relances commerciales ouvertes ou futures liées à cette session et rend la capacité visible. Il ne crée pas de revue admin automatique et ne propose pas automatiquement une autre session. Si le prospect écrit ensuite, l'inbound crée une action `reply` normale.
 
 Limite V1 : Sales Cockpit dépend du dernier webhook SchoolDrive reçu. Il ne vérifie pas encore en live la capacité du cours juste avant l'envoi d'une relance Début de cours.
 
 ### Règle 23 ter : signaux terminaux SchoolDrive
 
-Lorsque SchoolDrive indique qu'un prospect a signé, que le prospect ne doit plus être contacté, ou qu'un opt-out email/téléphone/WhatsApp existe, Sales Cockpit aligne son état sur SchoolDrive. Une signature clôt la conversation comme gagnée. Un signal `do_not_contact` ou opt-out clôt la conversation, bloque tous les canaux commerciaux et conserve une note de provenance.
+Lorsque SchoolDrive indique qu'un prospect a signé, que le prospect ne doit plus être contacté, ou qu'un opt-out email/téléphone/WhatsApp existe, Sales Cockpit aligne son état sur SchoolDrive. Une signature clôt la conversation comme gagnée. Une fiche non archivée signée pour la même personne et la même catégorie bloque aussi les relances concurrentes de cette catégorie. Un signal `do_not_contact` ou opt-out clôt la conversation, bloque tous les canaux commerciaux et conserve une note de provenance.
+
+Les fiches archivées ne déclenchent pas de nouveaux flux, ne créent pas de revue admin automatique et sont ignorées dans les arbitrages de signatures ou de fiches multiples.
+
+### Règle 23 quater : hors V1, Roadmap et catégorie absente
+
+Lorsque SchoolDrive envoie Roadmap, un produit sans cours, une catégorie absente ou une catégorie hors `APP` / `FSM` / `AS`, Sales Cockpit stocke la fiche, les messages et le transcript, mais ne crée ni relance structurée ni revue admin automatique. La seule exception est un message entrant du prospect : dans ce cas, le cockpit crée une action `reply` pour traiter l'inbound.
 
 ### Règle 24 : qualification terminale à tout moment
 

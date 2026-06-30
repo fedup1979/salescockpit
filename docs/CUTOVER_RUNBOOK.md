@@ -59,7 +59,7 @@ We will also adopt the SchoolDrive mental model you described:
 - top-level `signed` is the canonical enrolment signal;
 - `do_not_contact.blocked = true` is a hard stop on commercial sends, and `do_not_contact.reasons[]` is an array of objects keyed by `type`;
 - `related_subscriptions[]` with nested `course` will be used to prevent duplicate or competing follow-up flows;
-- `product` without `course` is treated as Roadmap/product-only and routed to human review, not the normal follow-up flow.
+- `product` without `course` is treated as Roadmap/product-only: store and display it, but start no normal follow-up flow and no automatic admin review.
 
 You can publish schema `2.1` to staging.
 ```

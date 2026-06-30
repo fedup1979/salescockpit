@@ -18,6 +18,11 @@ test.describe("P7 guide, pilotage and admin surfaces", () => {
     for (const label of ["Flux actifs", "Templates réels", "Templates approuvés", "Cours traités", "États, flux et actions"]) {
       await expect(page.getByText(label, { exact: false }).first()).toBeVisible();
     }
+    await page.getByRole("tab", { name: "Logique métier" }).click();
+    await expect(page.getByText("Tous les cas à valider", { exact: false }).first()).toBeVisible();
+    await expect(page.getByText("Validation", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("Table technique de transition", { exact: false }).first()).toBeVisible();
+    await expect(page.locator("body")).not.toContainText("APP, FSM, AS et les autres cours une fois configurés");
 
     await openNav(page, "Mode d'emploi");
     for (const label of ["Setter I", "Setter II", "Closer", "Administrateur", "Notes internes"]) {

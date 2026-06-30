@@ -148,11 +148,11 @@ Fix:
 
 ### Course Full Conversation State
 
-When SchoolDrive signals course/session full, Sales Cockpit cancels follow-ups and either annotates a planned call or creates a review action. The conversation may remain resolved in some paths.
+When SchoolDrive signals course/session full, the V1 contract is now a hard stop: Sales Cockpit cancels follow-ups and keeps the capacity signal visible without creating an automatic review action or alternate-session proposal. The conversation may remain resolved in some paths.
 
 Fix:
 
-- when a course-full review action is created, ensure the conversation is open;
+- ensure course-full does not recreate follow-ups or automatic review actions;
 - when a call is planned, make the course-full warning visibly attached to that call;
 - define what happens if the planned call is later cancelled.
 

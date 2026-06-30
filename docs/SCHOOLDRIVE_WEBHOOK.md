@@ -32,11 +32,11 @@ Production should use HTTPS before cutover.
   - `course.start_date` may be either an ISO date (`YYYY-MM-DD`) or a full ISO UTC timestamp.
 - Course capacity is read from `course.seats_total`, `course.seats_occupied`, `course.seats_available`, and `course.is_full`.
 - Capacity is three-state: `seats_total = null` means there is no seat limit or no course yet. Sales Cockpit does not infer "full" from `seats_available` unless `seats_total` is present.
-- `course.is_full = true` stops automatic follow-ups and routes the record to human review, or annotates an already planned call.
+- `course.is_full = true` stops automatic follow-ups and keeps the capacity signal visible, without automatic admin review or alternate-session proposal.
 - `data.signed = true` is the canonical signed/enrolled signal and stops follow-ups by marking the current Sales Cockpit lead as signed.
 - `data.do_not_contact.blocked = true` is a hard commercial stop and sets the contact status to `do_not_contact`. `data.do_not_contact.reasons[]` may contain objects keyed by `type`; Sales Cockpit summarizes the reason type and opt-out group in the internal note while preserving the full raw payload.
-- `data.related_subscriptions[]` is preserved in the raw payload. If a non-archived related subscription is already signed, Sales Cockpit stops automatic follow-ups for the current record and creates a human review instead of starting a competing commercial flow. The nested `related_subscriptions[].course` shape is supported.
-- If `data.course` is absent and `data.product.roadmap_descriptive_id` is present, Sales Cockpit stores the roadmap identifier as an operational product title and routes the case to human review instead of starting a course-specific flux.
+- `data.related_subscriptions[]` is preserved in the raw payload. If a non-archived related subscription is already signed for the same category, Sales Cockpit stops competing same-category follow-ups without creating automatic admin review. Archived related subscriptions are ignored. The nested `related_subscriptions[].course` shape is supported.
+- If `data.course` is absent and `data.product.roadmap_descriptive_id` is present, Sales Cockpit stores the roadmap identifier as an operational product title without starting a course-specific flux or automatic admin review.
 
 ## Timestamp Convention
 

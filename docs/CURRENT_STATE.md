@@ -1,6 +1,6 @@
 # Current Project State
 
-Last updated: 2026-06-26 Europe/Zurich.
+Last updated: 2026-06-30 Europe/Zurich.
 
 This is the first document to read when resuming Sales Cockpit.
 
@@ -15,7 +15,7 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 - Latest checkpoint before hardening audit: `a02f10c`.
 - Latest deployed staging UI/API check: OK on latest `main`; verify the exact server commit with `git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD`.
 - Latest observed production commit: `786f89c`; production was not touched by the V1 pre-cutover hardening deploy and remains cold/mock.
-- Latest local automated validation after the transcript-driven E2E/UX update: `215 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\transcript-full`, and `compileall` OK.
+- Latest local automated validation for the SchoolDrive V1 business contract: `compileall` OK, `239 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\full-schooldrive-v1-final-2`, local `scripts/pre_cutover_check.py --allow-cold-prod` OK, and Playwright local non-mutating suite `14 passed / 8 skipped`.
 - Latest staging pre-cutover check before this audit: OK.
 - Staging Twilio mode: `mock`, no real WhatsApp send from Sales Cockpit.
 - Production Twilio mode: `mock`, prepared cold only.
@@ -27,10 +27,10 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 - Latest local V1 workflow update: `eligible` is now the default qualification; setting/closing indécis and no-show flows are distinct; call appointments can be rescheduled or cancelled; bug reports and template requests create admin actions; outbound WhatsApp safeguards are configurable in Admin.
 - Latest hardening update: no-show call retries are now scoped by `call_cycle_id`; business-rule seeds are versioned and migrate legacy `post_call_undecided` rows without overwriting existing real template mappings; Twilio template sync can unblock linked template requests; strict production cutover checks exist; SchoolDrive signed/do-not-contact/course-full/session-past signals are handled; follow-up quotas do not block human replies; outbound WhatsApp sends are claimed per active action before Twilio is called; core list queries now have indexes and pagination guards.
 - Latest workflow reconciliation update: Inbox/list and detail now use the same next-action priority; manual lift of `Ne plus contacter` closes obsolete contact reviews and recreates a reply only when the last inbound is unanswered; inbound on terminal qualifications creates a review instead of a normal reply; reopening a resolved conversation refuses terminal contact/qualification states; linked template requests/admin actions are cancelled when their blocked follow-up becomes obsolete.
-- Latest recorded staging deployment: latest `main` after the transcript-driven E2E/UX update; API/UI OK, `scripts/pre_cutover_check.py --allow-cold-prod` OK. Verify the exact server commit with `git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD`.
+- Latest recorded staging deployment: latest `main` after the transcript-driven E2E/UX update; API/UI OK, `scripts/pre_cutover_check.py --allow-cold-prod` OK. The current local SchoolDrive V1 contract changes still need staging deployment and validation. Verify the exact server commit with `git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD`.
 - Latest recorded staging pre-cutover after deployment: OK, including API security, seed checks, and zero active workflow anomalies.
 - Latest staging template mapping check after deployment: `81` mappings total, `78` active, `78` active mappings linked to approved real Twilio templates; active split `APP=26`, `AS=26`, `FSM=26`. The seed did not overwrite the fine-tuned Twilio mappings.
-- Production was not redeployed in this pass. Keep production cold/mock until explicit GO.
+- Staging and production were not redeployed in this local SchoolDrive V1 contract pass. Keep production cold/mock until explicit GO.
 
 The main remaining blocker before operational production cutover is a fresh live end-to-end SchoolDrive validation after the SchoolDrive WhatsApp/projector worker is confirmed running:
 
@@ -102,7 +102,7 @@ Working:
 - backup/restore scripts and cron.
 - pre-cutover readiness check.
 
-SchoolDrive human review rule: an active `contact_review` or `other` action caused by `unconfigured_course_category`, `schooldrive_roadmap_product`, `schooldrive_course_full`, or `schooldrive_related_subscription_signed` blocks automatic follow-ups for that lead until the human review is resolved. `init_db()` also cancels pre-existing follow-ups that conflict with such an active review.
+SchoolDrive V1 hard-stop rule: category outside APP/FSM/AS, missing category, Roadmap/product-only, full session and same-category signed records stop structured follow-ups without creating an automatic admin review. The record remains stored and visible. Only an inbound prospect reply creates a new operational `reply` action.
 
 Latest recorded staging check:
 
@@ -191,7 +191,7 @@ Implemented in commit `6c48293`, then expanded in commit `f8e8a0b`.
 
 Default course sessions live in `course_default_sessions`. They are used as a planning layer when a SchoolDrive Lead has only a course category, for example `APP`, but no specific session or `start_date`. SchoolDrive data remains authoritative: if SchoolDrive provides a real session/start date, it wins over the default session.
 
-Structured course categories live in `course_categories`. V1 seeds `FSM`, `APP`, and `AS`. If SchoolDrive sends a lead or presubscription with a sent WhatsApp for an unsupported category, Sales Cockpit still stores and displays the conversation, but it does not create the automated Tanjona relance flux. Instead it creates a human review action for Setter I/Mihary with trigger `unconfigured_course_category`.
+Structured course categories live in `course_categories`. V1 seeds `FSM`, `APP`, and `AS`. If SchoolDrive sends a lead or presubscription with a sent WhatsApp for an unsupported category, missing category, Roadmap or product-only payload, Sales Cockpit still stores and displays the conversation, but it does not create the automated Tanjona relance flux or an automatic admin review. Only an inbound prospect reply creates a `reply` action.
 
 V1 behavior: changing sequence steps or template mappings affects only newly created future sequences. Existing open tasks are not recalculated. V2 debt: add a controlled recalculation button.
 
@@ -215,8 +215,8 @@ Important invariants:
 - A planned setting/closing call means the future work is to document the call at the scheduled time. The call is visible in the conversation detail so Setter I or the closer knows an appointment already exists and can modify it in `Actions`.
 - Course-start relances may replace a lead/presubscription relance when they conflict within 24h, but they must not replace an already planned setting/closing call.
 - Course-start dates come first from SchoolDrive `data.course.start_date`; if a Lead only has a category, Sales Cockpit uses the active default session for that category.
-- If a default session date is already past, Sales Cockpit creates an admin action asking to update the default session instead of silently doing nothing.
-- If SchoolDrive marks a course full, Sales Cockpit cancels open follow-up relances and routes the case to Setter I to propose another course/class. If an appointment is already planned, that appointment remains the primary action and receives a visible course-full note.
+- If a default session date is already past, Sales Cockpit does not launch a course-start relance on that old session; an admin can update the default session for future flows.
+- If SchoolDrive marks a course full, Sales Cockpit cancels open follow-up relances and keeps the capacity signal visible without creating an automatic review or proposing another course/class. If the prospect writes, the inbound creates the normal `reply` action.
 - A prospect marked `will_sign` must not silently downgrade to the generic setter no-next-step flux after a simple reply. Unless the prospect signs, is disqualified, asks not to be contacted, books an appointment, or a course-start conflict wins, follow-up context remains `closer_will_sign`.
 - A sequence step can be skipped with a mandatory note. Skipping means only "do not do this step"; the flux continues to the next active step if one exists. The UI now previews the next natural action, or tells the user that the flux will end, before confirmation.
 
@@ -236,9 +236,9 @@ Implemented locally for the refined V1:
 
 - SchoolDrive signed signal stops follow-ups and marks the lead `signed`.
 - SchoolDrive do-not-contact / opt-out signal sets contact status `do_not_contact`, closes follow-ups, and stores the source note.
-- SchoolDrive course-full signal stops follow-ups and creates a Setter I review action to propose another course/class.
+- SchoolDrive course-full signal stops follow-ups and keeps the capacity signal visible without automatic review or alternate-session proposal.
 - SchoolDrive's updated nested `course` payload is supported locally: nested category, course id, course short/name, full ISO `start_date`, and Roadmap `product` records.
-- Tiago's schema `2.1` mental model is supported locally: no separate session entity is expected, `course.id` and `course.short_name` identify the class/session, `course.seats_*` and `course.is_full` feed capacity, capacity is three-state when `seats_total` is null, `do_not_contact.blocked` is a stop signal with object `reasons[]`, non-archived signed `related_subscriptions[]` create human review instead of automatic competing follow-ups, and `product` without `course` is routed to Roadmap human review.
+- Tiago's schema `2.1` mental model is supported locally: no separate session entity is expected, `course.id` and `course.short_name` identify the class/session, `course.seats_*` and `course.is_full` feed capacity, capacity is three-state when `seats_total` is null, `do_not_contact.blocked` is a stop signal with object `reasons[]`, non-archived signed `related_subscriptions[]` stop competing same-category follow-ups, and `product` without `course` is stored as Roadmap/product-only without structured follow-up or automatic admin review.
 
 Important timestamp decision:
 

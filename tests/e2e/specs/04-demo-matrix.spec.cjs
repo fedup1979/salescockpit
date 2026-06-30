@@ -26,8 +26,8 @@ const demoCases = [
   ["Luc Moreau", ["Appeler et documenter l'appel setting de Luc Moreau"]],
   ["Sonia Mercier", ["Reprise manuelle setter de Sonia Mercier"]],
   ["Yves Caron", ["Reprise manuelle closer de Yves Caron"]],
-  ["Emma Complet", ["Proposer une autre session à Emma Complet", "complète"]],
-  ["Rita Roadmap", ["Revoir le produit Roadmap de Rita Roadmap", "Roadmap"]],
+  ["Emma Complet", ["complète"]],
+  ["Rita Roadmap", ["Roadmap"]],
 ];
 
 test.describe("P4 demo matrix", () => {
@@ -44,17 +44,17 @@ test.describe("P4 demo matrix", () => {
     }
   });
 
-  test("special SchoolDrive records route to human review instead of normal flow", async ({ page }) => {
+  test("special SchoolDrive records avoid forbidden automatic follow-ups", async ({ page }) => {
     test.skip(!hasCredentials("admin"), missingCredentialsMessage("admin"));
     await loginAs(page, "admin");
 
     await openInboxConversation(page, "Emma Complet");
-    await expect(page.locator("body")).toContainText("Proposer une autre session à Emma Complet");
     await expect(page.locator("body")).toContainText("complète");
+    await expect(page.locator("body")).not.toContainText("Proposer une autre session");
     await expect(page.getByText("Relancer Emma Complet", { exact: false })).toHaveCount(0);
 
     await openInboxConversation(page, "Rita Roadmap");
-    await expect(page.locator("body")).toContainText("Revoir le produit Roadmap de Rita Roadmap");
+    await expect(page.locator("body")).not.toContainText("Revoir le produit Roadmap");
     await expect(page.getByText("Relancer Rita Roadmap", { exact: false })).toHaveCount(0);
   });
 });

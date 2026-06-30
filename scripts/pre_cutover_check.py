@@ -19,6 +19,9 @@ from sales_cockpit.db import connect, seed_initial_data
 from sales_cockpit.store import get_integration_readiness
 
 
+V1_PILOTABLE_CATEGORIES = ("APP", "FSM", "AS")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Sales Cockpit pre-cutover checks.")
     parser.add_argument("--api-base", default="", help="Optional API base URL, e.g. http://127.0.0.1:8602.")
@@ -210,6 +213,18 @@ def _strict_prod_failures(
     missing_mappings = _strict_missing_template_mapping_count()
     if missing_mappings:
         failures.append(f"{missing_mappings} active follow-up step/category combination(s) lack a real approved template mapping")
+    failures.extend(_strict_v1_category_configuration_failures())
+    forbidden_followups = _strict_forbidden_schooldrive_followup_count()
+    if forbidden_followups:
+        failures.append(
+            f"{forbidden_followups} active follow-up action(s) target a full, missing-category, or non-V1 SchoolDrive record"
+        )
+    missing_capacity = _strict_default_session_capacity_missing_count()
+    if missing_capacity:
+        failures.append(f"{missing_capacity} V1 default session(s) lack current SchoolDrive capacity data")
+    duplicate_pilotable = _strict_duplicate_pilotable_person_category_count()
+    if duplicate_pilotable:
+        failures.append(f"{duplicate_pilotable} person/category pair(s) have more than one pilotable SchoolDrive record")
 
     return failures
 
@@ -253,7 +268,11 @@ def _strict_missing_template_mapping_count() -> int:
                     lt.lead_type
                 FROM sequence_steps ss
                 JOIN sequences s ON s.code = ss.sequence_code AND s.active = 1
-                JOIN course_categories cc ON cc.active = 1
+                JOIN (
+                    SELECT 'APP' AS course_category
+                    UNION ALL SELECT 'FSM'
+                    UNION ALL SELECT 'AS'
+                ) cc
                 CROSS JOIN (
                     SELECT 'lead' AS lead_type
                     UNION ALL
@@ -262,6 +281,12 @@ def _strict_missing_template_mapping_count() -> int:
                 WHERE ss.active = 1
                   AND ss.action_type = 'follow_up'
                   AND ss.requires_template = 1
+                  AND EXISTS (
+                      SELECT 1
+                      FROM course_categories configured
+                      WHERE configured.active = 1
+                        AND configured.course_category = cc.course_category
+                  )
             )
             SELECT COUNT(*) AS count
             FROM required r
@@ -278,6 +303,99 @@ def _strict_missing_template_mapping_count() -> int:
                   AND wt.twilio_content_sid IS NOT NULL
                   AND wt.twilio_content_sid LIKE 'HX%'
                   AND wt.twilio_content_sid NOT LIKE 'HX_MOCK_%'
+            )
+            """
+        ).fetchone()
+    return int(row["count"] if row else 0)
+
+
+def _strict_v1_category_configuration_failures() -> list[str]:
+    with connect() as conn:
+        active_rows = conn.execute(
+            "SELECT course_category FROM course_categories WHERE active = 1"
+        ).fetchall()
+    active = {str(row["course_category"] or "").strip().upper() for row in active_rows}
+    expected = set(V1_PILOTABLE_CATEGORIES)
+    failures: list[str] = []
+    missing = sorted(expected - active)
+    extra = sorted(active - expected)
+    if missing:
+        failures.append(f"Missing active V1 course categories: {', '.join(missing)}")
+    if extra:
+        failures.append(f"Only APP/FSM/AS may be active pilotable categories in strict V1: {', '.join(extra)}")
+    return failures
+
+
+def _strict_forbidden_schooldrive_followup_count() -> int:
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM tasks t
+            JOIN leads l ON l.id = t.lead_id
+            WHERE t.type = 'follow_up'
+              AND t.status IN ('planned', 'open', 'in_progress', 'blocked')
+              AND l.source = 'schooldrive_webhook'
+              AND (
+                  coalesce(l.is_full, 0) = 1
+                  OR coalesce(l.course_category_short_title, '') = ''
+                  OR upper(l.course_category_short_title) NOT IN ('APP', 'FSM', 'AS')
+              )
+            """
+        ).fetchone()
+    return int(row["count"] if row else 0)
+
+
+def _strict_default_session_capacity_missing_count() -> int:
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM course_default_sessions cds
+            WHERE cds.active = 1
+              AND upper(cds.course_category) IN ('APP', 'FSM', 'AS')
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM leads l
+                  WHERE l.source = 'schooldrive_webhook'
+                    AND coalesce(l.schooldrive_is_archived, 0) = 0
+                    AND upper(coalesce(l.course_category_short_title, '')) = upper(cds.course_category)
+                    AND date(l.course_start_date) = date(cds.default_start_date)
+                    AND l.capacity_total IS NOT NULL
+                    AND l.capacity_available IS NOT NULL
+              )
+            """
+        ).fetchone()
+    return int(row["count"] if row else 0)
+
+
+def _strict_duplicate_pilotable_person_category_count() -> int:
+    with connect() as conn:
+        row = conn.execute(
+            """
+            WITH pilotable AS (
+                SELECT
+                    coalesce(
+                        nullif(trim(l.phone_e164), ''),
+                        nullif(lower(trim(l.email)), ''),
+                        nullif(lower(trim(l.first_name || ' ' || coalesce(l.last_name, ''))), '')
+                    ) AS person_key,
+                    upper(trim(l.course_category_short_title)) AS category
+                FROM leads l
+                WHERE l.source = 'schooldrive_webhook'
+                  AND coalesce(l.schooldrive_is_archived, 0) = 0
+                  AND coalesce(l.is_full, 0) = 0
+                  AND upper(coalesce(l.course_category_short_title, '')) IN ('APP', 'FSM', 'AS')
+                  AND coalesce(l.lead_status, 'eligible') NOT IN ('signed', 'not_relevant')
+                  AND coalesce(l.contact_status, 'contact_allowed') != 'do_not_contact'
+            )
+            SELECT COUNT(*) AS count
+            FROM (
+                SELECT person_key, category, COUNT(*) AS records
+                FROM pilotable
+                WHERE person_key IS NOT NULL
+                GROUP BY person_key, category
+                HAVING records > 1
             )
             """
         ).fetchone()

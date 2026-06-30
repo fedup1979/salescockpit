@@ -47,6 +47,13 @@ SCHOOLDRIVE_PENDING_AUTORESPONDER_STATUSES = {
     "sending",
     "moderation_pending",
 }
+SCHOOLDRIVE_V1_COURSE_CATEGORIES = {"APP", "FSM", "AS"}
+SCHOOLDRIVE_SILENT_STOP_TRIGGERS = {
+    "unconfigured_course_category",
+    "schooldrive_roadmap_product",
+    "schooldrive_course_full",
+    "schooldrive_related_subscription_signed",
+}
 MANUAL_REPRISE_ACTION_TYPES = {"manual_reprise_setter", "manual_reprise_closer"}
 VALID_ACTION_TYPES = {
     "reply",
@@ -1857,6 +1864,39 @@ def _clean_schooldrive_text(value: Any) -> str | None:
     return text or None
 
 
+def _normalize_schooldrive_category(value: Any) -> str | None:
+    if isinstance(value, dict):
+        value = (
+            value.get("short_name")
+            or value.get("short_title")
+            or value.get("system_id")
+            or value.get("category_short_title")
+            or value.get("category_short_name")
+            or value.get("name")
+        )
+    text = _clean_schooldrive_text(value)
+    return text.upper() if text else None
+
+
+def _schooldrive_category_from_course(course: Any) -> str | None:
+    if not isinstance(course, dict):
+        return None
+    category = course.get("category")
+    return _normalize_schooldrive_category(
+        course.get("category_short_title")
+        or course.get("category_short_name")
+        or category
+    )
+
+
+def _schooldrive_category_from_data(data: dict[str, Any]) -> str | None:
+    return _normalize_schooldrive_category(_schooldrive_course_fields(data).get("course_category_short_title"))
+
+
+def _schooldrive_category_is_v1(category: Any) -> bool:
+    return _normalize_schooldrive_category(category) in SCHOOLDRIVE_V1_COURSE_CATEGORIES
+
+
 def _schooldrive_int(value: Any) -> int | None:
     if value is None or value == "":
         return None
@@ -1894,14 +1934,14 @@ def _schooldrive_course_fields(data: dict[str, Any]) -> dict[str, Any]:
     category_name = None
     if isinstance(category_raw, dict):
         category_id = _clean_schooldrive_text(category_raw.get("id"))
-        category_short_name = _clean_schooldrive_text(
+        category_short_name = _normalize_schooldrive_category(
             category_raw.get("short_name")
             or category_raw.get("short_title")
             or category_raw.get("system_id")
         )
         category_name = _clean_schooldrive_text(category_raw.get("name"))
     else:
-        category_short_name = _clean_schooldrive_text(
+        category_short_name = _normalize_schooldrive_category(
             course.get("category_short_title")
             or course.get("category_short_name")
             or category_raw
@@ -2019,6 +2059,58 @@ def _schooldrive_course_fields(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _default_session_for_category(conn: Any, category: str | None) -> dict[str, Any] | None:
+    normalized = _normalize_schooldrive_category(category)
+    if not normalized:
+        return None
+    row = conn.execute(
+        """
+        SELECT *
+        FROM course_default_sessions
+        WHERE course_category = ? AND active = 1
+        LIMIT 1
+        """,
+        (normalized,),
+    ).fetchone()
+    return row_to_dict(row)
+
+
+def _apply_default_session_to_schooldrive_fields(
+    conn: Any,
+    course_fields: dict[str, Any],
+) -> dict[str, Any]:
+    category = _normalize_schooldrive_category(course_fields.get("course_category_short_title"))
+    if not _schooldrive_category_is_v1(category) or course_fields.get("course_id"):
+        return course_fields
+    default = _default_session_for_category(conn, category)
+    if not default:
+        return course_fields
+
+    enriched = dict(course_fields)
+    enriched["course_category_short_title"] = category
+    enriched["course_title"] = default.get("default_course_name") or enriched.get("course_title")
+    enriched["session_id"] = enriched.get("session_id") or f"default:{category}"
+    enriched["session_name"] = default.get("default_session_name") or default.get("default_course_name")
+    if not enriched.get("course_start_date") and default.get("default_start_date"):
+        enriched["course_start_date"] = f"{default['default_start_date']}T08:00:00Z"
+    for field, default_field in (
+        ("capacity_total", "default_capacity_total"),
+        ("capacity_occupied", "default_capacity_occupied"),
+        ("capacity_available", "default_capacity_available"),
+    ):
+        if enriched.get(field) is None and default.get(default_field) is not None:
+            enriched[field] = default.get(default_field)
+    if default.get("default_is_full"):
+        enriched["is_full"] = 1
+    elif (
+        enriched.get("capacity_total") is not None
+        and enriched.get("capacity_available") is not None
+        and int(enriched["capacity_available"]) <= 0
+    ):
+        enriched["is_full"] = 1
+    return enriched
+
+
 def _normalize_schooldrive_course_start(value: Any) -> str | None:
     text = _clean_schooldrive_text(value)
     if not text:
@@ -2049,7 +2141,10 @@ def _upsert_schooldrive_lead(
     phone = str(person.get("phone") or "").strip() or None
     email = str(person.get("email") or "").strip() or None
     lead_type = str(data.get("lead_type") or "lead").strip()
-    course_fields = _schooldrive_course_fields(data)
+    course_fields = _apply_default_session_to_schooldrive_fields(
+        conn,
+        _schooldrive_course_fields(data),
+    )
     course_id = course_fields["course_id"]
     category = course_fields["course_category_short_title"]
     course_name = course_fields["course_title"]
@@ -2334,6 +2429,206 @@ def _latest_sent_schooldrive_autoresponder_at(conn: Any, lead_id: int) -> str | 
     return row["sent_at"] if row else None
 
 
+def _active_human_action_for_lead(conn: Any, lead_id: int) -> dict[str, Any] | None:
+    return _first_active_action_for_lead(
+        conn,
+        lead_id,
+        action_types=(
+            "reply",
+            "contact_review",
+            "setting_call",
+            "closing_call",
+            *MANUAL_REPRISE_ACTION_TYPES,
+        ),
+    )
+
+
+def _park_schooldrive_record_without_automation(
+    conn: Any,
+    lead_id: int,
+    conversation_id: int,
+    reason: str,
+    detail: str | None = None,
+) -> None:
+    now = iso_utc()
+    _complete_open_actions_for_lead(
+        conn,
+        lead_id,
+        user_id=None,
+        outcome=f"SchoolDrive V1 sans automatisation : {reason}",
+        included_types=("follow_up",),
+    )
+    if _active_human_action_for_lead(conn, lead_id):
+        return
+    note = detail or reason
+    conn.execute(
+        """
+        UPDATE conversations
+        SET status = 'resolved',
+            resolution_reason = 'handled_elsewhere',
+            resolution_note = ?,
+            resolved_at = coalesce(resolved_at, ?),
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (note, now, now, conversation_id),
+    )
+    insert_event(
+        conn,
+        lead_id,
+        "schooldrive_v1_record_parked",
+        new={"reason": reason, "detail": detail},
+        metadata={"conversation_id": conversation_id},
+    )
+
+
+def _schooldrive_same_person_candidates(conn: Any, lead: dict[str, Any]) -> list[dict[str, Any]]:
+    phone = _clean_schooldrive_text(lead.get("phone_e164") or lead.get("phone_raw"))
+    email = _clean_schooldrive_text(lead.get("email"))
+    if not phone and not email:
+        return [lead]
+    rows = conn.execute(
+        """
+        SELECT
+            id, first_name, last_name, email, phone_e164, phone_raw,
+            course_category_short_title, course_id, course_title, session_id, session_name,
+            course_start_date, is_full, lead_status, contact_status,
+            schooldrive_is_archived, schooldrive_aggregated_updated_at
+        FROM leads
+        WHERE schooldrive_lead_id IS NOT NULL
+          AND (
+            (? IS NOT NULL AND (phone_e164 = ? OR phone_raw = ?))
+            OR (? IS NOT NULL AND lower(email) = lower(?))
+          )
+        """,
+        (phone, phone, phone, email, email),
+    ).fetchall()
+    return rows_to_dicts(rows)
+
+
+def _same_person_non_archived_leads(conn: Any, lead_id: int) -> list[dict[str, Any]]:
+    current = row_to_dict(
+        conn.execute(
+            """
+            SELECT id, email, phone_e164, phone_raw
+            FROM leads
+            WHERE id = ?
+            """,
+            (lead_id,),
+        ).fetchone()
+    )
+    if not current:
+        return []
+    phone = _clean_schooldrive_text(current.get("phone_e164") or current.get("phone_raw"))
+    email = _clean_schooldrive_text(current.get("email"))
+    if not phone and not email:
+        return [current]
+    rows = conn.execute(
+        """
+        SELECT id
+        FROM leads
+        WHERE coalesce(schooldrive_is_archived, 0) = 0
+          AND (
+            (? IS NOT NULL AND (phone_e164 = ? OR phone_raw = ?))
+            OR (? IS NOT NULL AND lower(email) = lower(?))
+          )
+        """,
+        (phone, phone, phone, email, email),
+    ).fetchall()
+    return rows_to_dicts(rows)
+
+
+def _schooldrive_lead_is_default_session_candidate(lead: dict[str, Any]) -> bool:
+    category = _normalize_schooldrive_category(lead.get("course_category_short_title"))
+    return bool(category and lead.get("session_id") == f"default:{category}")
+
+
+def _schooldrive_selected_pilotable_lead_id(conn: Any, lead_id: int) -> int | None:
+    current = row_to_dict(
+        conn.execute(
+            """
+            SELECT
+                id, first_name, last_name, email, phone_e164, phone_raw,
+                course_category_short_title, course_id, course_title, session_id, session_name,
+                course_start_date, is_full, lead_status, contact_status,
+                schooldrive_is_archived, schooldrive_aggregated_updated_at
+            FROM leads
+            WHERE id = ?
+            """,
+            (lead_id,),
+        ).fetchone()
+    )
+    if not current:
+        return None
+    category = _normalize_schooldrive_category(current.get("course_category_short_title"))
+    if not _schooldrive_category_is_v1(category):
+        return None
+
+    candidates = [
+        item
+        for item in _schooldrive_same_person_candidates(conn, current)
+        if _normalize_schooldrive_category(item.get("course_category_short_title")) == category
+        and not bool(item.get("schooldrive_is_archived"))
+        and not followups_are_blocked(item)
+    ]
+    if not candidates:
+        return None
+
+    available = [item for item in candidates if not bool(item.get("is_full"))]
+    if not available:
+        _cancel_schooldrive_followups_for_leads(
+            conn,
+            [int(item["id"]) for item in candidates],
+            "Relances annulées : toutes les sessions candidates sont complètes",
+        )
+        return None
+
+    def sort_key(item: dict[str, Any]) -> tuple[int, datetime, datetime]:
+        start = _parse_optional_dt(item.get("course_start_date")) or datetime.min.replace(tzinfo=timezone.utc)
+        updated = _parse_optional_dt(item.get("schooldrive_aggregated_updated_at")) or datetime.min.replace(tzinfo=timezone.utc)
+        return (
+            1 if _schooldrive_lead_is_default_session_candidate(item) else 0,
+            start,
+            updated,
+        )
+
+    selected = max(available, key=sort_key)
+    selected_id = int(selected["id"])
+    _cancel_schooldrive_followups_for_leads(
+        conn,
+        [int(item["id"]) for item in candidates if int(item["id"]) != selected_id],
+        "Relances annulées : autre fiche active retenue pour cette personne et cette catégorie",
+    )
+    return selected_id
+
+
+def _parse_optional_dt(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return parse_dt(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _cancel_schooldrive_followups_for_leads(conn: Any, lead_ids: list[int], reason: str) -> None:
+    if not lead_ids:
+        return
+    placeholders = ",".join("?" for _ in lead_ids)
+    conn.execute(
+        f"""
+        UPDATE tasks
+        SET status = 'cancelled',
+            cancelled_reason = ?,
+            updated_at = ?
+        WHERE lead_id IN ({placeholders})
+          AND type = 'follow_up'
+          AND status IN ('planned', 'open', 'in_progress', 'blocked')
+        """,
+        (reason, iso_utc(), *lead_ids),
+    )
+
+
 def _ensure_initial_schooldrive_followup(
     conn: Any,
     lead_id: int,
@@ -2345,7 +2640,7 @@ def _ensure_initial_schooldrive_followup(
     lead = row_to_dict(
         conn.execute(
             """
-            SELECT first_name, last_name, lead_status, contact_status, course_category_short_title
+            SELECT first_name, last_name, lead_status, contact_status, course_category_short_title, is_full
             FROM leads
             WHERE id = ?
             """,
@@ -2357,11 +2652,32 @@ def _ensure_initial_schooldrive_followup(
     if _active_schooldrive_review_blocks_followups(conn, lead_id):
         return
     if not _course_category_is_supported(conn, lead.get("course_category_short_title")):
-        _ensure_unconfigured_course_category_review(
+        category = lead.get("course_category_short_title") or "catégorie absente"
+        _park_schooldrive_record_without_automation(
             conn,
-            lead_id=lead_id,
-            conversation_id=conversation_id,
-            lead=lead,
+            lead_id,
+            conversation_id,
+            "schooldrive_non_v1_category",
+            f"Catégorie SchoolDrive hors V1 ou absente ({category}). Aucune relance automatique.",
+        )
+        return
+    selected_lead_id = _schooldrive_selected_pilotable_lead_id(conn, lead_id)
+    if selected_lead_id != lead_id:
+        _park_schooldrive_record_without_automation(
+            conn,
+            lead_id,
+            conversation_id,
+            "schooldrive_duplicate_person_category_not_selected",
+            "Une autre fiche SchoolDrive est retenue pour cette personne et cette catégorie.",
+        )
+        return
+    if bool(lead.get("is_full")):
+        _park_schooldrive_record_without_automation(
+            conn,
+            lead_id,
+            conversation_id,
+            "schooldrive_full_session",
+            "Session SchoolDrive complète. Aucune relance automatique.",
         )
         return
     active = _first_active_action_for_lead(conn, lead_id)
@@ -2435,13 +2751,7 @@ def _active_schooldrive_review_blocks_followups(conn: Any, lead_id: int) -> bool
         FROM tasks
         WHERE lead_id = ?
           AND status IN ('planned', 'open', 'in_progress', 'blocked')
-          AND type IN ('contact_review', 'other')
-          AND trigger_reason IN (
-            'unconfigured_course_category',
-            'schooldrive_roadmap_product',
-            'schooldrive_course_full',
-            'schooldrive_related_subscription_signed'
-          )
+          AND type = 'contact_review'
         LIMIT 1
         """,
         (lead_id,),
@@ -2453,7 +2763,13 @@ def _course_start_anchor_for_lead(conn: Any, lead_id: int) -> tuple[str | None, 
     lead = row_to_dict(
         conn.execute(
             """
-            SELECT course_category_short_title, course_start_date, schooldrive_payload_json
+            SELECT
+                course_category_short_title,
+                course_title,
+                session_id,
+                session_name,
+                course_start_date,
+                schooldrive_payload_json
             FROM leads
             WHERE id = ?
             """,
@@ -2464,6 +2780,10 @@ def _course_start_anchor_for_lead(conn: Any, lead_id: int) -> tuple[str | None, 
         return None, None
 
     if lead.get("course_start_date"):
+        category = _normalize_schooldrive_category(lead.get("course_category_short_title"))
+        if category and lead.get("session_id") == f"default:{category}":
+            label = lead.get("session_name") or lead.get("course_title") or category
+            return lead["course_start_date"], f"Session de référence {label}"
         return lead["course_start_date"], "Date de cours SchoolDrive"
 
     payload_start_date = None
@@ -2537,7 +2857,7 @@ def _ensure_course_start_followup(
     lead = row_to_dict(
         conn.execute(
             """
-            SELECT first_name, last_name, lead_status, contact_status, course_category_short_title
+            SELECT first_name, last_name, lead_status, contact_status, course_category_short_title, is_full
             FROM leads
             WHERE id = ?
             """,
@@ -2549,6 +2869,16 @@ def _ensure_course_start_followup(
     if _active_schooldrive_review_blocks_followups(conn, lead_id):
         return
     if not _course_category_is_supported(conn, lead.get("course_category_short_title")):
+        return
+    selected_lead_id = _schooldrive_selected_pilotable_lead_id(conn, lead_id)
+    if selected_lead_id != lead_id:
+        return
+    if bool(lead.get("is_full")):
+        _cancel_schooldrive_followups_for_leads(
+            conn,
+            [lead_id],
+            "Relances annulées : session complète",
+        )
         return
 
     active_call = _first_active_action_for_lead(
@@ -2679,18 +3009,8 @@ def _ensure_default_session_review(
 
 
 def _course_category_is_supported(conn: Any, category: str | None) -> bool:
-    normalized = (category or "").strip().upper()
-    if not normalized:
-        return False
-    row = conn.execute(
-        """
-        SELECT id
-        FROM course_categories
-        WHERE course_category = ? AND active = 1
-        """,
-        (normalized,),
-    ).fetchone()
-    return bool(row)
+    _ = conn
+    return _schooldrive_category_is_v1(category)
 
 
 def _ensure_unconfigured_course_category_review(
@@ -2699,48 +3019,8 @@ def _ensure_unconfigured_course_category_review(
     conversation_id: int,
     lead: dict[str, Any],
 ) -> None:
-    existing = conn.execute(
-        """
-        SELECT id
-        FROM tasks
-        WHERE lead_id = ?
-          AND status IN ('open', 'planned', 'in_progress', 'blocked')
-          AND trigger_reason = 'unconfigured_course_category'
-        LIMIT 1
-        """,
-        (lead_id,),
-    ).fetchone()
-    if existing:
-        return
-    assignee_id = setter1_user_id(conn) or _default_active_user_id(conn, "setter")
-    if not assignee_id:
-        return
-    now = iso_utc()
-    category = (lead.get("course_category_short_title") or "non renseignée").strip()
-    action_id = _insert_next_action(
-        conn,
-        lead_id=lead_id,
-        conversation_id=conversation_id,
-        action_type="other",
-        title=f"Revoir catégorie {category} pour {lead_full_name(lead)}",
-        assigned_to_user_id=assignee_id,
-        created_by_user_id=None,
-        urgency="normal",
-        due_at=now,
-        status="open",
-        trigger_reason="unconfigured_course_category",
-        description=(
-            "Catégorie de cours non pilotée dans Sales Cockpit. "
-            "Lire la conversation et décider du suivi manuel."
-        ),
-    )
-    insert_event(
-        conn,
-        lead_id,
-        "unconfigured_course_category_review_created",
-        new={"task_id": action_id, "course_category": category},
-        metadata={"conversation_id": conversation_id},
-    )
+    _ = (conn, lead_id, conversation_id, lead)
+    return
 
 
 def _ensure_roadmap_product_review(
@@ -2749,54 +3029,8 @@ def _ensure_roadmap_product_review(
     conversation_id: int,
     source: str,
 ) -> None:
-    existing = conn.execute(
-        """
-        SELECT id
-        FROM tasks
-        WHERE lead_id = ?
-          AND status IN ('open', 'planned', 'in_progress', 'blocked')
-          AND trigger_reason = 'schooldrive_roadmap_product'
-        LIMIT 1
-        """,
-        (lead_id,),
-    ).fetchone()
-    if existing:
-        return
-    lead = row_to_dict(
-        conn.execute(
-            "SELECT first_name, last_name, course_title FROM leads WHERE id = ?",
-            (lead_id,),
-        ).fetchone()
-    )
-    assignee_id = setter1_user_id(conn) or _default_active_user_id(conn, "setter")
-    if not lead or not assignee_id:
-        return
-    now = iso_utc()
-    product_label = (lead.get("course_title") or source or "Roadmap").strip()
-    action_id = _insert_next_action(
-        conn,
-        lead_id=lead_id,
-        conversation_id=conversation_id,
-        action_type="other",
-        title=f"Revoir produit Roadmap pour {lead_full_name(lead)}",
-        assigned_to_user_id=assignee_id,
-        created_by_user_id=None,
-        urgency="normal",
-        due_at=now,
-        status="open",
-        trigger_reason="schooldrive_roadmap_product",
-        description=(
-            f"SchoolDrive a envoyé un produit sans cours/session ({product_label}). "
-            "Ne pas lancer le flux commercial normal ; décider du suivi manuel."
-        ),
-    )
-    insert_event(
-        conn,
-        lead_id,
-        "schooldrive_roadmap_product_review_created",
-        new={"task_id": action_id, "source": source},
-        metadata={"conversation_id": conversation_id},
-    )
+    _ = (conn, lead_id, conversation_id, source)
+    return
 
 
 def _apply_schooldrive_archive(
@@ -2873,31 +3107,35 @@ def _apply_schooldrive_business_signals(
 
     do_not_contact, dnc_source = _schooldrive_do_not_contact_signal(data)
     if do_not_contact:
-        _complete_open_actions_for_lead(
-            conn,
-            lead_id,
-            user_id=None,
-            outcome=f"Ne plus contacter confirmé par SchoolDrive ({dnc_source})",
-        )
+        affected_leads = _same_person_non_archived_leads(conn, lead_id)
+        affected_ids = [int(item["id"]) for item in affected_leads] or [lead_id]
+        for affected_id in affected_ids:
+            _complete_open_actions_for_lead(
+                conn,
+                affected_id,
+                user_id=None,
+                outcome=f"Ne plus contacter confirmé par SchoolDrive ({dnc_source})",
+            )
+        placeholders = ",".join("?" for _ in affected_ids)
         conn.execute(
-            """
+            f"""
             UPDATE leads
             SET contact_status = 'do_not_contact',
                 lead_status = 'eligible',
                 sales_stage = 'blacklist',
                 updated_at = ?
-            WHERE id = ?
+            WHERE id IN ({placeholders})
             """,
-            (now, lead_id),
+            (now, *affected_ids),
         )
         conn.execute(
-            """
+            f"""
             UPDATE conversations
             SET status = 'resolved', resolution_reason = 'do_not_contact',
                 resolution_note = ?, resolved_at = ?, updated_at = ?
-            WHERE id = ?
+            WHERE lead_id IN ({placeholders})
             """,
-            (f"Blocage importé depuis SchoolDrive : {dnc_source}.", now, now, conversation_id),
+            (f"Blocage importé depuis SchoolDrive : {dnc_source}.", now, now, *affected_ids),
         )
         _insert_internal_note_message(
             conn,
@@ -2906,6 +3144,13 @@ def _apply_schooldrive_business_signals(
             None,
             f"SchoolDrive : Ne plus contacter ({dnc_source}). Tous les canaux commerciaux sont bloqués.",
             now,
+        )
+        insert_event(
+            conn,
+            lead_id,
+            "schooldrive_do_not_contact_global_stop",
+            new={"affected_lead_ids": affected_ids, "source": dnc_source},
+            metadata={"conversation_id": conversation_id},
         )
         return True
 
@@ -2928,7 +3173,7 @@ def _apply_schooldrive_business_signals(
             metadata["schooldrive_course_full"] = True
             metadata["schooldrive_course_full_source"] = course_full_source
             description = active_call.get("description") or ""
-            prefix = "SchoolDrive indique que la session est complète : proposer une autre session."
+            prefix = "SchoolDrive indique que la session est complète : relances automatiques arrêtées."
             conn.execute(
                 """
                 UPDATE tasks
@@ -2949,7 +3194,7 @@ def _apply_schooldrive_business_signals(
                 lead_id,
                 conversation_id,
                 None,
-                f"SchoolDrive : cours complet ({course_full_source}). Relances annulées ; l'appel planifié reste prioritaire et doit servir à proposer une autre session.",
+                f"SchoolDrive : cours complet ({course_full_source}). Relances annulées ; l'appel planifié reste prioritaire.",
                 now,
             )
             insert_event(
@@ -2960,11 +3205,12 @@ def _apply_schooldrive_business_signals(
                 metadata={"conversation_id": conversation_id},
             )
         else:
-            _ensure_course_full_review(
+            _park_schooldrive_record_without_automation(
                 conn,
-                lead_id=lead_id,
-                conversation_id=conversation_id,
-                source=course_full_source,
+                lead_id,
+                conversation_id,
+                "schooldrive_course_full",
+                f"SchoolDrive : cours complet ({course_full_source}). Relances annulées sans revue automatique.",
             )
         return True
 
@@ -2977,11 +3223,12 @@ def _apply_schooldrive_business_signals(
             outcome="Relances annulées : inscription liée déjà signée dans SchoolDrive",
             included_types=("follow_up",),
         )
-        _ensure_related_subscription_review(
+        _park_schooldrive_record_without_automation(
             conn,
-            lead_id=lead_id,
-            conversation_id=conversation_id,
-            source=related_source,
+            lead_id,
+            conversation_id,
+            "schooldrive_related_subscription_signed",
+            f"SchoolDrive : signature active dans la même catégorie ({related_source}). Relances de cette catégorie arrêtées.",
         )
         return True
 
@@ -2994,11 +3241,12 @@ def _apply_schooldrive_business_signals(
             outcome="Relances annulées : produit Roadmap sans cours SchoolDrive",
             included_types=("follow_up",),
         )
-        _ensure_roadmap_product_review(
+        _park_schooldrive_record_without_automation(
             conn,
-            lead_id=lead_id,
-            conversation_id=conversation_id,
-            source=roadmap_source,
+            lead_id,
+            conversation_id,
+            "schooldrive_roadmap_product",
+            f"SchoolDrive : produit Roadmap hors V1 ({roadmap_source}). Aucune relance automatique.",
         )
         return True
 
@@ -3031,13 +3279,22 @@ def _schooldrive_signed_signal(data: dict[str, Any]) -> tuple[bool, str]:
 
 
 def _schooldrive_related_signed_signal(data: dict[str, Any]) -> tuple[bool, str]:
+    current_category = _schooldrive_category_from_data(data)
+    if not _schooldrive_category_is_v1(current_category):
+        return False, ""
     related = data.get("related_subscriptions") or []
     if not isinstance(related, list):
         return False, ""
     for index, item in enumerate(related):
         if not isinstance(item, dict):
             continue
-        if _schooldrive_bool(item.get("is_archived")):
+        related_status = str(item.get("status") or "").strip().lower()
+        if (
+            _schooldrive_bool(item.get("is_archived"))
+            or _schooldrive_bool(item.get("archived"))
+            or bool(_clean_schooldrive_text(item.get("archived_at")))
+            or related_status in {"archived", "archive", "deleted", "cancelled", "canceled"}
+        ):
             continue
         if _schooldrive_bool(item.get("signed")):
             parts = [f"related_subscriptions[{index}].signed"]
@@ -3046,19 +3303,22 @@ def _schooldrive_related_signed_signal(data: dict[str, Any]) -> tuple[bool, str]
             if not isinstance(course, dict):
                 course = {}
             category = course.get("category") or {}
-            if not isinstance(category, dict):
-                category = {}
+            category_value = category if isinstance(category, dict) else category
             course_short_name = _clean_schooldrive_text(
                 item.get("course_short_name")
                 or course.get("short_name")
                 or course.get("course_short_name")
                 or course.get("name")
             )
-            category_short_title = _clean_schooldrive_text(
+            category_short_title = _normalize_schooldrive_category(
                 item.get("category_short_title")
-                or category.get("short_name")
-                or category.get("short_title")
+                or item.get("category")
+                or course.get("category_short_title")
+                or course.get("category_short_name")
+                or category_value
             )
+            if _normalize_schooldrive_category(category_short_title) != current_category:
+                continue
             if subscription_id:
                 parts.append(f"subscription:{subscription_id}")
             if course_short_name:
@@ -3200,56 +3460,8 @@ def _ensure_course_full_review(
     conversation_id: int,
     source: str,
 ) -> None:
-    existing = conn.execute(
-        """
-        SELECT id
-        FROM tasks
-        WHERE lead_id = ?
-          AND status IN ('open', 'planned', 'in_progress', 'blocked')
-          AND trigger_reason = 'schooldrive_course_full'
-        LIMIT 1
-        """,
-        (lead_id,),
-    ).fetchone()
-    if existing:
-        return
-    lead = row_to_dict(conn.execute("SELECT * FROM leads WHERE id = ?", (lead_id,)).fetchone())
-    if not lead:
-        return
-    assignee_id = setter1_user_id(conn) or _default_active_user_id(conn, "setter")
-    if not assignee_id:
-        return
-    now = iso_utc()
-    action_id = _insert_next_action(
-        conn,
-        lead_id=lead_id,
-        conversation_id=conversation_id,
-        action_type="other",
-        title=f"Proposer une autre session à {lead_full_name(lead)}",
-        assigned_to_user_id=assignee_id,
-        created_by_user_id=None,
-        urgency="high",
-        due_at=now,
-        status="open",
-        trigger_reason="schooldrive_course_full",
-        description="SchoolDrive indique que la session est complète. Lire le dossier et proposer une autre session.",
-        metadata={"schooldrive_source": source},
-    )
-    _insert_internal_note_message(
-        conn,
-        lead_id,
-        conversation_id,
-        None,
-        f"SchoolDrive : cours complet ({source}). Relances annulées, proposer une autre session.",
-        now,
-    )
-    insert_event(
-        conn,
-        lead_id,
-        "schooldrive_course_full_review_created",
-        new={"task_id": action_id, "source": source},
-        metadata={"conversation_id": conversation_id},
-    )
+    _ = (conn, lead_id, conversation_id, source)
+    return
 
 
 def _ensure_related_subscription_review(
@@ -3258,56 +3470,8 @@ def _ensure_related_subscription_review(
     conversation_id: int,
     source: str,
 ) -> None:
-    existing = conn.execute(
-        """
-        SELECT id
-        FROM tasks
-        WHERE lead_id = ?
-          AND status IN ('open', 'planned', 'in_progress', 'blocked')
-          AND trigger_reason = 'schooldrive_related_subscription_signed'
-        LIMIT 1
-        """,
-        (lead_id,),
-    ).fetchone()
-    if existing:
-        return
-    lead = row_to_dict(conn.execute("SELECT * FROM leads WHERE id = ?", (lead_id,)).fetchone())
-    if not lead:
-        return
-    assignee_id = setter1_user_id(conn) or _default_active_user_id(conn, "setter")
-    if not assignee_id:
-        return
-    now = iso_utc()
-    action_id = _insert_next_action(
-        conn,
-        lead_id=lead_id,
-        conversation_id=conversation_id,
-        action_type="other",
-        title=f"Revoir l'inscription déjà signée de {lead_full_name(lead)}",
-        assigned_to_user_id=assignee_id,
-        created_by_user_id=None,
-        urgency="high",
-        due_at=now,
-        status="open",
-        trigger_reason="schooldrive_related_subscription_signed",
-        description="SchoolDrive indique que la personne a déjà une inscription signée sur un autre dossier. Ne pas lancer de relance concurrente ; lire le dossier et décider de la suite.",
-        metadata={"schooldrive_source": source},
-    )
-    _insert_internal_note_message(
-        conn,
-        lead_id,
-        conversation_id,
-        None,
-        f"SchoolDrive : inscription liée déjà signée ({source}). Relances automatiques stoppées, revue humaine nécessaire.",
-        now,
-    )
-    insert_event(
-        conn,
-        lead_id,
-        "schooldrive_related_subscription_review_created",
-        new={"task_id": action_id, "source": source},
-        metadata={"conversation_id": conversation_id},
-    )
+    _ = (conn, lead_id, conversation_id, source)
+    return
 
 
 def resolution_reason_requires_note(reason: str | None) -> bool:
@@ -5664,17 +5828,29 @@ def _phone_match_candidates(conn: Any, from_phone: str) -> list[dict[str, Any]]:
             l.course_category_short_title,
             l.course_title,
             l.source,
+            l.lead_type,
+            l.lead_status,
+            l.contact_status,
+            l.schooldrive_is_archived,
+            l.schooldrive_aggregated_updated_at,
             l.identity_status,
             l.setter_user_id
         FROM leads l
-        WHERE l.phone_e164 = ?
-           OR l.phone_raw = ?
-           OR EXISTS (
+        WHERE coalesce(l.schooldrive_is_archived, 0) = 0
+          AND (
+            l.phone_e164 = ?
+            OR l.phone_raw = ?
+            OR EXISTS (
                 SELECT 1 FROM conversations c
                 WHERE c.lead_id = l.id AND c.recipient_phone_e164 = ?
-           )
+            )
+          )
         ORDER BY
+            CASE WHEN l.contact_status = 'do_not_contact' THEN 0 ELSE 1 END,
             CASE WHEN l.identity_status IN ('needs_identification', 'ambiguous_identity') THEN 0 ELSE 1 END,
+            CASE WHEN upper(coalesce(l.course_category_short_title, '')) IN ('APP', 'FSM', 'AS') THEN 0 ELSE 1 END,
+            CASE WHEN l.lead_type = 'presubscription' THEN 0 ELSE 1 END,
+            datetime(coalesce(l.schooldrive_aggregated_updated_at, l.updated_at, l.created_at)) DESC,
             l.id DESC
         """,
         (from_phone, from_phone, from_phone),
@@ -5803,10 +5979,29 @@ def _select_inbound_match(
     ]
     if review_records:
         return review_records[0], candidates, "existing_identity_review"
+    contact_stop_records = [
+        candidate
+        for candidate in candidates
+        if candidate.get("contact_status") in STOP_CONTACT_STATUSES
+    ]
+    if contact_stop_records:
+        return contact_stop_records[0], candidates, "matched_do_not_contact"
     if len(candidates) == 1:
         return candidates[0], candidates, "matched"
     if not candidates:
         return None, candidates, "no_match"
+    selected_pilotable_records: list[dict[str, Any]] = []
+    for candidate in candidates:
+        candidate_id = candidate.get("lead_id")
+        if not candidate_id or not _schooldrive_category_is_v1(
+            candidate.get("course_category_short_title")
+        ):
+            continue
+        selected_id = _schooldrive_selected_pilotable_lead_id(conn, int(candidate_id))
+        if selected_id == int(candidate_id):
+            selected_pilotable_records.append(candidate)
+    if len(selected_pilotable_records) == 1:
+        return selected_pilotable_records[0], candidates, "matched_pilotable"
     return None, candidates, "ambiguous"
 
 
@@ -7061,6 +7256,10 @@ def upsert_course_default_session(
     default_session_name: str = "",
     schooldrive_url: str = "",
     note: str = "",
+    default_capacity_total: int | None = None,
+    default_capacity_occupied: int | None = None,
+    default_capacity_available: int | None = None,
+    default_is_full: bool = False,
 ) -> tuple[bool, str]:
     category = (course_category or "").strip().upper()
     course_name = (default_course_name or "").strip()
@@ -7068,6 +7267,16 @@ def upsert_course_default_session(
     session_name = (default_session_name or "").strip()
     url = (schooldrive_url or "").strip()
     clean_note = (note or "").strip()
+    capacity_total = _schooldrive_int(default_capacity_total)
+    capacity_occupied = _schooldrive_int(default_capacity_occupied)
+    capacity_available = _schooldrive_int(default_capacity_available)
+    if capacity_available is None and capacity_total is not None and capacity_occupied is not None:
+        capacity_available = capacity_total - capacity_occupied
+    is_full = _schooldrive_bool(default_is_full)
+    if capacity_total is not None and capacity_available is not None and capacity_available <= 0:
+        is_full = True
+    if capacity_total is not None and capacity_occupied is not None and capacity_occupied >= capacity_total:
+        is_full = True
     if not category:
         return False, "Catégorie de cours obligatoire."
     if not course_name:
@@ -7087,14 +7296,19 @@ def upsert_course_default_session(
             """
             INSERT INTO course_default_sessions (
                 course_category, default_course_name, default_session_name,
-                default_start_date, schooldrive_url, note, active,
+                default_start_date, default_capacity_total, default_capacity_occupied,
+                default_capacity_available, default_is_full, schooldrive_url, note, active,
                 created_by_user_id, updated_by_user_id, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
             ON CONFLICT(course_category) DO UPDATE SET
                 default_course_name = excluded.default_course_name,
                 default_session_name = excluded.default_session_name,
                 default_start_date = excluded.default_start_date,
+                default_capacity_total = excluded.default_capacity_total,
+                default_capacity_occupied = excluded.default_capacity_occupied,
+                default_capacity_available = excluded.default_capacity_available,
+                default_is_full = excluded.default_is_full,
                 schooldrive_url = excluded.schooldrive_url,
                 note = excluded.note,
                 active = 1,
@@ -7106,6 +7320,10 @@ def upsert_course_default_session(
                 course_name,
                 session_name or None,
                 start_date,
+                capacity_total,
+                capacity_occupied,
+                capacity_available,
+                1 if is_full else 0,
                 url or None,
                 clean_note or None,
                 user_id,
@@ -7132,6 +7350,10 @@ def upsert_course_default_session(
                         "course_category": category,
                         "default_course_name": course_name,
                         "default_start_date": start_date,
+                        "default_capacity_total": capacity_total,
+                        "default_capacity_occupied": capacity_occupied,
+                        "default_capacity_available": capacity_available,
+                        "default_is_full": is_full,
                     },
                     ensure_ascii=False,
                 ),

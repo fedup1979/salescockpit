@@ -18,8 +18,12 @@ from sales_cockpit.store import (
     list_messages,
     record_inbound_message,
     send_freeform_message,
+    upsert_course_default_session,
 )
 from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
+
+
+ACTIVE_ACTION_STATUSES = {"planned", "open", "in_progress", "blocked"}
 
 
 def schooldrive_payload(
@@ -137,6 +141,46 @@ def schooldrive_payload_21(
     if occurred_at is not None:
         payload["occurred_at"] = occurred_at
     return payload
+
+
+def active_actions_for_lead(lead_id: int) -> list[dict]:
+    return [
+        item
+        for item in list_actions_for_lead(lead_id, "all")
+        if item["status"] in ACTIVE_ACTION_STATUSES
+    ]
+
+
+def assert_no_active_action(lead_id: int) -> None:
+    assert get_next_action_for_lead(lead_id) is None
+    assert active_actions_for_lead(lead_id) == []
+
+
+def active_followups_for_phone_category(phone: str, category: str) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                l.schooldrive_lead_id,
+                l.course_title,
+                l.course_start_date,
+                l.schooldrive_is_archived,
+                l.is_full,
+                t.type,
+                t.status,
+                t.trigger_reason,
+                t.sequence_code
+            FROM leads l
+            JOIN tasks t ON t.lead_id = l.id
+            WHERE l.phone_e164 = ?
+              AND upper(coalesce(l.course_category_short_title, '')) = ?
+              AND t.type = 'follow_up'
+              AND t.status IN ('planned', 'open', 'in_progress', 'blocked')
+            ORDER BY datetime(l.course_start_date), l.schooldrive_lead_id
+            """,
+            (phone, category.upper()),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def test_schooldrive_snapshot_creates_lead_conversation_messages_and_followup() -> None:
@@ -375,7 +419,7 @@ def test_course_start_does_not_interrupt_planned_call() -> None:
     assert active_course_followups == []
 
 
-def test_schooldrive_sent_whatsapp_for_unconfigured_category_creates_human_review() -> None:
+def test_schooldrive_sent_whatsapp_for_non_v1_category_creates_no_action() -> None:
     seed_initial_data()
 
     result = ingest_schooldrive_snapshot(
@@ -391,47 +435,39 @@ def test_schooldrive_sent_whatsapp_for_unconfigured_category_creates_human_revie
     assert conversation["course_category_short_title"] == "NUTR"
     messages = list_messages(result["conversation_id"])
     assert any(message["channel"] == "schooldrive_autoresponder" for message in messages)
-    action = get_next_action_for_lead(result["lead_id"])
-    assert action["type"] == "other"
-    assert action["trigger_reason"] == "unconfigured_course_category"
-    assert action["assigned_to_email"] == "service.etudiants@essr.ch"
+    assert_no_active_action(result["lead_id"])
 
 
-def test_schooldrive_active_human_review_blocks_later_course_start_followup() -> None:
+def test_schooldrive_non_v1_record_can_receive_reply_only_after_inbound() -> None:
     seed_initial_data()
     created = ingest_schooldrive_snapshot(
         schooldrive_payload(
-            event_id="evt_unconfigured_then_course_start",
-            schooldrive_id="lead:unconfigured-then-course-start",
+            event_id="evt_non_v1_then_inbound",
+            schooldrive_id="lead:non-v1-then-inbound",
             course_category="NUTR",
         )
     )
-    review = get_next_action_for_lead(created["lead_id"])
-    assert review["trigger_reason"] == "unconfigured_course_category"
 
-    update = schooldrive_payload(
-        event_id="evt_unconfigured_then_course_start_update",
-        occurred_at="2026-06-19T12:00:00Z",
-        aggregated_updated_at="2026-06-19T12:00:00Z",
-        schooldrive_id="lead:unconfigured-then-course-start",
-        course_category="APP",
+    assert_no_active_action(created["lead_id"])
+    record_inbound_message("+41790000000", "Je veux quand même parler à quelqu'un.")
+
+    actions = active_actions_for_lead(created["lead_id"])
+    assert [item["type"] for item in actions] == ["reply"]
+
+
+def test_schooldrive_sent_whatsapp_without_course_category_creates_no_action() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload(
+        event_id="evt_missing_category",
+        schooldrive_id="lead:missing-category",
     )
-    update["data"]["course"].update(
-        {
-            "course_id": 1842,
-            "course_short_name": "APP-2026-09",
-            "category_short_title": "APP",
-            "start_date": "2026-06-20T08:00:00Z",
-        }
-    )
+    payload["data"]["course"]["category"] = None
 
-    result = ingest_schooldrive_snapshot(update)
+    result = ingest_schooldrive_snapshot(payload)
 
-    assert result["status"] == "updated"
-    actions = list_actions_for_lead(created["lead_id"], "all")
-    active = [item for item in actions if item["status"] in {"planned", "open", "in_progress", "blocked"}]
-    assert [item["trigger_reason"] for item in active] == ["unconfigured_course_category"]
-    assert all(item["sequence_code"] != "course_start" for item in active)
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["course_category_short_title"] is None
+    assert_no_active_action(result["lead_id"])
 
 
 def test_schooldrive_api_preserves_extra_fields_and_projects_capacity(monkeypatch) -> None:
@@ -488,7 +524,7 @@ def test_schooldrive_api_preserves_extra_fields_and_projects_capacity(monkeypatc
     assert lead_payload["data"]["unexpected_root_field"] == {"kept": True}
 
 
-def test_schooldrive_schema_11_course_capacity_and_full_course_review() -> None:
+def test_schooldrive_schema_11_course_capacity_and_full_course_creates_no_followup() -> None:
     seed_initial_data()
     payload = schooldrive_payload(
         event_id="evt_schema_11_full_course",
@@ -540,11 +576,9 @@ def test_schooldrive_schema_11_course_capacity_and_full_course_review() -> None:
     assert conversation["capacity_occupied"] == 20
     assert conversation["capacity_available"] == 0
     assert conversation["is_full"] == 1
-    action = get_next_action_for_lead(result["lead_id"])
-    assert action["type"] == "other"
-    assert action["trigger_reason"] == "schooldrive_course_full"
     actions = list_actions_for_lead(result["lead_id"], "all")
     assert all(item["type"] != "follow_up" or item["status"] == "done" for item in actions)
+    assert_no_active_action(result["lead_id"])
     with connect() as conn:
         row = conn.execute(
             "SELECT schooldrive_payload_json FROM leads WHERE id = ?",
@@ -576,7 +610,28 @@ def test_schooldrive_do_not_contact_blocked_stops_commercial_flow() -> None:
     assert get_next_action_for_lead(result["lead_id"]) is None
 
 
-def test_schooldrive_related_signed_subscription_routes_to_human_review() -> None:
+def test_schooldrive_top_level_signed_stops_commercial_flow() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload(
+        event_id="evt_schema_11_top_level_signed",
+        schooldrive_id="lead:top-level-signed",
+    )
+    payload["schema_version"] = "1.1"
+    payload["data"]["signed"] = True
+    payload["data"]["signed_at"] = "2026-06-26T10:11:46Z"
+    payload["data"]["do_not_contact"] = {"blocked": False, "reasons": []}
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["status"] == "resolved"
+    assert conversation["lead_status"] == "signed"
+    assert conversation["sales_stage"] == "won"
+    assert conversation["resolution_reason"] == "signed"
+    assert_no_active_action(result["lead_id"])
+
+
+def test_schooldrive_related_signed_subscription_same_category_stops_flow() -> None:
     seed_initial_data()
     payload = schooldrive_payload(
         event_id="evt_schema_11_related_signed",
@@ -591,8 +646,8 @@ def test_schooldrive_related_signed_subscription_routes_to_human_review() -> Non
                 {
                     "subscription_id": 33120,
                     "course_id": 1790,
-                    "course_short_name": "FSM-2026-05",
-                    "category_short_title": "FSM",
+                    "course_short_name": "APP-2026-05",
+                    "category_short_title": "APP",
                     "status": "subscription",
                     "signed": True,
                     "signed_at": "2026-05-12T13:40:00Z",
@@ -616,13 +671,8 @@ def test_schooldrive_related_signed_subscription_routes_to_human_review() -> Non
     result = ingest_schooldrive_snapshot(payload)
 
     conversation = get_conversation(result["conversation_id"])
-    assert conversation["lead_status"] == "eligible"
-    assert conversation["status"] == "open"
-    action = get_next_action_for_lead(result["lead_id"])
-    assert action["type"] == "other"
-    assert action["trigger_reason"] == "schooldrive_related_subscription_signed"
-    actions = list_actions_for_lead(result["lead_id"], "all")
-    assert all(item["type"] != "follow_up" or item["status"] == "done" for item in actions)
+    assert conversation["status"] == "resolved"
+    assert_no_active_action(result["lead_id"])
 
 
 def test_schooldrive_schema_21_nested_course_capacity_and_optional_event_id() -> None:
@@ -725,7 +775,62 @@ def test_schooldrive_schema_21_capacity_null_does_not_imply_full_course() -> Non
     assert action["trigger_reason"] == "schooldrive_initial_autoresponder_sent"
 
 
-def test_schooldrive_schema_21_roadmap_without_course_creates_review_without_autoresponder() -> None:
+def test_schooldrive_v1_lead_without_course_id_uses_default_session_capacity() -> None:
+    seed_initial_data()
+    with connect() as conn:
+        admin_id = conn.execute(
+            "SELECT id FROM users WHERE email = 'francois.dupuis@essr.ch'"
+        ).fetchone()["id"]
+    ok, message = upsert_course_default_session(
+        admin_id,
+        "APP",
+        "APP VISIO P26",
+        "2026-09-01",
+        default_session_name="APP printemps 2026",
+        default_capacity_total=20,
+        default_capacity_occupied=12,
+        default_capacity_available=8,
+    )
+    assert ok, message
+    payload = schooldrive_payload_21(
+        schooldrive_id="lead:schema-21-category-only-default-session",
+        event_id="evt_schema_21_category_only_default_session",
+    )
+    payload["data"]["course"] = {
+        "id": None,
+        "category": {
+            "id": 1,
+            "short_name": "APP",
+            "name": "Anatomie - Physiologie - Pathologie",
+        },
+        "short_name": None,
+        "name": None,
+        "start_date": None,
+        "seats_total": None,
+        "seats_occupied": None,
+        "seats_available": None,
+        "is_full": None,
+    }
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["course_id"] is None
+    assert conversation["course_category_short_title"] == "APP"
+    assert conversation["course_title"] == "APP VISIO P26"
+    assert conversation["session_id"] == "default:APP"
+    assert conversation["session_name"] == "APP printemps 2026"
+    assert conversation["course_start_date"].startswith("2026-09-01")
+    assert conversation["capacity_total"] == 20
+    assert conversation["capacity_occupied"] == 12
+    assert conversation["capacity_available"] == 8
+    assert conversation["is_full"] == 0
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "follow_up"
+    assert action["trigger_reason"] == "schooldrive_initial_autoresponder_sent"
+
+
+def test_schooldrive_schema_21_roadmap_without_course_creates_no_action_without_autoresponder() -> None:
     seed_initial_data()
     payload = schooldrive_payload_21(
         schooldrive_id="lead:schema-21-roadmap",
@@ -741,9 +846,7 @@ def test_schooldrive_schema_21_roadmap_without_course_creates_review_without_aut
     conversation = get_conversation(result["conversation_id"])
     assert conversation["course_id"] == "ASCA_RME"
     assert conversation["course_title"] == "Roadmap ASCA_RME"
-    action = get_next_action_for_lead(result["lead_id"])
-    assert action["type"] == "other"
-    assert action["trigger_reason"] == "schooldrive_roadmap_product"
+    assert_no_active_action(result["lead_id"])
 
 
 def test_schooldrive_schema_21_roadmap_without_identity_is_still_ignored() -> None:
@@ -769,12 +872,66 @@ def test_schooldrive_schema_21_roadmap_without_identity_is_still_ignored() -> No
     assert result["ignored_reason"] == "missing_identity"
 
 
-def test_schooldrive_schema_21_related_subscription_nested_course_routes_to_review() -> None:
+def test_schooldrive_roadmap_record_can_receive_reply_only_after_inbound() -> None:
     seed_initial_data()
     payload = schooldrive_payload_21(
-        schooldrive_id="subscription:schema-21-related-active",
+        schooldrive_id="lead:schema-21-roadmap-inbound",
+        event_id="evt_schema_21_roadmap_inbound",
+        autoresponders=[],
+    )
+    payload["data"].pop("course")
+    payload["data"]["product"] = {"roadmap_descriptive_id": "ASCA_RME"}
+
+    result = ingest_schooldrive_snapshot(payload)
+    assert_no_active_action(result["lead_id"])
+
+    record_inbound_message("+41790000000", "Je réponds au sujet Roadmap.")
+
+    actions = active_actions_for_lead(result["lead_id"])
+    assert [item["type"] for item in actions] == ["reply"]
+
+
+def test_schooldrive_schema_21_related_subscription_same_category_stops_flow() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload_21(
+        schooldrive_id="subscription:schema-21-related-same-category",
         lead_type="presubscription",
-        event_id="evt_schema_21_related_active",
+        event_id="evt_schema_21_related_same_category",
+    )
+    payload["data"]["related_subscriptions"] = [
+        {
+            "subscription_id": 129076,
+            "status": "in_class",
+            "signed": True,
+            "signed_at": "2026-04-23T07:44:00Z",
+            "is_archived": False,
+            "course": {
+                "id": 8133,
+                "category": {"id": 1, "short_name": "APP", "name": "Anatomie - Physiologie - Pathologie"},
+                "short_name": "APP VISIO P26",
+                "name": "Anatomie Physiologie ASCA Visioconférence Printemps 2026",
+                "start_date": "2026-04-20T08:30:00Z",
+                "seats_total": 100,
+                "seats_occupied": 5,
+                "seats_available": 95,
+                "is_full": False,
+            },
+        }
+    ]
+
+    result = ingest_schooldrive_snapshot(payload)
+
+    conversation = get_conversation(result["conversation_id"])
+    assert conversation["status"] == "resolved"
+    assert_no_active_action(result["lead_id"])
+
+
+def test_schooldrive_schema_21_related_subscription_other_category_keeps_flow() -> None:
+    seed_initial_data()
+    payload = schooldrive_payload_21(
+        schooldrive_id="subscription:schema-21-related-other-category",
+        lead_type="presubscription",
+        event_id="evt_schema_21_related_other_category",
     )
     payload["data"]["related_subscriptions"] = [
         {
@@ -800,10 +957,8 @@ def test_schooldrive_schema_21_related_subscription_nested_course_routes_to_revi
     result = ingest_schooldrive_snapshot(payload)
 
     action = get_next_action_for_lead(result["lead_id"])
-    assert action["type"] == "other"
-    assert action["trigger_reason"] == "schooldrive_related_subscription_signed"
-    actions = list_actions_for_lead(result["lead_id"], "all")
-    assert all(item["type"] != "follow_up" or item["status"] == "done" for item in actions)
+    assert action["type"] == "follow_up"
+    assert action["trigger_reason"] == "schooldrive_initial_autoresponder_sent"
 
 
 def test_schooldrive_schema_21_archived_related_subscription_does_not_block_flow() -> None:
@@ -841,6 +996,138 @@ def test_schooldrive_schema_21_archived_related_subscription_does_not_block_flow
     assert action["trigger_reason"] == "schooldrive_initial_autoresponder_sent"
 
 
+def test_schooldrive_same_person_category_selects_default_session_record() -> None:
+    seed_initial_data()
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO course_default_sessions (
+                course_category, default_course_name, default_start_date, active
+            ) VALUES ('APP', 'APP GE P26', '2026-09-01', 1)
+            """
+        )
+    early = schooldrive_payload_21(
+        schooldrive_id="subscription:multi-default-early",
+        lead_type="presubscription",
+        event_id="evt_multi_default_early",
+        aggregated_updated_at="2026-06-28T01:01:30Z",
+    )
+    early["data"]["course"]["short_name"] = "APP GE E26"
+    early["data"]["course"]["start_date"] = "2026-08-01T08:30:00Z"
+    default = schooldrive_payload_21(
+        schooldrive_id="subscription:multi-default-selected",
+        lead_type="presubscription",
+        event_id="evt_multi_default_selected",
+        aggregated_updated_at="2026-06-28T01:02:30Z",
+    )
+    default["data"]["course"]["short_name"] = "APP GE P26"
+    default["data"]["course"]["start_date"] = "2026-09-01T08:30:00Z"
+
+    ingest_schooldrive_snapshot(early)
+    ingest_schooldrive_snapshot(default)
+
+    followups = active_followups_for_phone_category("+41790000000", "APP")
+    assert [(item["schooldrive_lead_id"], item["course_title"]) for item in followups] == [
+        ("subscription:multi-default-selected", "APP GE P26")
+    ]
+
+
+def test_schooldrive_same_person_category_without_default_selects_later_session() -> None:
+    seed_initial_data()
+    earlier = schooldrive_payload_21(
+        schooldrive_id="subscription:multi-later-earlier",
+        lead_type="presubscription",
+        event_id="evt_multi_later_earlier",
+        aggregated_updated_at="2026-06-28T01:03:30Z",
+    )
+    earlier["data"]["course"]["short_name"] = "APP GE A26"
+    earlier["data"]["course"]["start_date"] = "2026-08-01T08:30:00Z"
+    later = schooldrive_payload_21(
+        schooldrive_id="subscription:multi-later-selected",
+        lead_type="presubscription",
+        event_id="evt_multi_later_selected",
+        aggregated_updated_at="2026-06-28T01:04:30Z",
+    )
+    later["data"]["course"]["short_name"] = "APP GE H26"
+    later["data"]["course"]["start_date"] = "2026-10-01T08:30:00Z"
+
+    ingest_schooldrive_snapshot(earlier)
+    ingest_schooldrive_snapshot(later)
+
+    followups = active_followups_for_phone_category("+41790000000", "APP")
+    assert [(item["schooldrive_lead_id"], item["course_title"]) for item in followups] == [
+        ("subscription:multi-later-selected", "APP GE H26")
+    ]
+
+
+def test_schooldrive_same_person_category_all_sessions_full_creates_no_followup() -> None:
+    seed_initial_data()
+    first = schooldrive_payload_21(
+        schooldrive_id="subscription:multi-full-first",
+        lead_type="presubscription",
+        event_id="evt_multi_full_first",
+        aggregated_updated_at="2026-06-28T01:05:30Z",
+    )
+    first["data"]["course"]["short_name"] = "APP GE FULL 1"
+    first["data"]["course"]["start_date"] = "2026-08-01T08:30:00Z"
+    first["data"]["course"]["seats_available"] = 0
+    first["data"]["course"]["is_full"] = True
+    second = schooldrive_payload_21(
+        schooldrive_id="subscription:multi-full-second",
+        lead_type="presubscription",
+        event_id="evt_multi_full_second",
+        aggregated_updated_at="2026-06-28T01:06:30Z",
+    )
+    second["data"]["course"]["short_name"] = "APP GE FULL 2"
+    second["data"]["course"]["start_date"] = "2026-10-01T08:30:00Z"
+    second["data"]["course"]["seats_available"] = 0
+    second["data"]["course"]["is_full"] = True
+
+    ingest_schooldrive_snapshot(first)
+    ingest_schooldrive_snapshot(second)
+
+    assert active_followups_for_phone_category("+41790000000", "APP") == []
+
+
+def test_schooldrive_same_person_category_never_selects_archived_record() -> None:
+    seed_initial_data()
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO course_default_sessions (
+                course_category, default_course_name, default_start_date, active
+            ) VALUES ('APP', 'APP GE ARCHIVE', '2026-09-01', 1)
+            """
+        )
+    archived = schooldrive_payload_21(
+        schooldrive_id="subscription:multi-archived-default",
+        lead_type="presubscription",
+        event_id="evt_multi_archived_default",
+        aggregated_updated_at="2026-06-28T01:07:30Z",
+    )
+    archived["data"]["is_archived"] = True
+    archived["data"]["archived_at"] = "2026-06-28T01:07:00Z"
+    archived["data"]["archive_reason"] = "Archived test record"
+    archived["data"]["course"]["short_name"] = "APP GE ARCHIVE"
+    archived["data"]["course"]["start_date"] = "2026-09-01T08:30:00Z"
+    active = schooldrive_payload_21(
+        schooldrive_id="subscription:multi-archived-active",
+        lead_type="presubscription",
+        event_id="evt_multi_archived_active",
+        aggregated_updated_at="2026-06-28T01:08:30Z",
+    )
+    active["data"]["course"]["short_name"] = "APP GE ACTIVE"
+    active["data"]["course"]["start_date"] = "2026-10-01T08:30:00Z"
+
+    ingest_schooldrive_snapshot(archived)
+    ingest_schooldrive_snapshot(active)
+
+    followups = active_followups_for_phone_category("+41790000000", "APP")
+    assert [(item["schooldrive_lead_id"], item["course_title"]) for item in followups] == [
+        ("subscription:multi-archived-active", "APP GE ACTIVE")
+    ]
+
+
 def test_schooldrive_api_accepts_roadmap_product_without_course(monkeypatch) -> None:
     seed_initial_data()
     monkeypatch.setenv("SALES_COCKPIT_SCHOOLDRIVE_WEBHOOK_TOKEN", "sd-test-token")
@@ -863,8 +1150,7 @@ def test_schooldrive_api_accepts_roadmap_product_without_course(monkeypatch) -> 
     result = response.json()
     conversation = get_conversation(result["conversation_id"])
     assert conversation["course_title"] == "Roadmap ASCA_RME"
-    action = get_next_action_for_lead(result["lead_id"])
-    assert action["trigger_reason"] == "schooldrive_roadmap_product"
+    assert_no_active_action(result["lead_id"])
 
 
 def test_schooldrive_later_autoresponder_does_not_recreate_initial_followup() -> None:
@@ -1024,11 +1310,9 @@ def test_schooldrive_snapshot_accepts_nested_nutrition_subscription_course() -> 
     assert result["status"] == "created"
     conversation = get_conversation(result["conversation_id"])
     assert conversation["course_id"] == "7931"
-    assert conversation["course_category_short_title"] == "Nutrition"
+    assert conversation["course_category_short_title"].upper() == "NUTRITION"
     assert conversation["course_title"] == "NUTRI GE A26"
-    action = get_next_action_for_lead(result["lead_id"])
-    assert action["type"] == "other"
-    assert action["trigger_reason"] == "unconfigured_course_category"
+    assert_no_active_action(result["lead_id"])
 
 
 def test_schooldrive_snapshot_accepts_nested_fsm_lead_with_linked_subscription() -> None:
@@ -1110,9 +1394,7 @@ def test_schooldrive_snapshot_accepts_roadmap_product_without_course() -> None:
     assert conversation["course_id"] == "ASCA_RME"
     assert conversation["course_category_short_title"] is None
     assert conversation["course_title"] == "Roadmap ASCA_RME"
-    action = get_next_action_for_lead(result["lead_id"])
-    assert action["type"] == "other"
-    assert action["trigger_reason"] == "schooldrive_roadmap_product"
+    assert_no_active_action(result["lead_id"])
 
 
 def test_schooldrive_snapshot_accepts_roadmap_product_with_non_identity_course_fields() -> None:
@@ -1134,12 +1416,10 @@ def test_schooldrive_snapshot_accepts_roadmap_product_with_non_identity_course_f
     assert conversation["course_id"] == "ASCA_RME"
     assert conversation["course_title"] == "Roadmap ASCA_RME"
     assert conversation["course_start_date"].startswith("2026-10-01")
-    action = get_next_action_for_lead(result["lead_id"])
-    assert action["type"] == "other"
-    assert action["trigger_reason"] == "schooldrive_roadmap_product"
+    assert_no_active_action(result["lead_id"])
 
 
-def test_schooldrive_snapshot_detects_top_level_course_full_without_course_object() -> None:
+def test_schooldrive_snapshot_detects_top_level_course_full_without_course_object_and_creates_no_followup() -> None:
     seed_initial_data()
     payload = schooldrive_payload(
         event_id="evt_top_level_course_full",
@@ -1151,9 +1431,9 @@ def test_schooldrive_snapshot_detects_top_level_course_full_without_course_objec
 
     result = ingest_schooldrive_snapshot(payload)
 
-    action = get_next_action_for_lead(result["lead_id"])
-    assert action["type"] == "other"
-    assert action["trigger_reason"] == "schooldrive_course_full"
+    actions = list_actions_for_lead(result["lead_id"], "all")
+    assert all(item["type"] != "follow_up" or item["status"] == "done" for item in actions)
+    assert_no_active_action(result["lead_id"])
 
 
 def test_schooldrive_connector_supports_subscription_urls() -> None:

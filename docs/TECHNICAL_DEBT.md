@@ -109,7 +109,7 @@ Flux steps are stored as absolute offsets from the flow trigger. Recalculation m
 
 ### Unsupported Course Categories
 
-If SchoolDrive sends a lead or presubscription for an inactive category, V1 stores the conversation and SchoolDrive WhatsApp messages, then creates a Setter I review task instead of starting Setter II automation.
+If SchoolDrive sends a lead or presubscription for an inactive category, V1 stores the conversation and SchoolDrive WhatsApp messages, then starts no Setter II automation and creates no automatic admin review. Only an inbound prospect reply creates an operational action.
 
 V2 should add a guided admin workflow:
 
@@ -117,7 +117,7 @@ V2 should add a guided admin workflow:
 - configure the default session;
 - define templates for required flow steps;
 - run a simulator before activation;
-- optionally reprocess waiting review tasks.
+- optionally reprocess waiting records.
 
 ### Course-Start Follow-Up Engine
 

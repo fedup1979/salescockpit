@@ -196,7 +196,7 @@ Après reset, la suite doit retrouver ces cas :
 | `SD-DEMO-4021` | Luc Moreau | appel setting dû maintenant |
 | `SD-DEMO-4022` | Sonia Mercier | reprise manuelle setter |
 | `SD-DEMO-4023` | Yves Caron | reprise manuelle closer |
-| `SD-DEMO-4024` | Emma Complet | cours complet, revue humaine |
+| `SD-DEMO-4024` | Emma Complet | cours complet, aucune revue automatique |
 | `SD-DEMO-4025` | Rita Roadmap | produit Roadmap hors V1 |
 
 ## 00 - Preflight
@@ -517,15 +517,15 @@ Compte : admin puis Setter I.
 2. Vérifier affichage cours/session sous la fiche.
 3. Vérifier capacité `20 / 20` ou `0 place restante`.
 4. Vérifier signal visible `session complète` ou `cours complet`.
-5. Vérifier action de revue humaine.
+5. Vérifier absence de revue admin automatique.
 6. Vérifier absence de relance commerciale normale.
-7. Si un appel déjà planifié existe dans un fixture futur, vérifier qu'il est annoté plutôt que supprimé sans trace.
+7. Si un appel déjà planifié existe dans un fixture futur, vérifier qu'il reste une action humaine explicite et qu'aucune relance automatique n'est recréée.
 
 ### Roadmap
 
 1. Ouvrir `Rita Roadmap`.
 2. Vérifier produit Roadmap hors V1.
-3. Vérifier action de revue humaine.
+3. Vérifier absence de revue admin automatique.
 4. Vérifier absence de flux normal `lead_no_reply`.
 
 ### Payload SchoolDrive 2.1 Par API
@@ -538,8 +538,8 @@ Compte : admin puis Setter I.
 4. Rejouer avec `aggregated_updated_at` plus ancien : vérifier ignore.
 5. Rejouer avec `signed=true` : vérifier arrêt des relances.
 6. Rejouer avec `do_not_contact.blocked=true` et `do_not_contact.reasons[]` objet : vérifier blocage des envois et note lisible.
-7. Ajouter `related_subscriptions[].signed=true` avec `related_subscriptions[].course` imbriqué : vérifier signal d'évitement de relance concurrente.
-8. Envoyer `product` sans `course` : vérifier revue humaine Roadmap et absence de flux normal.
+7. Ajouter `related_subscriptions[].signed=true` avec `related_subscriptions[].course` imbriqué : vérifier stop des relances concurrentes même catégorie, sans fiche archivée.
+8. Envoyer `product` sans `course` : vérifier absence de flux normal et absence de revue admin automatique.
 
 Résultat attendu : SchoolDrive reste source de vérité, capacité et statuts arrêtent les relances au bon moment.
 

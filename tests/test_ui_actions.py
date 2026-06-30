@@ -20,6 +20,7 @@ from sales_cockpit.store import (
     record_inbound_message,
     send_freeform_message,
     set_conversation_status,
+    upsert_course_default_session,
 )
 from sales_cockpit.ui.app import (
     CLOSURE_RESOLUTION_REASON_VALUES,
@@ -253,6 +254,45 @@ def test_pilotage_tabs_end_with_flux_views_and_business_logic() -> None:
     assert "Règles de conflit" not in tab_labels
 
 
+def test_pilotage_default_sessions_exposes_capacity_fields() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    ok, message = upsert_course_default_session(
+        admin["id"],
+        "APP",
+        "APP VISIO P26",
+        "2026-09-01",
+        default_session_name="APP printemps 2026",
+        default_capacity_total=20,
+        default_capacity_occupied=12,
+        default_capacity_available=8,
+    )
+    assert ok, message
+
+    app = AppTest.from_file("sales_cockpit/ui/app.py")
+    app.session_state["user"] = admin
+    app.run(timeout=10)
+    set_navigation(app, "Pilotage")
+    app.run(timeout=10)
+
+    assert len(app.exception) == 0
+    sessions_df = next(
+        dataframe.value
+        for dataframe in app.dataframe
+        if "Session par défaut" in dataframe.value.columns
+    )
+    assert {"Capacité", "Occupées", "Disponibles", "Complet"}.issubset(sessions_df.columns)
+    row = sessions_df.loc[sessions_df["Catégorie"] == "APP"].iloc[0]
+    assert row["Capacité"] == "20"
+    assert row["Occupées"] == "12"
+    assert row["Disponibles"] == "8"
+    assert row["Complet"] == "Non"
+    assert "Capacité totale" in [item.label for item in app.text_input]
+    assert "Places occupées" in [item.label for item in app.text_input]
+    assert "Places disponibles" in [item.label for item in app.text_input]
+    assert "Session complète" in [item.label for item in app.checkbox]
+
+
 def test_conversation_detail_exposes_journal_tab_in_inbox() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
@@ -425,8 +465,11 @@ def test_pilotage_business_logic_shows_useful_references_without_transfer_rules(
     assert "Motifs de clôture" in all_text
     assert "Attribution" in all_text
     assert "Horaires" in all_text
+    assert "Tous les cas à valider" in all_text
+    assert "Table technique de transition" in all_text
     assert "Horaires entreprise" in all_text
     assert "Absences et backups" not in all_text
+    assert "APP, FSM, AS et les autres cours une fois configurés" not in all_text
 
 
 def test_models_page_remains_template_request_workspace() -> None:

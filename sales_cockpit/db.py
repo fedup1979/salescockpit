@@ -12,8 +12,8 @@ from sales_cockpit.security import hash_password
 from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
 
 
-DEMO_SEED_VERSION = "2026-06-25-v1-cutover-demo-scenarios"
-BUSINESS_RULES_VERSION = "2026-06-24-manual-reprise-and-skip"
+DEMO_SEED_VERSION = "2026-06-30-schooldrive-v1-silent-stops"
+BUSINESS_RULES_VERSION = "2026-06-30-schooldrive-v1-scope"
 
 
 SCHEMA = """
@@ -296,6 +296,10 @@ CREATE TABLE IF NOT EXISTS course_default_sessions (
     default_course_name TEXT NOT NULL,
     default_session_name TEXT,
     default_start_date TEXT NOT NULL,
+    default_capacity_total INTEGER,
+    default_capacity_occupied INTEGER,
+    default_capacity_available INTEGER,
+    default_is_full INTEGER NOT NULL DEFAULT 0,
     schooldrive_url TEXT,
     note TEXT,
     active INTEGER NOT NULL DEFAULT 1,
@@ -634,6 +638,16 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
             ("offset_direction", "TEXT NOT NULL DEFAULT 'after'"),
             ("offset_amount", "INTEGER NOT NULL DEFAULT 0"),
             ("offset_unit", "TEXT NOT NULL DEFAULT 'hours'"),
+        ],
+    )
+    add_missing_columns(
+        conn,
+        "course_default_sessions",
+        [
+            ("default_capacity_total", "INTEGER"),
+            ("default_capacity_occupied", "INTEGER"),
+            ("default_capacity_available", "INTEGER"),
+            ("default_is_full", "INTEGER NOT NULL DEFAULT 0"),
         ],
     )
     add_missing_columns(
@@ -1357,7 +1371,23 @@ def _normalize_schooldrive_review_followup_conflicts(conn: sqlite3.Connection) -
         """
         UPDATE tasks
         SET status = 'cancelled',
-            cancelled_reason = 'Revue humaine SchoolDrive active',
+            cancelled_reason = 'Contrat SchoolDrive V1 : arrêt silencieux sans revue automatique',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE status IN ('planned', 'open', 'in_progress', 'blocked')
+          AND type = 'other'
+          AND trigger_reason IN (
+            'unconfigured_course_category',
+            'schooldrive_roadmap_product',
+            'schooldrive_course_full',
+            'schooldrive_related_subscription_signed'
+          )
+        """
+    )
+    conn.execute(
+        """
+        UPDATE tasks
+        SET status = 'cancelled',
+            cancelled_reason = 'Contrat SchoolDrive V1 : arrêt silencieux sans revue automatique',
             updated_at = CURRENT_TIMESTAMP
         WHERE status IN ('planned', 'open', 'in_progress', 'blocked')
           AND type = 'follow_up'
@@ -1365,7 +1395,6 @@ def _normalize_schooldrive_review_followup_conflicts(conn: sqlite3.Connection) -
             SELECT 1
             FROM tasks review
             WHERE review.lead_id = tasks.lead_id
-              AND review.status IN ('planned', 'open', 'in_progress', 'blocked')
               AND review.type IN ('contact_review', 'other')
               AND review.trigger_reason IN (
                 'unconfigured_course_category',
@@ -1373,6 +1402,34 @@ def _normalize_schooldrive_review_followup_conflicts(conn: sqlite3.Connection) -
                 'schooldrive_course_full',
                 'schooldrive_related_subscription_signed'
               )
+          )
+        """
+    )
+    conn.execute(
+        """
+        UPDATE conversations
+        SET status = 'resolved',
+            resolution_reason = 'handled_elsewhere',
+            resolution_note = 'Contrat SchoolDrive V1 : fiche hors automatisation, sans revue automatique.',
+            resolved_at = coalesce(resolved_at, CURRENT_TIMESTAMP),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE status = 'open'
+          AND EXISTS (
+            SELECT 1
+            FROM tasks t
+            WHERE t.lead_id = conversations.lead_id
+              AND t.trigger_reason IN (
+                'unconfigured_course_category',
+                'schooldrive_roadmap_product',
+                'schooldrive_course_full',
+                'schooldrive_related_subscription_signed'
+              )
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM tasks active
+            WHERE active.lead_id = conversations.lead_id
+              AND active.status IN ('planned', 'open', 'in_progress', 'blocked')
           )
         """
     )
@@ -2331,19 +2388,24 @@ def _build_demo_scenarios(
             None,
             [
                 message("outbound", "Bonjour Emma, merci pour votre préinscription APP. Yasmine", yasmine_id, -timedelta(days=1)),
-                message("manual_note", "SchoolDrive : session complète, proposer une autre session.", mihary_id, -timedelta(hours=2)),
+                message("manual_note", "SchoolDrive : session complète, relances commerciales stoppées.", mihary_id, -timedelta(hours=2)),
             ],
             [
                 task(
                     "other",
-                    "Proposer une autre session à Emma Complet",
+                    "Relances stoppées pour Emma Complet",
                     mihary_id,
                     -timedelta(hours=2),
                     "urgent",
-                    description="Session SchoolDrive complète ; relances commerciales stoppées.",
+                    "cancelled",
+                    description="Session SchoolDrive complète ; aucune relance automatique.",
                     trigger_reason="schooldrive_course_full",
                 )
             ],
+            conversation_status="resolved",
+            resolution_reason="handled_elsewhere",
+            resolution_note="Session SchoolDrive complète : aucune relance automatique.",
+            resolved_delta=-timedelta(hours=2),
             session_id="APP-GE-P26",
             session_name="APP GE P26",
             course_start_date=iso_utc(now + timedelta(days=30)),
@@ -2371,14 +2433,19 @@ def _build_demo_scenarios(
             [
                 task(
                     "other",
-                    "Revoir le produit Roadmap de Rita Roadmap",
+                    "Produit Roadmap hors V1 pour Rita Roadmap",
                     mihary_id,
                     -timedelta(hours=8),
                     "normal",
-                    description="Produit Roadmap hors flux V1 normal, revue humaine requise.",
+                    "cancelled",
+                    description="Produit Roadmap hors flux V1 normal ; aucune relance automatique.",
                     trigger_reason="unconfigured_course_category",
                 )
             ],
+            conversation_status="resolved",
+            resolution_reason="handled_elsewhere",
+            resolution_note="Produit Roadmap hors V1 : aucune relance automatique.",
+            resolved_delta=-timedelta(hours=8),
         ),
     ]
 
@@ -2702,6 +2769,7 @@ def seed_initial_data() -> None:
 
         _normalize_lead_business_fields(conn)
         _normalize_seeded_demo_actions(conn, now, mihary_id, yasmine_id)
+        _normalize_schooldrive_review_followup_conflicts(conn)
         _ensure_demo_task_for_each_user(conn, now)
 
         templates = [
