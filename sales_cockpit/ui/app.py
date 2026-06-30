@@ -109,6 +109,7 @@ URGENCIES = ["low", "normal", "high", "urgent"]
 WORK_QUEUES = ["todo", "waiting", "resolved"]
 INBOX_QUEUES = WORK_QUEUES + ["all"]
 ACTION_QUEUES = ["due", "future", "completed", "all"]
+MAX_RENDERED_ROWS_PER_QUEUE = 50
 STANDARD_NEXT_ACTION_TYPES = ["setting_call", "closing_call", "manual_reprise_setter", "manual_reprise_closer"]
 DATE_INPUT_FORMAT = "DD.MM.YYYY"
 DISPLAY_TZ = ZoneInfo("Europe/Zurich")
@@ -599,7 +600,7 @@ def render_bug_report_dialog(user: dict, page: str) -> None:
             st.rerun()
 
 
-@st.fragment(run_every="10s")
+@st.fragment(run_every="60s")
 def render_inbox(user: dict) -> None:
     st.title("Inbox WhatsApp")
 
@@ -661,7 +662,7 @@ def render_conversation_rows(conversations: list[dict], bucket: str) -> None:
         st.info("Aucune conversation dans cette file.")
         return
 
-    for conv in conversations:
+    for conv in conversations[:MAX_RENDERED_ROWS_PER_QUEUE]:
         selected = st.session_state.get("selected_conversation_id") == conv["conversation_id"]
         button_type = "primary" if selected else "secondary"
         with st.container(border=True):
@@ -772,7 +773,7 @@ def render_conversation_detail(user: dict, conversation_id: int) -> None:
     with tabs[2]:
         render_manual_note_box(user, conv)
     with tabs[3]:
-        render_conversation_journal(conversation_id)
+        render_conversation_journal_on_demand(conversation_id)
 
 
 def render_conversation_header(user: dict, conversation_id: int) -> None:
@@ -1088,6 +1089,16 @@ def render_conversation_journal(conversation_id: int) -> None:
     )
 
     st.html(conversation_journal_table_html(events))
+
+
+def render_conversation_journal_on_demand(conversation_id: int) -> None:
+    load_key = f"conversation_journal_loaded_{conversation_id}"
+    if not st.session_state.get(load_key):
+        if st.button("Charger le journal", key=f"load_conversation_journal_{conversation_id}"):
+            st.session_state[load_key] = True
+            st.rerun()
+        return
+    render_conversation_journal(conversation_id)
 
 
 def conversation_journal_table_html(events: list[dict]) -> str:
@@ -2582,7 +2593,7 @@ def render_manual_note_box(user: dict, conv: dict) -> None:
             st.rerun()
 
 
-@st.fragment(run_every="10s")
+@st.fragment(run_every="60s")
 def render_work_queue(user: dict) -> None:
     users = list_users()
     visible_users = [
@@ -2694,7 +2705,7 @@ def render_action_rows(tasks: list[dict], bucket: str) -> None:
         st.info("Aucune action dans cette file.")
         return
 
-    for task in tasks:
+    for task in tasks[:MAX_RENDERED_ROWS_PER_QUEUE]:
         selected = st.session_state.get("selected_action_id") == task["id"]
         button_type = "primary" if selected else "secondary"
         with st.container(border=True):
