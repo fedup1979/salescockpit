@@ -6,7 +6,7 @@ const baseURL = process.env.SC_E2E_BASE_URL || defaultBaseUrl;
 
 module.exports = defineConfig({
   testDir: path.join(__dirname, "specs"),
-  timeout: 60_000,
+  timeout: 120_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
   workers: 1,

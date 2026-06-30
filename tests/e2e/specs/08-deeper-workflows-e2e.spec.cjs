@@ -30,8 +30,10 @@ test.describe("P8 deeper operational workflows", () => {
     const reason = page.getByLabel("Raison de réactivation");
     await reason.fill("Réactivation test Playwright.");
     await reason.press("Tab");
-    await page.waitForTimeout(900);
-    await page.getByRole("button", { name: "Réactiver" }).last().click({ force: true });
+    await page.waitForTimeout(2000);
+    const submit = page.getByRole("button", { name: "Réactiver" }).last();
+    await expect(submit).toBeEnabled();
+    await submit.click();
     await expect(page.getByRole("button", { name: "Clore la conversation" }).first()).toBeVisible();
   });
 

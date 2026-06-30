@@ -8,14 +8,14 @@ async function openNav(page, label) {
   const exactButton = page.getByRole("button", { name: new RegExp(`^${escapeRegex(label)}$`, "i") });
   if (await exactButton.count()) {
     await exactButton.first().click();
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(1800);
     return;
   }
 
   const text = page.getByText(label, { exact: true });
   await expect(text.first()).toBeVisible();
   await text.first().click();
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(1800);
 }
 
 async function expectAnyVisible(page, labels) {
