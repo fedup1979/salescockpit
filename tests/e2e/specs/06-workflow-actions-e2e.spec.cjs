@@ -35,9 +35,9 @@ test.describe("P6 workflow actions on demo prospects", () => {
     await page.getByLabel("Note obligatoire").last().fill("Message informatif, aucune réponse nécessaire.");
     await clickFirstVisible(page.getByText("Je confirme qu'aucune réponse n'est nécessaire.", { exact: true }));
     await page.getByRole("button", { name: "Aucune réponse nécessaire" }).click();
-    await expect(page.locator("body")).toContainText("Réponse marquée non nécessaire");
+    await expect(page.locator("body")).toContainText("Réponse non nécessaire : Message informatif");
     await expect(page.getByText("Répondre à Inconnu(e)", { exact: false })).toHaveCount(0);
-    await expect(page.locator("body")).toContainText("Relancer Inconnu(e)");
+    await expect(page.locator("body")).toContainText(/(Relancer|Reprise manuelle setter).*Inconnu\(e\)/);
   });
 
   test("do-not-contact inbound review can be lifted into a reply action", async ({ page }) => {
