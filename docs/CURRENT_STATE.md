@@ -1,6 +1,6 @@
 # Current Project State
 
-Last updated: 2026-06-30 Europe/Zurich.
+Last updated: 2026-06-30 18:14 Europe/Zurich.
 
 This is the first document to read when resuming Sales Cockpit.
 
@@ -13,7 +13,7 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 ## Production Readiness Snapshot
 
 - Latest checkpoint before hardening audit: `a02f10c`.
-- Latest deployed staging UI/API check: OK on latest `main`; verify the exact server commit with `git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD`.
+- Latest deployed staging UI/API check: OK on `ae9b832`; staging contains the reply no-response skip and the full SchoolDrive V1 contract hardening.
 - Latest observed production commit: `786f89c`; production was not touched by the V1 pre-cutover hardening deploy and remains cold/mock.
 - Latest local automated validation for the SchoolDrive V1 business contract: `compileall` OK, `239 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\full-schooldrive-v1-final-2`, local `scripts/pre_cutover_check.py --allow-cold-prod` OK, and Playwright local non-mutating suite `14 passed / 8 skipped`.
 - Latest staging pre-cutover check before this audit: OK.
@@ -27,10 +27,23 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 - Latest local V1 workflow update: `eligible` is now the default qualification; setting/closing indécis and no-show flows are distinct; call appointments can be rescheduled or cancelled; bug reports and template requests create admin actions; outbound WhatsApp safeguards are configurable in Admin.
 - Latest hardening update: no-show call retries are now scoped by `call_cycle_id`; business-rule seeds are versioned and migrate legacy `post_call_undecided` rows without overwriting existing real template mappings; Twilio template sync can unblock linked template requests; strict production cutover checks exist; SchoolDrive signed/do-not-contact/course-full/session-past signals are handled; follow-up quotas do not block human replies; outbound WhatsApp sends are claimed per active action before Twilio is called; core list queries now have indexes and pagination guards.
 - Latest workflow reconciliation update: Inbox/list and detail now use the same next-action priority; manual lift of `Ne plus contacter` closes obsolete contact reviews and recreates a reply only when the last inbound is unanswered; inbound on terminal qualifications creates a review instead of a normal reply; reopening a resolved conversation refuses terminal contact/qualification states; linked template requests/admin actions are cancelled when their blocked follow-up becomes obsolete.
-- Latest recorded staging deployment: latest `main` after the transcript-driven E2E/UX update; API/UI OK, `scripts/pre_cutover_check.py --allow-cold-prod` OK. The current local SchoolDrive V1 contract changes still need staging deployment and validation. Verify the exact server commit with `git -C /opt/sales-cockpit/staging/app rev-parse --short HEAD`.
+- Latest recorded staging deployment: `ae9b832`; API/UI OK, `scripts/pre_cutover_check.py --allow-cold-prod` OK. Production is still on `786f89c` and has not received the latest V1 hardening.
 - Latest recorded staging pre-cutover after deployment: OK, including API security, seed checks, and zero active workflow anomalies.
 - Latest staging template mapping check after deployment: `81` mappings total, `78` active, `78` active mappings linked to approved real Twilio templates; active split `APP=26`, `AS=26`, `FSM=26`. The seed did not overwrite the fine-tuned Twilio mappings.
-- Staging and production were not redeployed in this local SchoolDrive V1 contract pass. Keep production cold/mock until explicit GO.
+- Production was not redeployed in this preparation audit. Keep production cold/mock until explicit GO.
+
+Latest production preparation audit on 2026-06-30 18:14 Europe/Zurich:
+
+- Staging server commit: `ae9b832`.
+- Production server commit: `786f89c`.
+- Production backup created before further preparation: `/opt/sales-cockpit/backups/prod/sales_cockpit_prod_20260630T161112Z.db.gz` with its `.sha256` file.
+- Production cold check with the current prod code and `--allow-cold-prod`: OK.
+- Production data remains clean: `schooldrive_leads=0`, `schooldrive_events=0`, `schooldrive_autoresponders=0`, `front_conversations=0`, `front_messages=0`, `active_tasks=0`, `demo_leads=0`.
+- Staging template mappings are now the validated source of truth: `78` active mappings, `APP=26`, `AS=26`, `FSM=26`, all linked to approved real Twilio Content SIDs.
+- Production still has the older `75` active mappings, `APP=25`, `AS=25`, `FSM=25`.
+- Production DB schema is old: it is missing the latest capacity columns on `leads` and `course_default_sessions`. A latest-code cold deploy must run `scripts/init_db.py` before `--strict-prod` can run on prod.
+- Running the latest `scripts/pre_cutover_check.py --strict-prod` against the old prod DB currently fails on missing schema (`l.is_full`). This is expected until the prod cold deploy/migration is done.
+- Twilio remains `mock` in staging and prod. `SALES_COCKPIT_TWILIO_CONTENT_READ_ONLY=true` remains required. Do not change Twilio templates, template assignments, webhooks, or live sending before the explicit cutover decision.
 
 The main remaining blocker before operational production cutover is a fresh live end-to-end SchoolDrive validation after the SchoolDrive WhatsApp/projector worker is confirmed running:
 
@@ -83,6 +96,7 @@ Restore points are stored in:
 
 ```text
 /opt/sales-cockpit/backups/staging/
+/opt/sales-cockpit/backups/prod/
 ```
 
 ## Current Integration Status
@@ -153,7 +167,7 @@ Implemented and deployed in commit `f8e8a0b`.
 
 This lets Laura map real Twilio templates to events such as "APP relance 3" without changing the core workflow.
 
-Initial ESSR premapping was applied on staging and prod on 2026-06-20:
+Initial ESSR premapping was applied on staging and prod on 2026-06-20. This is historical context only; it is not the current staging target after Laura/François validation.
 
 - script: `scripts/premap_sequence_templates.py`;
 - scope: `FSM`, `APP`, `AS`;
@@ -174,6 +188,8 @@ Verification after premapping:
 - prod: `APP=25`, `AS=25`, `FSM=25`, missing required follow-up mappings `0`;
 - staging `pre_cutover_check`: OK;
 - prod API/UI/Twilio/Backup/Workflow checks: OK; prod readiness still warns that no SchoolDrive webhook has been received, which is expected until SchoolDrive prod is connected.
+
+Current mapping rule for cutover: preserve the validated staging assignments with `78` active mappings (`APP=26`, `AS=26`, `FSM=26`) and align production to them by Twilio Content SID after prod cold deploy/migration. Do not rerun the initial premapping script and do not change Twilio templates.
 
 ### Pilotage Page
 

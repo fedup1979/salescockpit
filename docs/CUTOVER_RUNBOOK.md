@@ -39,6 +39,27 @@ Production should use HTTPS before final cutover.
 - Laura validates the final operational workflow with restored fake prospects, then with one real website lead and one real website presubscription. In a full test battery requested by François, the two real ESSR website submissions are mandatory and must use the indicated URLs and test emails; those test submissions are automatically deleted by the system afterward.
 - HTTPS is in place before the real WhatsApp webhook switch.
 
+## Audited Baseline Before PROD Preparation
+
+Latest audit: 2026-06-30 18:14 Europe/Zurich.
+
+- Staging is deployed on `ae9b832`.
+- Production is still deployed on `786f89c`, cold/mock, with an older DB schema.
+- Production backup already created for this preparation pass: `/opt/sales-cockpit/backups/prod/sales_cockpit_prod_20260630T161112Z.db.gz` plus `.sha256`.
+- Production cold check on the current prod code passed with `--allow-cold-prod`.
+- Production data is still empty: no SchoolDrive leads/events/autoresponders, no Front conversations/messages, no active tasks, no demo leads.
+- Staging template mappings are the validated source of truth: `78` active mappings, `APP=26`, `AS=26`, `FSM=26`, all linked to approved real Twilio Content SIDs.
+- Production still has the older `75` active mappings, `APP=25`, `AS=25`, `FSM=25`.
+- Running the latest `--strict-prod` against the current prod DB is expected to fail before migration because prod lacks the latest capacity columns.
+
+Mapping freeze rule:
+
+- Do not run `scripts/premap_sequence_templates.py` during cutover.
+- Do not create, submit, delete, or edit Twilio templates during cutover.
+- Do not change staging mappings; staging is the source of truth validated by François/Laura.
+- Do not hand-edit production mappings in Pilotage during cutover.
+- If production mappings are not aligned, copy the validated local mapping rows from staging to prod by `whatsapp_templates.twilio_content_sid`, never by local template `id`.
+
 ## Confirmation To Tiago
 
 Send this confirmation before Tiago publishes schema `2.1`:
@@ -127,6 +148,114 @@ set +a
 ```
 
 `--strict-prod` is intentionally unforgiving. It must fail if production is not in `prod/production`, if demo seed data is enabled, if API/SchoolDrive/Twilio secrets are missing or placeholder-like, if Twilio is not live, if callbacks are not HTTPS, if the latest backup is missing/stale, if blocked actions or pending template requests remain, or if required follow-up template mappings are missing.
+
+## T-1: Prepare PROD Cold
+
+This prepares production code and local data while keeping Twilio in `mock`. It is not the WhatsApp cutover.
+
+1. Create a fresh production backup and keep the path/checksum:
+
+```bash
+sudo bash /opt/sales-cockpit/prod/app/deploy/scripts/backup_sqlite.sh prod
+```
+
+2. Deploy the target code to production. This also runs `scripts/init_db.py`, which applies the latest idempotent schema migrations:
+
+```bash
+REPO_URL=git@github.com:fedup1979/salescockpit.git BRANCH=main \
+  bash /opt/sales-cockpit/prod/app/deploy/scripts/deploy_env.sh prod
+```
+
+3. Verify production is on the expected commit and services are active:
+
+```bash
+git -C /opt/sales-cockpit/prod/app rev-parse --short HEAD
+systemctl is-active sales-cockpit-ui@prod.service
+systemctl is-active sales-cockpit-api@prod.service
+```
+
+4. Keep production Twilio safe:
+
+```bash
+grep -E 'SALES_COCKPIT_ENVIRONMENT|SALES_COCKPIT_TWILIO_MODE|SALES_COCKPIT_TWILIO_CONTENT_READ_ONLY|SALES_COCKPIT_SEED_DEMO_DATA' \
+  /opt/sales-cockpit/prod/.env
+```
+
+Expected cold-prep posture: `SALES_COCKPIT_ENVIRONMENT=prod`, `SALES_COCKPIT_TWILIO_MODE=mock`, `SALES_COCKPIT_TWILIO_CONTENT_READ_ONLY=true`, `SALES_COCKPIT_SEED_DEMO_DATA=false`.
+
+5. Run the cold production check:
+
+```bash
+cd /opt/sales-cockpit/prod/app
+set -a
+source /opt/sales-cockpit/prod/.env
+set +a
+.venv/bin/python scripts/pre_cutover_check.py \
+  --api-base http://127.0.0.1:8601 \
+  --ui-url http://127.0.0.1:8501 \
+  --allow-cold-prod
+```
+
+6. Align production mappings from the validated staging mappings. This is local DB mapping data only; it does not call Twilio and does not edit `whatsapp_templates`.
+
+Dry run first:
+
+```bash
+cd /opt/sales-cockpit/prod/app
+.venv/bin/python scripts/sync_sequence_template_mappings.py \
+  --source-db /opt/sales-cockpit/staging/data/sales_cockpit.db \
+  --target-db /opt/sales-cockpit/prod/data/sales_cockpit.db \
+  --expected-active-count 78 \
+  --expected-split APP=26 \
+  --expected-split AS=26 \
+  --expected-split FSM=26
+```
+
+If the dry run reports missing Twilio SIDs in prod, stop. First resynchronize Twilio Content into prod in read-only mode; do not insert templates by hand.
+
+Apply only after the dry run is understood:
+
+```bash
+cd /opt/sales-cockpit/prod/app
+.venv/bin/python scripts/sync_sequence_template_mappings.py \
+  --source-db /opt/sales-cockpit/staging/data/sales_cockpit.db \
+  --target-db /opt/sales-cockpit/prod/data/sales_cockpit.db \
+  --expected-active-count 78 \
+  --expected-split APP=26 \
+  --expected-split AS=26 \
+  --expected-split FSM=26 \
+  --apply
+```
+
+Do not pass `--deactivate-extra` during normal cutover unless a reviewed diff proves prod has obsolete active mappings that must be mirrored away.
+
+7. Validate production mapping counts:
+
+```bash
+sqlite3 /opt/sales-cockpit/prod/data/sales_cockpit.db "
+SELECT COUNT(*) AS active_real
+FROM sequence_template_mappings stm
+JOIN whatsapp_templates wt ON wt.id = stm.template_id
+WHERE stm.active = 1
+  AND wt.status = 'approved'
+  AND wt.twilio_content_sid LIKE 'HX%'
+  AND wt.twilio_content_sid NOT LIKE 'HX_MOCK_%';
+
+SELECT stm.course_category, COUNT(*)
+FROM sequence_template_mappings stm
+JOIN whatsapp_templates wt ON wt.id = stm.template_id
+WHERE stm.active = 1
+  AND wt.status = 'approved'
+  AND wt.twilio_content_sid LIKE 'HX%'
+  AND wt.twilio_content_sid NOT LIKE 'HX_MOCK_%'
+GROUP BY stm.course_category
+ORDER BY stm.course_category;
+
+PRAGMA foreign_key_check;
+"
+```
+
+Expected result: `78` active real mappings, `APP=26`, `AS=26`, `FSM=26`, and no foreign-key issue.
 
 ## T-1: Front Buffer Import
 
@@ -229,13 +358,15 @@ Rollback means returning the team to Front and restoring the Sales Cockpit datab
 
 1. Point Twilio webhooks back to Front/Twilio's previous production routing.
 2. Tell the sales team to resume Front.
-3. Restore the latest pre-cutover backup if data pollution occurred:
+3. Set production Sales Cockpit back to Twilio `mock` if it had been switched to `live`, then restart prod services.
+4. Restore the latest pre-cutover backup if data pollution occurred:
 
 ```bash
 sudo CONFIRM_RESTORE=1 bash /opt/sales-cockpit/prod/app/deploy/scripts/restore_sqlite.sh prod /path/to/backup.db.gz
 ```
 
-4. Keep the failed Sales Cockpit logs for analysis before retrying.
+5. Do not modify staging mappings or Twilio templates during rollback.
+6. Keep the failed Sales Cockpit logs for analysis before retrying.
 
 ## Open Items Before Real PROD Cutover
 
@@ -244,7 +375,7 @@ sudo CONFIRM_RESTORE=1 bash /opt/sales-cockpit/prod/app/deploy/scripts/restore_s
 - Real SchoolDrive AR-sent event trigger validation.
 - Fresh staging validation of Tiago's schema `2.1` through the real website lead and presubscription paths, before the one-time full resync.
 - Real ESSR Twilio template synchronization in read-only mode.
-- Laura mapping of course/event/relance steps to real Twilio templates.
+- Align production to the validated staging mappings: `78` active real mappings, `APP=26`, `AS=26`, `FSM=26`, matched by Twilio Content SID.
 - Final Twilio production sender verification.
 - Front full-history import batch sizing.
 - UI filter for `front_history`.
