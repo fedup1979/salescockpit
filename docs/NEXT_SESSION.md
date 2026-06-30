@@ -124,6 +124,7 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
 - V1 step/template changes affect only newly created future sequences. Existing open tasks are not recalculated.
 - Outbound WhatsApp messages close the active `reply` or `follow_up` action and create the next follow-up when applicable.
 - If a `reply` is sent while a setting/closing call is already planned, the reply closes and the planned call remains the next action.
+- If a `reply` message does not require an answer, Setter I can use `Aucune réponse nécessaire` with mandatory note and confirmation. It closes only the `reply`, sends no WhatsApp, and preserves or creates the normal next step.
 - `reply` and `follow_up` should not be manually marked as sent in the main Actions flow. The normal proof is the outbound WhatsApp message from the Conversation composer.
 - The Conversation composer must not capture the next commercial action for a `reply`. It sends messages, approved templates, and template requests only.
 - If the prospect accepts an appointment after a reply, the user sends the WhatsApp message first, then creates the setting or closing call from the stable Actions block.

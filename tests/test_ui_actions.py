@@ -148,6 +148,8 @@ def test_reply_action_guides_to_conversation_send_without_generic_completion() -
 
     selectbox_labels = [item.label for item in app.selectbox]
     text_area_labels = [item.label for item in app.text_area]
+    warning_texts = [item.value for item in app.warning]
+    checkbox_labels = [item.label for item in app.checkbox]
 
     assert "Répondre dans Conversation" in markup
     assert "Après votre réponse" not in markup
@@ -162,6 +164,11 @@ def test_reply_action_guides_to_conversation_send_without_generic_completion() -
     assert "Voir" in button_labels
     assert "Ouvrir" not in button_labels
     assert "Envoyer le message libre" in button_labels
+    assert "Aucune réponse nécessaire" in button_labels
+    assert "Ignorer cette étape" not in button_labels
+    assert "Note obligatoire" in text_area_labels
+    assert "Je confirme qu'aucune réponse n'est nécessaire." in checkbox_labels
+    assert any("Attention danger" in text for text in warning_texts)
     assert "Terminer l'action" not in button_labels
 
 

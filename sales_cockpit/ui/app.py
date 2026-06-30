@@ -77,6 +77,7 @@ from sales_cockpit.store import (
     list_bug_reports,
     list_conversation_journal_events,
     list_users,
+    mark_reply_no_response_needed,
     preview_skip_sequence_step_action,
     reactivate_sequence_step,
     reschedule_call_action,
@@ -413,6 +414,7 @@ DISPLAY_LABELS = {
     "Converted": "Converti",
     "Other": "Autre",
     "reply_no_appointment": "Réponse envoyée sans RDV",
+    "reply_no_response_needed": "Aucune réponse nécessaire",
     "setting_booked": "RDV setting fixé",
     "closing_booked": "RDV closing fixé",
     "follow_up_sent": "Relance envoyée",
@@ -1551,8 +1553,56 @@ def render_next_action_summary(user: dict, conv: dict) -> None:
             """,
             unsafe_allow_html=True,
         )
-        if action and conv.get("status") == "open" and skip_section["enabled"]:
-            render_delete_next_action_popover(user, action)
+        if action and conv.get("status") == "open":
+            if action.get("type") == "reply":
+                render_reply_no_response_popover(user, action)
+            elif skip_section["enabled"]:
+                render_delete_next_action_popover(user, action)
+
+
+def render_reply_no_response_popover(user: dict, action: dict) -> None:
+    with st.popover("X", help="Marquer aucune réponse nécessaire", use_container_width=False):
+        render_reply_no_response_control(user, action, key_prefix="next_action_reply_skip")
+
+
+def render_reply_no_response_control(
+    user: dict,
+    action: dict,
+    *,
+    key_prefix: str,
+) -> None:
+    action_id = action["id"]
+    st.warning(
+        "Attention danger : cette commande clôt uniquement l'action Répondre. "
+        "Elle sert quand le message entrant ne demande aucune réponse. "
+        "Elle n'envoie aucun WhatsApp ; si une suite normale existe, elle sera conservée ou créée."
+    )
+    with st.form(f"{key_prefix}_form_{action_id}"):
+        note = st.text_area(
+            "Note obligatoire",
+            height=90,
+            key=f"{key_prefix}_note_{action_id}",
+        )
+        confirm = st.checkbox(
+            "Je confirme qu'aucune réponse n'est nécessaire.",
+            key=f"{key_prefix}_confirm_{action_id}",
+        )
+        submitted = st.form_submit_button("Aucune réponse nécessaire")
+    if submitted:
+        if not confirm:
+            st.error("Confirmez qu'aucune réponse n'est nécessaire.")
+            return
+        if not note.strip():
+            st.error("Ajoutez une note pour expliquer pourquoi aucune réponse n'est nécessaire.")
+            return
+        ok, message = mark_reply_no_response_needed(action_id, user["id"], note.strip())
+        show_result(ok, message)
+        if ok:
+            clear_widget_keys(
+                f"{key_prefix}_note_{action_id}",
+                f"{key_prefix}_confirm_{action_id}",
+            )
+            st.rerun()
 
 
 def render_delete_next_action_popover(user: dict, action: dict, disabled_reason: str | None = None) -> None:
@@ -1718,6 +1768,8 @@ def render_whatsapp_action_guidance(user: dict, conv: dict, action: dict) -> Non
     if action["type"] == "reply":
         st.info("Le client attend une réponse. Cette action sera clôturée quand le message sera envoyé dans l'onglet Conversation.")
         st.caption("L'envoi se fait dans l'onglet Conversation. Si une suite doit être créée après le message, utilisez ensuite le bloc standard de l'onglet Actions.")
+        with st.expander("Aucune réponse nécessaire"):
+            render_reply_no_response_control(user, action, key_prefix="reply_no_response_detail")
         return
 
     if action["type"] == "follow_up":

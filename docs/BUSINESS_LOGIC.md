@@ -194,6 +194,12 @@ Lorsque Setter I répond au prospect mais ne fixe pas de rendez-vous de setting,
 
 Exception : si cette action `reply` était une interruption pendant qu'un appel setting ou closing était déjà planifié, aucune relance Setter II n'est créée. L'appel planifié redevient la prochaine action.
 
+### Règle 5 bis : réponse non nécessaire
+
+Lorsque le message entrant ne demande aucune réponse, Setter I peut utiliser la croix `Aucune réponse nécessaire`. Cette commande exige une note et une confirmation, clôt l'action `reply` avec l'outcome `reply_no_response_needed`, n'envoie aucun WhatsApp et conserve l'historique par note interne.
+
+Ce skip ne crée pas une relance parce qu'il est cliqué. En revanche, si la suite normale du flux prévoit déjà une relance ou si un appel setting/closing est déjà planifié, cette suite normale est conservée ou créée comme après une réponse simple sans rendez-vous.
+
 ### Règle 6 : rendez-vous de setting fixé
 
 Lorsque Setter I fixe un rendez-vous de setting avec le prospect, alors le cockpit termine l'action `reply` et crée une action `setting_call` pour Setter I à la date et l'heure du rendez-vous.

@@ -22,6 +22,24 @@ test.describe("P6 workflow actions on demo prospects", () => {
     await expect(page.locator("body")).toContainText("Test Playwright staging");
   });
 
+  test("setter I can mark a reply as no response needed", async ({ page }) => {
+    test.skip(!hasCredentials("setter1"), missingCredentialsMessage("setter1"));
+    test.skip(process.env.SC_E2E_ALLOW_MUTATION !== "true", "Set SC_E2E_ALLOW_MUTATION=true to run mutating E2E tests");
+
+    await loginAs(page, "setter1");
+    await openInboxConversation(page, "4016", "Inconnu(e)");
+    await expect(page.locator("body")).toContainText("Répondre à Inconnu(e)");
+    await clickFirstVisible(page.getByRole("button", { name: /^X$/ }));
+    await expect(page.locator("body")).toContainText("aucune réponse");
+    await expect(page.locator("body")).toContainText("Elle n'envoie aucun WhatsApp");
+    await page.getByLabel("Note obligatoire").last().fill("Message informatif, aucune réponse nécessaire.");
+    await clickFirstVisible(page.getByText("Je confirme qu'aucune réponse n'est nécessaire.", { exact: true }));
+    await page.getByRole("button", { name: "Aucune réponse nécessaire" }).click();
+    await expect(page.locator("body")).toContainText("Réponse marquée non nécessaire");
+    await expect(page.getByText("Répondre à Inconnu(e)", { exact: false })).toHaveCount(0);
+    await expect(page.locator("body")).toContainText("Relancer Inconnu(e)");
+  });
+
   test("do-not-contact inbound review can be lifted into a reply action", async ({ page }) => {
     test.skip(!hasCredentials("setter1"), missingCredentialsMessage("setter1"));
     test.skip(process.env.SC_E2E_ALLOW_MUTATION !== "true", "Set SC_E2E_ALLOW_MUTATION=true to run mutating E2E tests");

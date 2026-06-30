@@ -44,6 +44,7 @@ from sales_cockpit.store import (
     list_bug_reports,
     list_user_activity_log,
     list_users,
+    mark_reply_no_response_needed,
     add_manual_note,
     preview_skip_sequence_step_action,
     record_inbound_message,
@@ -875,6 +876,59 @@ def test_reply_send_closes_reply_and_schedules_followup() -> None:
     assert next_action["sequence_code"] == "setter_no_next_step"
 
 
+def test_reply_no_response_needed_closes_reply_and_schedules_normal_followup() -> None:
+    seed_initial_data()
+    phone = unique_phone()
+    result = record_inbound_message(phone, "Merci, c'est noté.")
+    action = get_next_action_for_lead(result["lead_id"])
+    assert action["type"] == "reply"
+
+    ok, message = mark_reply_no_response_needed(
+        action["id"],
+        action["assigned_to_user_id"],
+        "Le prospect confirme seulement la réception.",
+    )
+
+    assert ok is True, message
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["type"] == "follow_up"
+    assert next_action["sequence_code"] == "setter_no_next_step"
+    assert next_action["trigger_reason"] == "reply_no_response_needed_continues"
+
+    actions = list_actions_for_lead(result["lead_id"], "all")
+    completed_reply = next(item for item in actions if item["id"] == action["id"])
+    assert completed_reply["status"] == "done"
+    assert completed_reply["outcome"] == "reply_no_response_needed"
+    assert completed_reply["proof_message_id"] is None
+    metadata = json.loads(completed_reply["metadata_json"])
+    assert metadata["no_response_needed"] is True
+    assert metadata["completion_note"] == "Le prospect confirme seulement la réception."
+
+    messages = list_messages(result["conversation_id"])
+    assert [item for item in messages if item["direction"] == "outbound"] == []
+    notes = [item["body"] for item in messages if item["direction"] == "manual_note"]
+    assert any("Réponse non nécessaire" in note for note in notes)
+
+    conversation = next(
+        item for item in list_conversations(search=phone)
+        if item["conversation_id"] == result["conversation_id"]
+    )
+    assert conversation["last_outbound_at"] is not None
+    assert conversation["work_queue"] == "waiting"
+
+
+def test_reply_no_response_needed_requires_note() -> None:
+    seed_initial_data()
+    result = record_inbound_message(unique_phone(), "Merci.")
+    action = get_next_action_for_lead(result["lead_id"])
+
+    ok, message = mark_reply_no_response_needed(action["id"], action["assigned_to_user_id"], "")
+
+    assert ok is False
+    assert "note" in message.lower()
+    assert get_next_action_for_lead(result["lead_id"])["id"] == action["id"]
+
+
 def test_action_tab_can_replace_default_followup_with_setting_call_after_reply_send() -> None:
     seed_initial_data()
     admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
@@ -1176,6 +1230,54 @@ def test_inbound_reply_preserves_planned_call_and_standard_commands_reject_whats
     )
     assert ok is False
     assert "standard" in message.lower()
+
+
+def test_reply_no_response_needed_preserves_planned_call_without_followup() -> None:
+    seed_initial_data()
+    phone = unique_phone()
+    result = record_inbound_message(phone, "Je suis disponible pour un appel.")
+    reply = get_next_action_for_lead(result["lead_id"])
+    due_at = iso_utc(utc_now() + timedelta(days=1))
+
+    ok, message = send_freeform_message(
+        result["conversation_id"],
+        reply["assigned_to_user_id"],
+        "Parfait, Mihary vous appelle demain.",
+        action_outcome="setting_booked",
+        next_due_at=due_at,
+        assigned_to_user_id=reply["assigned_to_user_id"],
+        note="RDV setting confirmé.",
+    )
+    assert ok is True, message
+    planned_call = get_next_action_for_lead(result["lead_id"])
+    assert planned_call["type"] == "setting_call"
+
+    record_inbound_message(phone, "Merci, c'est seulement pour confirmer.")
+    no_response_reply = get_next_action_for_lead(result["lead_id"])
+    assert no_response_reply["type"] == "reply"
+
+    ok, message = mark_reply_no_response_needed(
+        no_response_reply["id"],
+        no_response_reply["assigned_to_user_id"],
+        "Simple confirmation, pas de réponse nécessaire.",
+    )
+
+    assert ok is True, message
+    next_action = get_next_action_for_lead(result["lead_id"])
+    assert next_action["id"] == planned_call["id"]
+    assert next_action["type"] == "setting_call"
+    assert next_action["due_at"] == due_at
+
+    actions = list_actions_for_lead(result["lead_id"], "all")
+    completed_reply = next(item for item in actions if item["id"] == no_response_reply["id"])
+    assert completed_reply["outcome"] == "reply_no_response_needed"
+    assert completed_reply["proof_message_id"] is None
+    active_followups = [
+        item for item in actions
+        if item["type"] == "follow_up"
+        and item["status"] in {"open", "planned", "in_progress", "blocked"}
+    ]
+    assert active_followups == []
 
 
 def test_reply_send_with_do_not_contact_resolves_without_followup() -> None:

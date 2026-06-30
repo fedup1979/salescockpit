@@ -187,7 +187,7 @@ Le protocole E2E doit tester :
 
 1. Une relance `follow_up` skippable avec étape suivante.
 2. Une reprise manuelle skippable avec étape suivante ou fin de flux.
-3. Une action `reply` non skippable.
+3. Une action `reply` avec croix spéciale `Aucune réponse nécessaire`, note obligatoire et confirmation.
 4. Un appel setting/closing non skippable via la croix.
 5. Un état terminal sans croix.
 6. La présence visible de la prochaine action avant confirmation.

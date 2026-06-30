@@ -173,6 +173,7 @@ Right panel:
 - Template section has list first, search second, placeholders, resolved preview, then send button.
 - The Conversation tab never asks which next action to create after sending. It only sends free-form messages, sends approved templates, or creates a template request.
 - After an outbound reply, the store creates the default waiting flow automatically. If a call or manual reprise is needed after the message, the user creates it from `Actions`.
+- If the inbound message does not require an answer, Setter I can close the `reply` with `Aucune réponse nécessaire`, mandatory note and confirmation. This sends no WhatsApp and preserves or creates only the normal next step.
 
 ### Status Chips
 
@@ -189,7 +190,7 @@ Right panel:
 - Red banner: workflow anomaly, for example open conversation without action, resolved conversation with active action, unknown action type, or legacy `other`.
 - Fixed standard block is hidden when the conversation is terminated. When visible, unavailable sections remain visible and greyed with a short reason.
 - Fixed sections: program/modify call, document due call, request manual reprise, document manual reprise, skip current flow step.
-- `reply` and `follow_up` are system actions only. They are never programmed manually from the standard block and are completed by the outbound WhatsApp proof from `Conversation`.
+- `reply` and `follow_up` are system actions only. They are never programmed manually from the standard block. They are normally completed by outbound WhatsApp proof from `Conversation`; `reply` also has a controlled `Aucune réponse nécessaire` exception with mandatory note.
 - Calls and manual reprises are created from the standard Actions block, including after a message sent from `Conversation` has created the default follow-up flow.
 - `contact_review` is not completed from Actions. Users review or lift statuses from the status chips; the store closes obsolete contact reviews or recreates the appropriate reply when allowed.
 - `other` is backend fallback/anomaly only. The normal UI does not show an `other` completion form and `Pilotage` does not offer it as a normal new step type.

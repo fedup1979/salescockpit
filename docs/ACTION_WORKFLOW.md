@@ -166,6 +166,7 @@ Les champs actuels de `tasks` couvrent une partie du besoin. Le modèle cible de
 - Un message entrant du prospect annule ou clôt les relances ouvertes et crée un `reply` immédiat pour Setter I.
 - Si un appel setting ou closing est déjà planifié, le message entrant ne l'annule pas. Le système crée une interruption `reply`; après réponse simple, l'appel planifié redevient la prochaine action.
 - Un message sortant envoyé en réponse clôt le `reply` actif.
+- Si le message entrant ne demande aucune réponse, Setter I peut clôturer le `reply` avec la croix `Aucune réponse nécessaire`, note obligatoire et confirmation. Aucun WhatsApp n'est envoyé ; la suite normale du flux est conservée ou créée.
 - Une relance envoyée clôt le `follow_up` actif.
 - Une étape de flux peut être ignorée volontairement avec note obligatoire ; le flux continue alors à l'étape suivante si elle existe.
 - Un appel terminé clôt le `setting_call` ou `closing_call` actif.
@@ -187,6 +188,7 @@ Cette table décrit le chaînage cible. Elle doit rester lisible par l'équipe m
 | Prospect répond | `prospect_replied` | Dernier message entrant non répondu | `follow_up` ouvert | `reply` | Setter I | Maintenant | Ouverte | Aucun | Hot signal, file de Setter I, annuler relances futures, garder tout appel déjà planifié |
 | Réponse envoyée | `outbound_message_sent` | Action active = `reply`, aucun appel déjà planifié | `reply` | `follow_up` de sécurité du flux `setter_no_next_step` | Setter II | +72h | Ouverte | Message sortant | Supprimer hot signal ; si un RDV ou une reprise doit suivre, le créer ensuite dans `Actions` |
 | Réponse envoyée pendant appel planifié | `outbound_message_sent` | Action active = `reply`, appel setting/closing déjà planifié | `reply` | appel déjà planifié | Responsable de l'appel | Date/heure RDV | Ouverte | Message sortant | Ne pas créer de relance Setter II parallèle |
+| Réponse non nécessaire | `reply_no_response_needed` | Message entrant ne demandant pas de réponse | `reply` | Suite normale du flux ou appel déjà planifié | Responsable de l'action suivante | Selon flux ou RDV | Ouverte | Note obligatoire + confirmation | Aucun WhatsApp envoyé ; pas de relance créée par le skip lui-même, seulement la suite normale |
 | RDV setting programmé après réponse | `standard_setting_call_scheduled` | L'utilisateur a envoyé le message dans `Conversation`, puis créé le RDV dans `Actions` | Action active remplacée, souvent `follow_up` de sécurité | `setting_call` | Setter I | Date/heure RDV | Ouverte | Message sortant, note RDV | Annuler relance de sécurité |
 | RDV closing programmé après réponse | `standard_closing_call_scheduled` | L'utilisateur a envoyé le message dans `Conversation`, puis créé le RDV dans `Actions` | Action active remplacée, souvent `follow_up` de sécurité | `closing_call` | Closer | Date/heure RDV | Ouverte | Message sortant, note RDV | Annuler relance de sécurité |
 | Relance due | `follow_up_due` | Fenêtre WhatsApp ouverte | `follow_up` | À déterminer après envoi | Setter II | Maintenant | Ouverte | Message libre ou template selon choix | Respecter délai minimum |

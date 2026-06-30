@@ -368,10 +368,11 @@ Compte : Setter I.
 6. Vérifier que la confirmation affiche la prochaine action calculée ou la fin de flux.
 7. Confirmer avec note.
 8. Vérifier que l'action courante est marquée comme ignorée et que l'étape suivante du même flux existe si applicable.
-9. Ouvrir `Léa Martin`, `Luc Moreau`, `Nicolas Meyer`, `Hugo Muller`, `Rita Roadmap`.
-10. Vérifier que la croix n'apparaît pas pour `reply`, appels, `contact_review`, `other`, conversation terminale ou état terminal.
+9. Ouvrir un prospect avec action `reply` et vérifier que la croix affiche `Aucune réponse nécessaire`, note obligatoire et confirmation, sans envoyer de WhatsApp.
+10. Ouvrir `Luc Moreau`, `Nicolas Meyer`, `Hugo Muller`, `Rita Roadmap`.
+11. Vérifier que la croix de flux n'apparaît pas pour appels, `contact_review`, `other`, conversation terminale ou état terminal.
 
-Résultat attendu : la croix signifie uniquement `Ignorer cette étape de flux`, jamais annuler n'importe quelle action.
+Résultat attendu : la croix de `follow_up` signifie uniquement `Ignorer cette étape de flux`. La croix de `reply` est un contrôle séparé : `Aucune réponse nécessaire`, jamais annuler n'importe quelle action.
 
 ## 06 - Closer : Closing
 

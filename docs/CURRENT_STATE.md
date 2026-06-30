@@ -46,6 +46,8 @@ Sales Cockpit has now encoded the canonical workflow model:
 
 Important runtime rule: a prospect message during an already planned setting/closing call creates an urgent `reply` action for Setter I but does not cancel the planned call. Course-start relances do not interrupt planned calls.
 
+If a `reply` message does not require an answer, Setter I can close it with `Aucune réponse nécessaire`, mandatory note and confirmation. No WhatsApp is sent; the normal next step is preserved or created.
+
 Latest implementation status: the V1 pre-cutover hardening, reliable navigation fix, duplicate page-selector removal, message rendering fix, SchoolDrive schema `2.1` support, SchoolDrive human-review/follow-up conflict guard, transcript-driven E2E protocol, bug/admin fixes, vouvoiement cleanup, and skip-step consequence preview are pushed to GitHub and deployed to staging. Production is not touched.
 
 ## Repositories And Environments

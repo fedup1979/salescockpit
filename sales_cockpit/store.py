@@ -5165,6 +5165,23 @@ def _advance_sequence_after_action(
     )
 
 
+def _first_reply_followup_step_for_task(
+    conn: Any,
+    task: dict[str, Any],
+) -> tuple[str, dict[str, Any] | None, str]:
+    sequence_code = (
+        "closer_will_sign"
+        if task.get("lead_status") == "will_sign"
+        else "setter_no_next_step"
+    )
+    sequence_label = (
+        "Va signer après réponse sans rendez-vous"
+        if sequence_code == "closer_will_sign"
+        else "Réponse setter sans rendez-vous"
+    )
+    return sequence_code, _get_sequence_step(conn, sequence_code, 1), sequence_label
+
+
 def preview_skip_sequence_step_action(task_id: int) -> dict[str, Any]:
     with connect() as conn:
         task = row_to_dict(
@@ -5555,17 +5572,29 @@ def _conversation_has_unanswered_inbound(conn: Any, conversation_id: int) -> boo
     row = conn.execute(
         """
         SELECT
-            MAX(CASE WHEN direction = 'inbound' THEN created_at END) AS last_inbound_at,
-            MAX(CASE WHEN direction = 'outbound' THEN created_at END) AS last_outbound_at
-        FROM messages
-        WHERE conversation_id = ?
+            c.last_inbound_at AS conversation_last_inbound_at,
+            c.last_outbound_at AS conversation_last_outbound_at,
+            MAX(CASE WHEN m.direction = 'inbound' THEN m.created_at END) AS message_last_inbound_at,
+            MAX(CASE WHEN m.direction = 'outbound' THEN m.created_at END) AS message_last_outbound_at
+        FROM conversations c
+        LEFT JOIN messages m ON m.conversation_id = c.id
+        WHERE c.id = ?
+        GROUP BY c.id
         """,
         (conversation_id,),
     ).fetchone()
-    if not row or not row["last_inbound_at"]:
+    if not row:
         return False
-    last_inbound = parse_dt(row["last_inbound_at"])
-    last_outbound = parse_dt(row["last_outbound_at"])
+    inbound_candidates = [
+        parse_dt(row["conversation_last_inbound_at"]),
+        parse_dt(row["message_last_inbound_at"]),
+    ]
+    outbound_candidates = [
+        parse_dt(row["conversation_last_outbound_at"]),
+        parse_dt(row["message_last_outbound_at"]),
+    ]
+    last_inbound = max((dt for dt in inbound_candidates if dt), default=None)
+    last_outbound = max((dt for dt in outbound_candidates if dt), default=None)
     return bool(last_inbound and (not last_outbound or last_inbound > last_outbound))
 
 
@@ -10191,6 +10220,150 @@ def complete_action_with_workflow(
                 new={"task_id": next_action_id},
             )
     return True, "Action terminée et suite créée selon la règle métier."
+
+
+def mark_reply_no_response_needed(
+    task_id: int,
+    user_id: int,
+    note: str,
+) -> tuple[bool, str]:
+    now = iso_utc()
+    note = note.strip()
+    if not note:
+        return False, "Une note est obligatoire pour indiquer pourquoi aucune réponse n'est nécessaire."
+    with connect() as conn:
+        task = row_to_dict(
+            conn.execute(
+                """
+                SELECT
+                    t.*,
+                    l.first_name,
+                    l.last_name,
+                    l.lead_status,
+                    l.contact_status,
+                    c.status AS conversation_status
+                FROM tasks t
+                JOIN leads l ON l.id = t.lead_id
+                LEFT JOIN conversations c ON c.id = t.conversation_id
+                WHERE t.id = ?
+                """,
+                (task_id,),
+            ).fetchone()
+        )
+        if not task:
+            return False, "Action introuvable."
+        if task.get("type") != "reply":
+            return False, "Seule une action Répondre peut être marquée sans réponse nécessaire."
+        if task.get("status") not in {"open", "in_progress", "planned", "blocked"}:
+            return False, "Cette action n'est plus active."
+        if not task.get("conversation_id"):
+            return False, "Conversation introuvable."
+        if task.get("conversation_status") != "open":
+            return False, "Conversation terminée : réactivez-la avant de traiter cette réponse."
+        if task.get("contact_status") in STOP_CONTACT_STATUSES:
+            return False, "Contact bloqué : la revue de contact doit être traitée avant toute réponse."
+        if task.get("lead_status") in STOP_QUALIFICATION_STATUSES:
+            return False, "Qualification terminale : une revue humaine est nécessaire avant toute réponse."
+
+        active_call = _first_active_action_for_lead(
+            conn,
+            task["lead_id"],
+            action_types=("setting_call", "closing_call"),
+        )
+        first_step: dict[str, Any] | None = None
+        if not active_call:
+            _, first_step, _ = _first_reply_followup_step_for_task(conn, task)
+            if not first_step:
+                return False, "Étape de flux introuvable."
+
+        conn.execute(
+            """
+            UPDATE tasks
+            SET status = 'done',
+                outcome = 'reply_no_response_needed',
+                completed_at = ?,
+                updated_at = ?,
+                metadata_json = ?
+            WHERE id = ?
+            """,
+            (
+                now,
+                now,
+                json.dumps(
+                    {"completion_note": note, "no_response_needed": True},
+                    ensure_ascii=False,
+                ),
+                task_id,
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE conversations
+            SET last_outbound_at = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now, now, task["conversation_id"]),
+        )
+        _insert_internal_note_message(
+            conn,
+            task["lead_id"],
+            task["conversation_id"],
+            user_id,
+            f"Réponse non nécessaire : {note}",
+            now,
+        )
+        insert_event(
+            conn,
+            task["lead_id"],
+            "reply_marked_no_response_needed",
+            user_id=user_id,
+            previous={"task_id": task_id, "type": "reply"},
+            new={"outcome": "reply_no_response_needed", "note": note},
+            metadata={"conversation_id": task["conversation_id"]},
+        )
+
+        if active_call:
+            insert_event(
+                conn,
+                task["lead_id"],
+                "reply_no_response_needed_planned_call_kept",
+                user_id=user_id,
+                previous={"reply_task_id": task_id},
+                new={
+                    "kept_call_task_id": active_call["id"],
+                    "kept_call_type": active_call["type"],
+                },
+                metadata={"conversation_id": task["conversation_id"]},
+            )
+            return True, "Réponse marquée non nécessaire. L'appel déjà planifié reste actif."
+
+        next_action_id = _create_sequence_step_action(
+            conn,
+            lead_id=task["lead_id"],
+            conversation_id=task["conversation_id"],
+            full_name=lead_full_name(task),
+            step=first_step,
+            anchor_at=now,
+            user_id=user_id,
+            trigger_reason="reply_no_response_needed_continues",
+            previous_action_id=task_id,
+            sequence_anchor_label="Réponse non nécessaire",
+            description=note or None,
+        )
+        conn.execute(
+            "UPDATE tasks SET next_action_id = ? WHERE id = ?",
+            (next_action_id, task_id),
+        )
+        insert_event(
+            conn,
+            task["lead_id"],
+            "next_action_created_by_workflow",
+            user_id=user_id,
+            previous={"task_id": task_id, "outcome": "reply_no_response_needed"},
+            new={"task_id": next_action_id},
+        )
+    return True, "Réponse marquée non nécessaire. La suite normale du flux est créée."
 
 
 def skip_sequence_step_action(
