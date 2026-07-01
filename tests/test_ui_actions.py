@@ -216,11 +216,16 @@ def test_front_transition_review_exposes_followup_planner() -> None:
     assert "Action inconnue" not in markup
     assert "Transition Front" in markup
     assert "hors flux V1" in captions
-    assert "Prénom temporaire" in text_input_labels
-    assert "Nom temporaire" in text_input_labels
+    assert "Cette fiche est temporaire ou ambiguë" not in markup
+    assert "Prénom" in text_input_labels
+    assert "Nom" in text_input_labels
+    assert "Prénom temporaire" not in text_input_labels
+    assert "Nom temporaire" not in text_input_labels
     assert "Clôturer la transition Front" in markup
     assert "Programmer une relance transition Front" not in markup
     assert "Programmer relance transition Front" not in button_labels
+    assert "Enregistrer l'identification" in button_labels
+    assert "Enregistrer l'identification temporaire" not in button_labels
     assert "Enregistrer la décision" in button_labels
     assert "Note obligatoire" in text_area_labels
     assert "Décision" in selectbox_labels
