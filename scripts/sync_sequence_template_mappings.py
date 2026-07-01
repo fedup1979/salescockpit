@@ -117,14 +117,7 @@ def fetch_source_mappings(conn: sqlite3.Connection) -> list[SourceMapping]:
             wt.status AS template_status
         FROM sequence_template_mappings stm
         JOIN whatsapp_templates wt ON wt.id = stm.template_id
-        JOIN sequence_steps ss
-          ON ss.sequence_code = stm.sequence_code
-         AND ss.step_index = stm.sequence_step_index
-        JOIN sequences seq ON seq.code = stm.sequence_code
         WHERE stm.active = 1
-          AND ss.active = 1
-          AND ss.action_type = 'follow_up'
-          AND seq.active = 1
         ORDER BY stm.sequence_code, stm.sequence_step_index, stm.lead_type, stm.course_category
         """
     ).fetchall()

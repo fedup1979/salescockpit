@@ -288,11 +288,41 @@ def test_sequence_template_mapping_sync_blocks_missing_target_sid(tmp_path) -> N
                 )
 
 
+def test_sequence_template_mapping_sync_keeps_validated_source_mapping_when_source_step_inactive(tmp_path) -> None:
+    source_db = tmp_path / "staging.db"
+    target_db = tmp_path / "prod.db"
+    _create_mapping_sync_db(
+        source_db,
+        with_template_sid="HXreal000000000000000000000000000002",
+        with_mapping=True,
+        step_active=False,
+    )
+    _create_mapping_sync_db(
+        target_db,
+        with_template_sid="HXreal000000000000000000000000000002",
+        with_mapping=False,
+        step_active=True,
+    )
+
+    with sync_sequence_template_mappings.connect(source_db, query_only=True) as source_conn:
+        with sync_sequence_template_mappings.connect(target_db) as target_conn:
+            plan = sync_sequence_template_mappings.build_plan(
+                source_conn,
+                target_conn,
+                expected_active_count=1,
+                expected_splits={"APP": 1},
+            )
+
+    assert len(plan.upserts) == 1
+    assert plan.upserts[0].source.twilio_content_sid == "HXreal000000000000000000000000000002"
+
+
 def _create_mapping_sync_db(
     path,
     *,
     with_template_sid: str,
     with_mapping: bool,
+    step_active: bool = True,
 ) -> None:
     with sync_sequence_template_mappings.connect(path) as conn:
         conn.executescript(
@@ -330,9 +360,14 @@ def _create_mapping_sync_db(
                 UNIQUE(sequence_code, sequence_step_index, lead_type, course_category)
             );
             INSERT INTO sequences (code, active) VALUES ('initial_no_reply', 1);
-            INSERT INTO sequence_steps (sequence_code, step_index, active, action_type)
-            VALUES ('initial_no_reply', 1, 1, 'follow_up');
             """
+        )
+        conn.execute(
+            """
+            INSERT INTO sequence_steps (sequence_code, step_index, active, action_type)
+            VALUES ('initial_no_reply', 1, ?, 'follow_up')
+            """,
+            (1 if step_active else 0,),
         )
         template_id = conn.execute(
             """
