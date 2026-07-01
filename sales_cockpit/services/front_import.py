@@ -28,6 +28,72 @@ GENERIC_FRONT_FIRST_NAMES = {
     "na",
     "demo",
 }
+FRONT_ANONYMIZED_FIRST_WORDS = {
+    "amber",
+    "azure",
+    "black",
+    "blue",
+    "brown",
+    "coral",
+    "crimson",
+    "cyan",
+    "gray",
+    "green",
+    "grey",
+    "indigo",
+    "lavender",
+    "lime",
+    "magenta",
+    "maroon",
+    "navy",
+    "olive",
+    "orange",
+    "pink",
+    "purple",
+    "red",
+    "salmon",
+    "silver",
+    "tan",
+    "tangerine",
+    "teal",
+    "turquoise",
+    "violet",
+    "white",
+    "yellow",
+}
+FRONT_ANONYMIZED_SECOND_WORDS = {
+    "alligator",
+    "antelope",
+    "armadillo",
+    "badger",
+    "beaver",
+    "bison",
+    "cheetah",
+    "dolphin",
+    "eagle",
+    "falcon",
+    "gazelle",
+    "hedgehog",
+    "koala",
+    "lemur",
+    "lynx",
+    "octopus",
+    "panda",
+    "platypus",
+    "porcupine",
+    "rhinoceros",
+    "seahorse",
+    "stork",
+}
+FRONT_NON_PERSON_NAMES = {
+    "facebook",
+    "google",
+    "info",
+    "instagram",
+    "meta",
+    "none",
+    "whatsapp",
+}
 FRONT_ACTIVE_STATUSES = {"assigned", "unassigned", "open", "waiting", "pending"}
 FRONT_RESOLVED_STATUSES = {"archived", "resolved", "closed", "deleted", "spam"}
 FRONT_TRANSITION_SOURCE = "front_transition"
@@ -1617,7 +1683,7 @@ def _usable_front_person_name(value: str) -> bool:
     if len(name) < 2:
         return False
     lowered = name.lower()
-    if lowered in {"facebook", "whatsapp", "info", "essr", "none", *GENERIC_FRONT_FIRST_NAMES}:
+    if lowered in FRONT_NON_PERSON_NAMES or lowered in GENERIC_FRONT_FIRST_NAMES:
         return False
     if lowered.startswith("contact front") or lowered.startswith("contact "):
         return False
@@ -1625,7 +1691,18 @@ def _usable_front_person_name(value: str) -> bool:
         return False
     if normalize_phone_e164(name):
         return False
+    if _looks_like_front_anonymized_name(name):
+        return False
     return True
+
+
+def _looks_like_front_anonymized_name(value: str) -> bool:
+    parts = re.sub(r"[^A-Za-z ]+", " ", value).lower().split()
+    return (
+        len(parts) == 2
+        and parts[0] in FRONT_ANONYMIZED_FIRST_WORDS
+        and parts[1] in FRONT_ANONYMIZED_SECOND_WORDS
+    )
 
 
 def _unique_name_candidates(candidates: list[dict[str, str]]) -> list[dict[str, str]]:

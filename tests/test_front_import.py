@@ -379,6 +379,78 @@ def test_front_name_reconciliation_ignores_generic_existing_names() -> None:
     assert lead["identity_status"] == "verified"
 
 
+def test_front_name_reconciliation_ignores_front_anonymized_aliases() -> None:
+    seed_initial_data()
+    import_front_transition_records(
+        [
+            {
+                "conversation": {
+                    **_front_conversation("cnv_alias_name_front", "+41760000107"),
+                    "recipient": {"name": "Orange Armadillo"},
+                },
+                "messages": [
+                    {
+                        **_front_message("msg_alias_name_front", is_inbound=True),
+                        "recipients": [
+                            {
+                                "role": "from",
+                                "handle": "+41760000107",
+                                "name": "Orange Armadillo",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+        "front-transition-alias-name",
+    )
+
+    result = reconcile_front_transition_names("front-transition-alias-name", dry_run=False)
+
+    assert result["counts"]["unchanged"] == 1
+    with connect() as conn:
+        lead = conn.execute(
+            """
+            SELECT first_name, last_name
+            FROM leads
+            WHERE source = 'front_transition'
+              AND front_import_run_id = 'front-transition-alias-name'
+            """
+        ).fetchone()
+    assert lead["first_name"] == "Contact Front"
+
+
+def test_front_name_reconciliation_ignores_non_person_names() -> None:
+    seed_initial_data()
+    import_front_transition_records(
+        [
+            {
+                "conversation": {
+                    **_front_conversation("cnv_non_person_name_front", "+41760000108"),
+                    "recipient": {"name": "Google"},
+                },
+                "messages": [
+                    {
+                        **_front_message("msg_non_person_name_front", is_inbound=True),
+                        "recipients": [
+                            {
+                                "role": "from",
+                                "handle": "+41760000108",
+                                "name": "Google",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+        "front-transition-non-person-name",
+    )
+
+    result = reconcile_front_transition_names("front-transition-non-person-name", dry_run=False)
+
+    assert result["counts"]["unchanged"] == 1
+
+
 def test_list_front_import_records_shows_matching_status() -> None:
     _seed_lead_with_conversation("+41767270073")
     upsert_front_history(_front_conversation(), messages=[_front_message("msg_1")])
