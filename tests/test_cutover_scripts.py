@@ -317,12 +317,42 @@ def test_sequence_template_mapping_sync_keeps_validated_source_mapping_when_sour
     assert plan.upserts[0].source.twilio_content_sid == "HXreal000000000000000000000000000002"
 
 
+def test_sequence_template_mapping_sync_allows_manual_target_step(tmp_path) -> None:
+    source_db = tmp_path / "staging.db"
+    target_db = tmp_path / "prod.db"
+    _create_mapping_sync_db(
+        source_db,
+        with_template_sid="HXreal000000000000000000000000000003",
+        with_mapping=True,
+        step_action_type="manual_reprise_setter",
+    )
+    _create_mapping_sync_db(
+        target_db,
+        with_template_sid="HXreal000000000000000000000000000003",
+        with_mapping=False,
+        step_action_type="manual_reprise_setter",
+    )
+
+    with sync_sequence_template_mappings.connect(source_db, query_only=True) as source_conn:
+        with sync_sequence_template_mappings.connect(target_db) as target_conn:
+            plan = sync_sequence_template_mappings.build_plan(
+                source_conn,
+                target_conn,
+                expected_active_count=1,
+                expected_splits={"APP": 1},
+            )
+
+    assert len(plan.upserts) == 1
+    assert plan.upserts[0].source.twilio_content_sid == "HXreal000000000000000000000000000003"
+
+
 def _create_mapping_sync_db(
     path,
     *,
     with_template_sid: str,
     with_mapping: bool,
     step_active: bool = True,
+    step_action_type: str = "follow_up",
 ) -> None:
     with sync_sequence_template_mappings.connect(path) as conn:
         conn.executescript(
@@ -365,9 +395,9 @@ def _create_mapping_sync_db(
         conn.execute(
             """
             INSERT INTO sequence_steps (sequence_code, step_index, active, action_type)
-            VALUES ('initial_no_reply', 1, ?, 'follow_up')
+            VALUES ('initial_no_reply', 1, ?, ?)
             """,
-            (1 if step_active else 0,),
+            (1 if step_active else 0, step_action_type),
         )
         template_id = conn.execute(
             """

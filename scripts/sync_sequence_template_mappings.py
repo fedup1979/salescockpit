@@ -205,17 +205,13 @@ def validate_target_step(conn: sqlite3.Connection, key: MappingKey) -> None:
         """
         SELECT ss.id
         FROM sequence_steps ss
-        JOIN sequences seq ON seq.code = ss.sequence_code
         WHERE ss.sequence_code = ?
           AND ss.step_index = ?
-          AND ss.active = 1
-          AND ss.action_type = 'follow_up'
-          AND seq.active = 1
         """,
         (key.sequence_code, key.sequence_step_index),
     ).fetchone()
     if not row:
-        raise SyncError(f"Target DB has no active follow_up step for {format_key(key)}")
+        raise SyncError(f"Target DB has no sequence step for {format_key(key)}")
 
 
 def parse_expected_splits(values: Iterable[str]) -> dict[str, int]:
