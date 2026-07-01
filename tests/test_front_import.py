@@ -306,6 +306,45 @@ def test_front_name_reconciliation_updates_generic_contact_from_existing_phone_m
     assert lead["identity_status"] == "verified"
 
 
+def test_front_name_reconciliation_ignores_generic_existing_names() -> None:
+    init_db()
+    phone = "+41760000105"
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO leads (
+                schooldrive_lead_id, first_name, last_name, phone_e164, phone_raw, source
+            ) VALUES ('lead:front-generic-name', 'Inconnu(e)', '', ?, ?, 'schooldrive_webhook')
+            """,
+            (phone, phone),
+        )
+    import_front_transition_records(
+        [
+            {
+                "conversation": _front_conversation("cnv_generic_name_front", phone),
+                "messages": [_front_message("msg_generic_name_front", is_inbound=True)],
+            }
+        ],
+        "front-transition-generic-name",
+    )
+
+    result = reconcile_front_transition_names("front-transition-generic-name", dry_run=False)
+
+    assert result["counts"]["unchanged"] == 1
+    with connect() as conn:
+        lead = conn.execute(
+            """
+            SELECT first_name, last_name, identity_status
+            FROM leads
+            WHERE source = 'front_transition'
+              AND front_import_run_id = 'front-transition-generic-name'
+            """
+        ).fetchone()
+    assert lead["first_name"] == "Contact Front"
+    assert lead["last_name"] == phone
+    assert lead["identity_status"] == "verified"
+
+
 def test_list_front_import_records_shows_matching_status() -> None:
     _seed_lead_with_conversation("+41767270073")
     upsert_front_history(_front_conversation(), messages=[_front_message("msg_1")])

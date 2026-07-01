@@ -15,7 +15,19 @@ from sales_cockpit.services.whatsapp_rules import iso_utc
 
 
 PHONE_PATTERN = re.compile(r"(?:whatsapp:)?(\+?\d[\d\s().-]{6,}\d)", re.IGNORECASE)
-GENERIC_FRONT_FIRST_NAMES = {"", "contact", "contact front", "inconnu(e)", "inconnu", "demo"}
+GENERIC_FRONT_FIRST_NAMES = {
+    "",
+    "contact",
+    "contact front",
+    "inconnu(e)",
+    "inconnu",
+    "inconnue",
+    "non renseigné",
+    "non renseigne",
+    "n/a",
+    "na",
+    "demo",
+}
 FRONT_ACTIVE_STATUSES = {"assigned", "unassigned", "open", "waiting", "pending"}
 FRONT_RESOLVED_STATUSES = {"archived", "resolved", "closed", "deleted", "spam"}
 FRONT_TRANSITION_SOURCE = "front_transition"
@@ -1605,7 +1617,7 @@ def _usable_front_person_name(value: str) -> bool:
     if len(name) < 2:
         return False
     lowered = name.lower()
-    if lowered in {"facebook", "whatsapp", "info", "essr", "none", "contact front"}:
+    if lowered in {"facebook", "whatsapp", "info", "essr", "none", *GENERIC_FRONT_FIRST_NAMES}:
         return False
     if lowered.startswith("contact front") or lowered.startswith("contact "):
         return False
