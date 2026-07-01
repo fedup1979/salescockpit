@@ -1,6 +1,6 @@
 # Current Project State
 
-Last updated: 2026-06-30 18:14 Europe/Zurich.
+Last updated: 2026-07-01 10:05 Europe/Zurich.
 
 This is the first document to read when resuming Sales Cockpit.
 
@@ -8,13 +8,13 @@ Important follow-up: the adversarial review findings from 2026-06-22 are preserv
 
 ## Executive Summary
 
-Sales Cockpit is deployed and running in staging on DigitalOcean. Production is deployed cold and remains in Twilio `mock` mode.
+Sales Cockpit is deployed and running in staging on DigitalOcean. Production is now deployed cold on the latest preparation commit and remains in Twilio `mock` mode.
 
 ## Production Readiness Snapshot
 
 - Latest checkpoint before hardening audit: `a02f10c`.
 - Latest deployed staging UI/API check: OK on `ae9b832`; staging contains the reply no-response skip and the full SchoolDrive V1 contract hardening.
-- Latest observed production commit: `786f89c`; production was not touched by the V1 pre-cutover hardening deploy and remains cold/mock.
+- Latest observed production commit: `ae487d8`; production has received the latest V1 hardening and rollback/mapping preparation, but remains cold/mock.
 - Latest local automated validation for the SchoolDrive V1 business contract: `compileall` OK, `239 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\full-schooldrive-v1-final-2`, local `scripts/pre_cutover_check.py --allow-cold-prod` OK, and Playwright local non-mutating suite `14 passed / 8 skipped`.
 - Latest staging pre-cutover check before this audit: OK.
 - Staging Twilio mode: `mock`, no real WhatsApp send from Sales Cockpit.
@@ -44,6 +44,19 @@ Latest production preparation audit on 2026-06-30 18:14 Europe/Zurich:
 - Production DB schema is old: it is missing the latest capacity columns on `leads` and `course_default_sessions`. A latest-code cold deploy must run `scripts/init_db.py` before `--strict-prod` can run on prod.
 - Running the latest `scripts/pre_cutover_check.py --strict-prod` against the old prod DB currently fails on missing schema (`l.is_full`). This is expected until the prod cold deploy/migration is done.
 - Twilio remains `mock` in staging and prod. `SALES_COCKPIT_TWILIO_CONTENT_READ_ONLY=true` remains required. Do not change Twilio templates, template assignments, webhooks, or live sending before the explicit cutover decision.
+
+Latest production cold-prep update on 2026-07-01 10:05 Europe/Zurich:
+
+- Production deployed cold to `ae487d8`.
+- Production health: API/UI active, API `/health` returns `mode=mock`.
+- Production env remains safe: `SALES_COCKPIT_TWILIO_MODE=mock`, `SALES_COCKPIT_TWILIO_CONTENT_READ_ONLY=true`, `SALES_COCKPIT_SEED_DEMO_DATA=false`.
+- Production cold `scripts/pre_cutover_check.py --allow-cold-prod`: OK.
+- Production DB remains operationally clean: no Front buffer messages, no active tasks, no demo leads, no SchoolDrive webhook events.
+- Production backup before local Twilio Content sync: `/opt/sales-cockpit/backups/prod/sales_cockpit_prod_20260701T080101Z.db.gz`.
+- Twilio Content sync was run against prod DB using staging's read-only Twilio credentials without modifying prod `.env`; result: `3` local templates created, `0` remote writes, `1` local template marked unavailable.
+- Current live blocker: `relance_temoignage_as_3` / `HXbf6f0daf2b5fcb5b1ac94eb21beeadc7` is mapped in staging but Twilio direct lookup returns `404 not found`. It affects `lead_no_reply` step 3 AS and `setter_no_next_step` step 3 AS. Do not force it to approved locally.
+- Current strict-prod read-only result is expected KO until live prerequisites are configured: HTTPS URLs, SchoolDrive prod token, Twilio prod credentials, Twilio live mode, sender/service SID, HTTPS callbacks, and the unavailable AS template replacement/restoration.
+- Emergency rollback procedure is documented in `docs/FRONT_EMERGENCY_ROLLBACK.md`.
 
 The main remaining blocker before operational production cutover is a fresh live end-to-end SchoolDrive validation after the SchoolDrive WhatsApp/projector worker is confirmed running:
 

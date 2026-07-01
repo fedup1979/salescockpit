@@ -257,6 +257,13 @@ PRAGMA foreign_key_check;
 
 Expected result: `78` active real mappings, `APP=26`, `AS=26`, `FSM=26`, and no foreign-key issue.
 
+Current blocker as of 2026-07-01 10:05:
+
+- `relance_temoignage_as_3` / `HXbf6f0daf2b5fcb5b1ac94eb21beeadc7` is mapped in staging but Twilio direct lookup returns `404 not found`.
+- It affects `lead_no_reply` step 3 AS and `setter_no_next_step` step 3 AS.
+- Do not force this template to `approved` locally.
+- Do not turn the key until Laura/François restores this Twilio template or validates a replacement approved template.
+
 ## T-1: Front Buffer Import
 
 1. Preview a tiny Front sample:
@@ -356,6 +363,8 @@ Check:
 
 Rollback means returning the team to Front and restoring the Sales Cockpit database if necessary.
 
+Detailed emergency procedure: `docs/FRONT_EMERGENCY_ROLLBACK.md`.
+
 1. Point Twilio webhooks back to Front/Twilio's previous production routing.
 2. Tell the sales team to resume Front.
 3. Set production Sales Cockpit back to Twilio `mock` if it had been switched to `live`, then restart prod services.
@@ -376,6 +385,8 @@ sudo CONFIRM_RESTORE=1 bash /opt/sales-cockpit/prod/app/deploy/scripts/restore_s
 - Fresh staging validation of Tiago's schema `2.1` through the real website lead and presubscription paths, before the one-time full resync.
 - Real ESSR Twilio template synchronization in read-only mode.
 - Align production to the validated staging mappings: `78` active real mappings, `APP=26`, `AS=26`, `FSM=26`, matched by Twilio Content SID.
+- Resolve unavailable mapped template `relance_temoignage_as_3` / `HXbf6f0daf2b5fcb5b1ac94eb21beeadc7` before live.
+- Capture the current Front Twilio inbound webhook and status callback before changing Twilio Console, so rollback is immediate.
 - Final Twilio production sender verification.
 - Front full-history import batch sizing.
 - UI filter for `front_history`.
