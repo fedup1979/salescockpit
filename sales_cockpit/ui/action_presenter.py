@@ -167,19 +167,19 @@ def action_banner(
         return banner(
             "blue",
             "Reprise transition Front",
-            "Relisez l'historique importé Front, répondez si nécessaire, programmez une relance transition Front si utile, ou clôturez avec une note.",
+            "Relisez l'historique importé Front, répondez si nécessaire, programmez une reprise transition Front si utile, ou clôturez avec une note.",
         )
     if action_type == FRONT_TRANSITION_FOLLOW_UP_ACTION:
         if action_is_due(current_action, now):
             return banner(
                 "blue",
-                "Relance transition Front à traiter",
-                "Relisez l'historique, envoyez un message depuis Conversation si utile, puis clôturez la relance avec une note.",
+                "Reprise transition Front à traiter",
+                "Relisez l'historique, envoyez un message depuis Conversation si utile, puis clôturez la reprise avec une note.",
             )
         return banner(
             "blue",
-            "Relance transition Front planifiée",
-            "Cette relance de transition est prévue plus tard. Elle ne déclenche aucun flux V1 automatique.",
+            "Reprise transition Front planifiée",
+            "Cette reprise de transition est prévue plus tard. Elle ne déclenche aucun flux V1 automatique.",
         )
     return banner(
         "red",

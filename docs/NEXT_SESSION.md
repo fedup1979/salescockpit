@@ -162,7 +162,9 @@ Historical note: `lead:124126` previously proved that Cockpit handled a queued s
   - filtered Admin > Intégrations review by match status, migration status, and recommended action;
   - read-only cutover planning via `scripts/front_cutover_plan.py`;
   - buffer rematching via `scripts/front_rematch_buffer.py` after SchoolDrive backfill;
-  - dry-run-first conversion via `scripts/front_convert_matched.py` for matched active Front rows;
+  - `scripts/front_convert_matched.py` is disabled because Front conversations stay outside V1 flows;
+  - transition import via `scripts/front_transition_import.py`;
+  - post-import maintenance via `scripts/front_transition_maintenance.py`;
   - optional `--attach-history` to copy matched messages into the thread as `front_history`, disabled by default;
   - Admin > Intégrations displays buffered Front records.
 - SchoolDrive payload replay tool exists: `scripts/schooldrive_replay_payloads.py`.
@@ -258,7 +260,7 @@ Latest known local validation after the V1 pre-cutover hardening:
 - Automated backup cron is installed and cron service is active on the droplet.
 - Front token is configured on staging. After fixing pagination limiting, a dry-run successfully read 1 Front conversation and 1 WhatsApp message with `writes: 0`.
 - Front pilot staging result: 13 Front conversations and 159 Front messages stored in the buffer tables. After the latest SchoolDrive MCP backfill and rematch: 11 `unmatched`, 1 `ambiguous`, 1 `matched`.
-- The matched Front row is `cnv_1mz0vz4w`, phone `+33669502201`, linked to `subscription:131887` / Lea Bucco. Front history attachment added 11 `front_history` messages. Conversion dry-run skipped it because a `follow_up` action already exists.
+- Historical note: the old matched Front buffer row `cnv_1mz0vz4w`, phone `+33669502201`, linked to `subscription:131887` / Lea Bucco, was part of the abandoned conversion pilot. Current Front transition import does not convert matched rows into V1 actions.
 - Admin readiness on staging is green for SchoolDrive, Front, Twilio, Backup, and Workflow. The workflow count explicitly separates 1 SchoolDrive record waiting for the first sent autoresponder from true open conversations without action.
 - Latest staging pre-cutover check passed with `scripts/pre_cutover_check.py --api-base http://127.0.0.1:8602 --ui-url http://127.0.0.1:8502`.
 - `scripts/reset_demo.py`: verified on a temporary SQLite database and creates 25 `SD-DEMO-*` leads (`SD-DEMO-4001` through `SD-DEMO-4025`).
@@ -308,7 +310,7 @@ Stop-Process -Id <PID> -Force
 - Notion connector is placeholder only.
 - Twilio is mock by default locally. Staging was previously tested with Sandbox and then with the DEV sender `+41445054269`, but the DEV WhatsApp account was later blocked by Meta. Do not assume staging can send live WhatsApp. Current safe posture is `mock` for staging and production until explicit cutover.
 - Twilio Content API synchronization exists. Real template approval and closed-window template sending still need an end-to-end staging validation with an approved Twilio template.
-- Front import is partially connected in safe pilot mode. Read-only client, dry-run, buffer persistence, exact phone matching, buffer rematch, dry-run-first matched conversion, and Admin visibility exist. Full historical import, ambiguous matching review, and conversation-level history filtering are still pending.
+- Front import is connected in transition mode. Read-only client, dry-run, buffer persistence, exact phone grouping, transition import, post-import maintenance, purge, and Admin visibility exist. Matched conversion into V1 is disabled.
 - WhatsApp freeform attachments are available in V1 while the WhatsApp 24-hour window is open. Files are stored in `storage/attachments`, linked through the `attachments` table, and sent to Twilio via `/media/attachments/{id}/{token_name}`. In non-mock Twilio modes, `SALES_COCKPIT_PUBLIC_API_BASE_URL` or a derivable `SALES_COCKPIT_TWILIO_WEBHOOK_URL` origin must be configured so Twilio can fetch the media.
 - API endpoints for app-style reads/writes require `SALES_COCKPIT_API_TOKEN` outside local tests. JSON mock inbound webhooks also require `SALES_COCKPIT_MOCK_WEBHOOK_TOKEN` or the API token outside local tests.
 - Production should use `SALES_COCKPIT_SEED_DEMO_DATA=false`; this keeps users, rules, and templates, but removes local `SD-DEMO-*` conversations.
@@ -332,7 +334,7 @@ Stop-Process -Id <PID> -Force
 2. When Tiago's producer sends live webhook events, validate accepted/ignored/duplicate events, sent vs queued WhatsApp messages, Setter II +72h creation, and archive resolution in staging.
 3. If Tiago sends JSON files instead of POSTing directly, use `scripts/schooldrive_replay_payloads.py` with `--expected-environment staging`.
 4. If Tiago is still pending after a deployment, run `scripts/schooldrive_smoke.py` from the droplet with `--db-check` to validate the webhook with synthetic data.
-5. After Claude/MCP backfills more SchoolDrive leads, run `scripts/front_rematch_buffer.py --limit 500`, then review `scripts/front_convert_matched.py --limit 500` dry-run output. Do not execute conversion for rows with existing actions unless replacement is intentional.
+5. For Front transition rehearsals or final cutover, use `scripts/front_transition_import.py`, then dry-run and execute `scripts/front_transition_maintenance.py`. Do not convert matched Front rows into V1 actions.
 6. Watch Twilio template approval status. Closed-window template sending cannot be validated until at least one real template is approved.
 7. Run the focused manual scenario validation in `docs/TEST_PLAN.md` with Laura or François after real SchoolDrive data is visible.
 8. Fix any UX or workflow failures discovered by the scenario pass.

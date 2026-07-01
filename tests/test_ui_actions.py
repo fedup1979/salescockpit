@@ -135,7 +135,7 @@ def test_message_body_html_preserves_line_breaks_without_raw_html() -> None:
 
 def test_front_transition_actions_have_human_labels() -> None:
     assert labelize("front_transition_review") == "Reprise transition Front"
-    assert labelize("front_transition_follow_up") == "Relance transition Front"
+    assert labelize("front_transition_follow_up") == "Reprise transition Front"
 
 
 def test_front_transition_review_exposes_followup_planner() -> None:
@@ -174,10 +174,19 @@ def test_front_transition_review_exposes_followup_planner() -> None:
 
     assert len(app.exception) == 0
     markup = "\n".join(item.value for item in app.markdown)
+    captions = "\n".join(item.value for item in app.caption)
     button_labels = [item.label for item in app.button]
+    text_area_labels = [item.label for item in app.text_area]
+    selectbox_labels = [item.label for item in app.selectbox]
     assert "Action inconnue" not in markup
-    assert "Programmer une relance transition Front" in markup
-    assert "Programmer relance transition Front" in button_labels
+    assert "Transition Front" in markup
+    assert "hors flux V1" in captions
+    assert "Clôturer la transition Front" in markup
+    assert "Programmer une relance transition Front" not in markup
+    assert "Programmer relance transition Front" not in button_labels
+    assert "Enregistrer la décision" in button_labels
+    assert "Note obligatoire" in text_area_labels
+    assert "Décision" in selectbox_labels
 
 
 def test_reply_action_guides_to_conversation_send_without_generic_completion() -> None:

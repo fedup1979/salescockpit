@@ -11,11 +11,13 @@ class FakeResponse:
         payload: dict | None = None,
         text: str = "",
         headers: dict | None = None,
+        content: bytes = b"",
     ):
         self.status_code = status_code
         self._payload = payload
         self.text = text
         self.headers = headers or {}
+        self.content = content
 
     def json(self) -> dict:
         if self._payload is None:
@@ -111,6 +113,32 @@ def test_front_client_requires_token_from_settings(monkeypatch) -> None:
         raise AssertionError("Front token should be required.")
     finally:
         get_settings.cache_clear()
+
+
+def test_front_client_downloads_attachment_binary() -> None:
+    session = FakeSession(
+        [
+            FakeResponse(
+                200,
+                payload=None,
+                headers={
+                    "Content-Type": "image/png",
+                    "Content-Disposition": 'attachment; filename="qr-code.png"',
+                },
+                content=b"PNGDATA",
+            )
+        ]
+    )
+    client = FrontClient(api_token="test", session=session)
+
+    attachment = client.download_attachment("https://api2.frontapp.com/download/att_1")
+
+    assert attachment == {
+        "content": b"PNGDATA",
+        "mime_type": "image/png",
+        "file_name": "qr-code.png",
+    }
+    assert session.calls[0][2]["headers"]["Accept"] == "*/*"
 
 
 def test_front_client_retries_rate_limit_with_retry_after(monkeypatch) -> None:

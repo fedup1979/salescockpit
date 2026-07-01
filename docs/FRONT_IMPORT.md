@@ -22,19 +22,11 @@ The Front buffer stores a migration recommendation for every Front conversation:
 
 | Front status / signal | Buffer `migration_status` | Recommended action |
 |---|---:|---|
-| `assigned`, `unassigned`, `open`, `waiting`, `pending` + latest inbound customer message | `active` | `reply` |
-| `assigned`, `unassigned`, `open`, `waiting`, `pending` + latest outbound team message | `active` | `follow_up` |
+| `assigned`, `unassigned`, `open`, `waiting`, `pending` | `active` | `front_transition_review` |
 | `archived`, `resolved`, `closed`, `deleted`, `spam` | `resolved` | none |
-| unknown status or no exploitable message | `manual_review` | none |
+| unknown status | `manual_review` | none |
 
-This legacy buffer classification is intentionally conservative. It does not create Sales Cockpit actions by itself. The current cutover approach does not convert matched Front rows into V1 actions automatically.
-
-The legacy matched-conversion behavior was:
-
-- `active` + `reply`: Sales Cockpit conversation active, next action `Répondre au message`, usually assigned to Mihary.
-- `active` + `follow_up`: Sales Cockpit conversation active, next action `Envoyer relance` or manual review, usually assigned to Tanjona.
-- `resolved`: Sales Cockpit history visible, conversation terminated, no next action.
-- `manual_review`: no automatic migration; admin review required.
+This buffer classification is intentionally conservative. It does not create V1 `reply` or `follow_up` actions. The current cutover approach imports active Front conversations as transition work for Setter I.
 
 ## Transition Import Behavior
 
@@ -47,7 +39,7 @@ The current cutover behavior is deliberately simpler:
 - no imported Front conversation is matched to a SchoolDrive V1 flow;
 - no `reply` or V1 `follow_up` is created by the import;
 - a setter can respond from the Conversation tab or close the transition with a required note;
-- a setter can schedule `front_transition_follow_up`, assigned to Setter II, with no `sequence_code`;
+- a setter can schedule `front_transition_follow_up`, assigned to Setter I, with no `sequence_code`;
 - if a prospect replies on an open transition thread, Sales Cockpit creates or updates `front_transition_review`, not a V1 `reply`;
 - every run can be purged by `import_run_id` before the final cutover import.
 
@@ -105,8 +97,9 @@ Implemented:
 - `scripts/front_import_pilot.py`, which previews or stores a small controlled sample.
 - `scripts/front_cutover_plan.py`, which reads the buffer and produces a conservative read-only cutover plan.
 - `scripts/front_rematch_buffer.py`, which recomputes buffered Front matches after a later SchoolDrive backfill.
-- `scripts/front_convert_matched.py`, which can convert only `matched` + `active` buffer rows into Sales Cockpit actions. It is dry-run by default and skips existing open actions unless explicitly told to replace them.
+- `scripts/front_convert_matched.py` is disabled. Front conversations must not be converted into V1 `reply` / `follow_up` actions.
 - `scripts/front_transition_import.py`, which imports Front conversations as manual transition threads outside V1 flows. It is dry-run by default.
+- `scripts/front_transition_maintenance.py`, which cleans imported Front message bodies, downloads Front attachments, and reconciles generic Front contact names. It is dry-run by default.
 - `scripts/front_transition_purge.py`, which purges one transition import run by `import_run_id`.
 
 Latest staging pilot:
@@ -116,7 +109,7 @@ Latest staging pilot:
 - After the latest SchoolDrive MCP backfill and rematch: 11 conversations are `unmatched`, 1 is `ambiguous`, and 1 is `matched`.
 - The matched row is `cnv_1mz0vz4w`, phone `+33669502201`, linked to `subscription:131887` / Lea Bucco.
 - 11 matched Front messages were attached as `front_history`.
-- Conversion dry-run skipped the matched row because that lead already has an open `follow_up` action.
+- Matched rows are no longer converted into V1 actions. Active Front conversations are imported as `front_transition_review`.
 
 Not implemented yet:
 
@@ -183,13 +176,13 @@ python scripts/front_cutover_plan.py --limit 500 --json
 
 The plan is deliberately conservative:
 
-- `ready_to_convert`: matched active Front conversation with a clear recommended action (`reply` or `follow_up`);
+- `ready_to_convert`: matched active Front conversation ready for `front_transition_review`, outside V1 flows;
 - `history_only`: matched resolved Front conversation, import as history only;
 - `manual_review`: unmatched, ambiguous, or unclear Front conversation.
 
 This command does not create actions and does not attach messages. It is safe to run before Tiago's SchoolDrive backfill, but most records will remain `manual_review` until SchoolDrive has populated the matching phone numbers.
 
-## Rematch And Conversion Commands
+## Legacy Buffer Rematch
 
 After a SchoolDrive backfill, recompute Front matches without calling Front again:
 
@@ -197,19 +190,7 @@ After a SchoolDrive backfill, recompute Front matches without calling Front agai
 python scripts/front_rematch_buffer.py --limit 500
 ```
 
-Preview conversion of matched active Front rows into Sales Cockpit actions:
-
-```bash
-python scripts/front_convert_matched.py --limit 500
-```
-
-Execute conversion only after reviewing the dry-run output:
-
-```bash
-python scripts/front_convert_matched.py --limit 500 --execute
-```
-
-By default, conversion skips leads that already have an open next action. Use `--replace-existing` only during a controlled cutover if replacing those actions is intentional.
+Do not run matched conversion. `scripts/front_convert_matched.py` is intentionally disabled because Front transition work stays outside V1 flows.
 
 ## Transition Import Commands
 
@@ -231,6 +212,18 @@ For larger batches, increase the limit only after the previous batch has been re
 python scripts/front_transition_import.py --limit 200 --messages-limit 500 --allow-large --import-run-id front-transition-dryrun-01 --write --json
 ```
 
+Dry-run maintenance after an import:
+
+```bash
+python scripts/front_transition_maintenance.py --import-run-id front-transition-dryrun-01
+```
+
+Apply maintenance after reviewing the dry-run:
+
+```bash
+python scripts/front_transition_maintenance.py --import-run-id front-transition-dryrun-01 --execute
+```
+
 Preview deletion of one run:
 
 ```bash
@@ -247,7 +240,7 @@ The intended rehearsal is:
 
 1. keep Twilio in `mock`;
 2. import Front transition data with a dry-run `import_run_id`;
-3. test review, reply, manual follow-up, inbound reopen, and closure;
+3. test review, reply, manual reprise, inbound reopen, and closure;
 4. purge the dry-run import;
 5. freeze Front;
 6. reimport with the final `import_run_id`;

@@ -924,22 +924,37 @@ def test_front_transition_followup_is_manual_and_reopened_by_inbound() -> None:
     phone = unique_numeric_phone()
     lead_id, conversation_id = seed_front_transition_thread(phone, latest_inbound=True)
     setter2 = next(item for item in list_users() if item["email"] == "setter2@essr.ch")
+    setter1 = next(
+        item for item in list_users()
+        if item["role"] == "setter" and item["email"] != "setter2@essr.ch"
+    )
     due_at = iso_utc(utc_now() + timedelta(days=1))
 
-    ok, message = assign_standard_next_action(
+    rejected, reject_message = assign_standard_next_action(
         conversation_id,
         admin["id"],
         "front_transition_follow_up",
         setter2["id"],
         due_at,
-        "Relance manuelle transition Front.",
+        "Reprise manuelle transition Front.",
+    )
+    assert rejected is False
+    assert "Setter I" in reject_message
+
+    ok, message = assign_standard_next_action(
+        conversation_id,
+        admin["id"],
+        "front_transition_follow_up",
+        setter1["id"],
+        due_at,
+        "Reprise manuelle transition Front.",
     )
 
     assert ok is True, message
     followup = get_next_action_for_lead(lead_id)
     assert followup["type"] == "front_transition_follow_up"
     assert followup["sequence_code"] is None
-    assert followup["assigned_to_email"] == "setter2@essr.ch"
+    assert followup["assigned_to_email"] == setter1["email"]
 
     inbound = record_inbound_message(phone, "Merci, je réponds.")
 
@@ -950,6 +965,37 @@ def test_front_transition_followup_is_manual_and_reopened_by_inbound() -> None:
     completed_followup = next(item for item in list_actions_for_lead(lead_id, "all") if item["id"] == followup["id"])
     assert completed_followup["status"] == "done"
     assert completed_followup["outcome"] == "Nouveau message reçu"
+
+
+def test_front_transition_outbound_can_schedule_future_reprise() -> None:
+    seed_initial_data()
+    phone = unique_numeric_phone()
+    lead_id, conversation_id = seed_front_transition_thread(phone, latest_inbound=True)
+    action = get_next_action_for_lead(lead_id)
+    setter1 = next(
+        item for item in list_users()
+        if item["role"] == "setter" and item["email"] != "setter2@essr.ch"
+    )
+    due_at = iso_utc(utc_now() + timedelta(days=3))
+
+    ok, message = send_freeform_message(
+        conversation_id,
+        action["assigned_to_user_id"],
+        "Bonjour, je reprends votre conversation.",
+        action_outcome="front_transition_follow_up",
+        next_due_at=due_at,
+        assigned_to_user_id=setter1["id"],
+        note="Reprendre si la personne ne répond pas.",
+        expected_action_id=action["id"],
+    )
+
+    assert ok is True, message
+    followup = get_next_action_for_lead(lead_id)
+    assert followup["type"] == "front_transition_follow_up"
+    assert followup["due_at"] == due_at
+    assert followup["assigned_to_email"] == setter1["email"]
+    assert followup["trigger_reason"] == "front_transition_follow_up_after_outbound"
+    assert get_conversation(conversation_id)["status"] == "open"
 
 
 def test_reply_no_response_needed_closes_reply_and_schedules_normal_followup() -> None:

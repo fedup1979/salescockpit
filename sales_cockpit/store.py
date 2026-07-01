@@ -348,7 +348,7 @@ JOURNAL_TASK_TYPE_LABELS = {
     "manual_reprise_setter": "Reprise setter",
     "manual_reprise_closer": "Reprise closer",
     FRONT_TRANSITION_REVIEW_ACTION: "Reprise transition Front",
-    FRONT_TRANSITION_FOLLOW_UP_ACTION: "Relance transition Front",
+    FRONT_TRANSITION_FOLLOW_UP_ACTION: "Reprise transition Front",
     "other": "Anomalie / revue humaine",
 }
 
@@ -4007,7 +4007,7 @@ def assign_standard_next_action(
     front_transition_followup = action_type == FRONT_TRANSITION_FOLLOW_UP_ACTION
     manual_reprise_action = action_type in MANUAL_REPRISE_ACTION_TYPES
     if front_transition_followup and conv.get("source") != FRONT_TRANSITION_SOURCE:
-        return False, "Cette relance est réservée aux conversations importées depuis Front."
+        return False, "Cette reprise est réservée aux conversations importées depuis Front."
     if (call_action or front_transition_followup) and conv.get("contact_status") in STOP_CONTACT_STATUSES:
         return False, "Contact bloqué : le statut Ne plus contacter doit être levé avant de créer une action."
     if (call_action or front_transition_followup) and conv.get("lead_status") in STOP_QUALIFICATION_STATUSES:
@@ -4033,9 +4033,9 @@ def assign_standard_next_action(
             return False, "Cette action doit être attribuée à un closer."
 
         if action_type == FRONT_TRANSITION_FOLLOW_UP_ACTION and (
-            assignee_role != "setter" or assignee_email != "setter2@essr.ch"
+            assignee_role != "setter" or assignee_email == "setter2@essr.ch"
         ):
-            return False, "Cette relance transition Front doit être attribuée à Setter II."
+            return False, "Cette reprise transition Front doit être attribuée à Setter I."
 
         now = iso_utc()
         full_name = lead_full_name(conv)
@@ -4051,7 +4051,7 @@ def assign_standard_next_action(
             "manual_reprise_setter": "standard_manual_reprise_setter_requested",
             "manual_reprise_closer": "standard_manual_reprise_closer_requested",
         }
-        titles[FRONT_TRANSITION_FOLLOW_UP_ACTION] = f"Relance transition Front · {full_name}"
+        titles[FRONT_TRANSITION_FOLLOW_UP_ACTION] = f"Reprise transition Front · {full_name}"
         trigger_reasons[FRONT_TRANSITION_FOLLOW_UP_ACTION] = "front_transition_follow_up_scheduled"
 
         active_call = _first_active_action_for_lead(
@@ -5431,6 +5431,66 @@ def _close_outbound_action_and_chain(
 
     full_name = lead_full_name(conv)
     if action["type"] in FRONT_TRANSITION_ACTION_TYPES:
+        if action_outcome == "front_transition_follow_up":
+            assignee_id = (
+                assigned_to_user_id
+                if _is_setter1_user(conn, assigned_to_user_id)
+                else setter1_user_id(conn)
+            ) or action.get("assigned_to_user_id") or user_id
+            due_at = next_due_at or sent_at
+            conn.execute(
+                """
+                UPDATE leads
+                SET setter_user_id = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (assignee_id, sent_at, conv["lead_id"]),
+            )
+            next_action_id = _insert_next_action(
+                conn,
+                lead_id=conv["lead_id"],
+                conversation_id=conv["id"],
+                action_type=FRONT_TRANSITION_FOLLOW_UP_ACTION,
+                title=f"Reprise transition Front · {full_name}",
+                assigned_to_user_id=assignee_id,
+                created_by_user_id=user_id,
+                urgency="normal",
+                due_at=due_at,
+                description=note or None,
+                trigger_reason="front_transition_follow_up_after_outbound",
+                previous_action_id=action["id"],
+                metadata={"front_transition": True},
+            )
+            conn.execute(
+                """
+                UPDATE tasks
+                SET next_action_id = ?
+                WHERE id = ?
+                """,
+                (next_action_id, action["id"]),
+            )
+            conn.execute(
+                """
+                UPDATE conversations
+                SET status = 'open',
+                    resolution_reason = NULL,
+                    resolution_note = NULL,
+                    resolved_at = NULL,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (sent_at, conv["id"]),
+            )
+            insert_event(
+                conn,
+                conv["lead_id"],
+                "front_transition_follow_up_scheduled_after_outbound",
+                user_id=user_id,
+                previous={"task_id": action["id"]},
+                new={"task_id": next_action_id, "due_at": due_at, "assigned_to_user_id": assignee_id},
+                metadata={"conversation_id": conv["id"]},
+            )
+            return
         if not _first_active_action_for_lead(
             conn,
             conv["lead_id"],
@@ -5446,7 +5506,7 @@ def _close_outbound_action_and_chain(
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (note or "Action transition Front traitÃ©e.", sent_at, sent_at, conv["id"]),
+                (note or "Action transition Front traitée.", sent_at, sent_at, conv["id"]),
             )
         return
     if action["type"] == "reply":
@@ -5839,6 +5899,24 @@ def _upsert_reply_action_for_inbound(
         included_types=("follow_up", FRONT_TRANSITION_FOLLOW_UP_ACTION),
     )
 
+    if lead.get("contact_status") in STOP_CONTACT_STATUSES:
+        _upsert_contact_review_action(
+            conn,
+            lead_id,
+            conversation_id,
+            setter_id,
+            lead,
+            now,
+            f"Revoir le statut de contact de {lead_full_name(lead)}",
+            description=(
+                "Le prospect est marqué Ne plus contacter mais vient d'écrire. "
+                "Lire le message et décider s'il faut maintenir ou lever le blocage."
+            ),
+            trigger_reason="do_not_contact_prospect_replied",
+            event_type="contact_review_created_from_inbound",
+        )
+        return
+
     if lead.get("source") == FRONT_TRANSITION_SOURCE:
         title = f"Reprise transition Front · {lead_full_name(lead)}"
         existing = conn.execute(
@@ -5889,24 +5967,6 @@ def _upsert_reply_action_for_inbound(
                     "assigned_to_user_id": setter_id,
                     "conversation_id": conversation_id,
                 },
-            )
-        return
-
-    if lead.get("contact_status") in STOP_CONTACT_STATUSES:
-        _upsert_contact_review_action(
-            conn,
-            lead_id,
-            conversation_id,
-            setter_id,
-            lead,
-            now,
-            f"Revoir le statut de contact de {lead_full_name(lead)}",
-            description=(
-                "Le prospect est marqué Ne plus contacter mais vient d'écrire. "
-                "Lire le message et décider s'il faut maintenir ou lever le blocage."
-            ),
-            trigger_reason="do_not_contact_prospect_replied",
-            event_type="contact_review_created_from_inbound",
         )
         return
 
@@ -6141,11 +6201,18 @@ def _select_inbound_match(
     from_phone: str,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]], str]:
     candidates = _phone_match_candidates(conn, from_phone)
+    contact_stop_records = [
+        candidate
+        for candidate in candidates
+        if candidate.get("contact_status") in STOP_CONTACT_STATUSES
+    ]
+    if contact_stop_records:
+        return contact_stop_records[0], candidates, "matched_do_not_contact"
     active_front_transitions = [
         candidate
         for candidate in candidates
         if candidate.get("source") == FRONT_TRANSITION_SOURCE
-        and candidate.get("conversation_status") == "open"
+        and candidate.get("contact_status") not in STOP_CONTACT_STATUSES
     ]
     if active_front_transitions:
         return active_front_transitions[0], candidates, "matched_front_transition"
@@ -6156,13 +6223,6 @@ def _select_inbound_match(
     ]
     if review_records:
         return review_records[0], candidates, "existing_identity_review"
-    contact_stop_records = [
-        candidate
-        for candidate in candidates
-        if candidate.get("contact_status") in STOP_CONTACT_STATUSES
-    ]
-    if contact_stop_records:
-        return contact_stop_records[0], candidates, "matched_do_not_contact"
     if len(candidates) == 1:
         return candidates[0], candidates, "matched"
     if not candidates:
@@ -9775,7 +9835,7 @@ def complete_action_with_workflow(
                 "manual_reprise_setter": "Note de reprise manuelle setter",
                 "manual_reprise_closer": "Note de reprise manuelle closer",
                 FRONT_TRANSITION_REVIEW_ACTION: "Note de reprise transition Front",
-                FRONT_TRANSITION_FOLLOW_UP_ACTION: "Note de relance transition Front",
+                FRONT_TRANSITION_FOLLOW_UP_ACTION: "Note de reprise transition Front",
                 "other": "Note d'action",
             }
             action_note_label = action_note_labels.get(task["type"], "Note d'action")

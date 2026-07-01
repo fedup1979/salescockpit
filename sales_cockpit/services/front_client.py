@@ -4,6 +4,7 @@ import re
 import time
 from dataclasses import dataclass
 from typing import Any
+from email.message import Message
 from urllib.parse import quote
 
 import requests
@@ -77,6 +78,22 @@ class FrontClient:
             max_results=limit,
         )
 
+    def download_attachment(self, url: str) -> dict[str, Any]:
+        safe_url = str(url or "").strip()
+        if not safe_url:
+            raise FrontApiError("attachment url is required.")
+        response = self._request_raw("GET", safe_url, accept="*/*")
+        content = getattr(response, "content", b"")
+        if not isinstance(content, bytes):
+            content = bytes(content or b"")
+        return {
+            "content": content,
+            "mime_type": (getattr(response, "headers", {}) or {}).get("Content-Type")
+            or (getattr(response, "headers", {}) or {}).get("content-type")
+            or "application/octet-stream",
+            "file_name": self._filename_from_response(response),
+        }
+
     def _paginate(
         self,
         path_or_url: str,
@@ -130,6 +147,32 @@ class FrontClient:
         except ValueError as exc:
             raise FrontApiError("Réponse Front API invalide.") from exc
 
+    def _request_raw(self, method: str, url: str, accept: str = "application/json", **kwargs: Any) -> Any:
+        session = self.session or requests
+        headers = kwargs.pop("headers", {})
+        headers["Authorization"] = f"Bearer {self.api_token}"
+        headers["Accept"] = accept
+        response = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = session.request(
+                    method,
+                    self._url(url),
+                    headers=headers,
+                    timeout=30,
+                    **kwargs,
+                )
+            except requests.RequestException as exc:
+                raise FrontApiError(f"Front API inaccessible : {exc}") from exc
+            if response.status_code != 429 or attempt >= self.max_retries:
+                break
+            time.sleep(self._retry_delay_seconds(response, attempt))
+        if response is None:
+            raise FrontApiError("Front API inaccessible.")
+        if response.status_code >= 400:
+            raise FrontApiError(f"Front API a refusé la demande : {self._error_detail(response)}")
+        return response
+
     def _url(self, path_or_url: str) -> str:
         if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
             return path_or_url
@@ -168,3 +211,12 @@ class FrontClient:
             if isinstance(error, dict):
                 return str(error.get("message") or error.get("title") or payload)
         return str(payload)
+
+    def _filename_from_response(self, response: Any) -> str | None:
+        headers = getattr(response, "headers", {}) or {}
+        disposition = headers.get("Content-Disposition") or headers.get("content-disposition")
+        if not disposition:
+            return None
+        message = Message()
+        message["content-disposition"] = disposition
+        return message.get_filename()

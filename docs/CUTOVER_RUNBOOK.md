@@ -311,7 +311,7 @@ sudo bash /opt/sales-cockpit/staging/app/deploy/scripts/install_backup_cron.sh
 4. Review open transition conversations in Sales Cockpit.
 5. For each active Front transition conversation, handle it outside V1 flows:
    - customer waiting for an answer: answer from the Conversation tab;
-   - team waiting for the prospect: schedule `front_transition_follow_up` for Setter II;
+   - team waiting for the prospect: schedule `front_transition_follow_up` for Setter I;
    - appointment already agreed: create the corresponding setting or closing call action manually;
    - unclear status: keep or close the transition review with a note.
 
@@ -322,6 +322,13 @@ python scripts/front_transition_import.py --limit 200 --messages-limit 500 --all
 ```
 
 Increase the batch size only after the previous batch has completed and the task counts look coherent.
+
+Then run maintenance dry-run and execution:
+
+```bash
+python scripts/front_transition_maintenance.py --import-run-id front-transition-final-01
+python scripts/front_transition_maintenance.py --import-run-id front-transition-final-01 --execute
+```
 
 ## T0: Transition History
 
@@ -396,7 +403,7 @@ sudo CONFIRM_RESTORE=1 bash /opt/sales-cockpit/prod/app/deploy/scripts/restore_s
 - Final Twilio production sender verification.
 - Front full-history import batch sizing.
 - UI filter for `front_history`.
-- Reviewed conversion pilot for active Front buffer rows.
+- Reviewed Front transition import and maintenance on active Front rows.
 - Laura validation on restored fake prospects.
 - Real website lead validation.
 - Real website presubscription validation.

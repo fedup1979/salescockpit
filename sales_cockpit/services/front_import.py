@@ -3,13 +3,19 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
+from sales_cockpit.config import get_settings
 from sales_cockpit.db import connect, insert_event, row_to_dict, rows_to_dicts
+from sales_cockpit.services.front_client import FrontApiError, FrontClient
+from sales_cockpit.services.message_text import front_message_body_text
 from sales_cockpit.services.whatsapp_rules import iso_utc
 
 
 PHONE_PATTERN = re.compile(r"(?:whatsapp:)?(\+?\d[\d\s().-]{6,}\d)", re.IGNORECASE)
+GENERIC_FRONT_FIRST_NAMES = {"", "contact", "contact front", "inconnu(e)", "inconnu", "demo"}
 FRONT_ACTIVE_STATUSES = {"assigned", "unassigned", "open", "waiting", "pending"}
 FRONT_RESOLVED_STATUSES = {"archived", "resolved", "closed", "deleted", "spam"}
 FRONT_TRANSITION_SOURCE = "front_transition"
@@ -165,21 +171,21 @@ def classify_front_migration(
         }
     if status in FRONT_ACTIVE_STATUSES:
         if latest_direction == "inbound":
-            return {
-                "migration_status": "active",
-                "migration_action_type": "reply",
-                "migration_reason": "Conversation Front active avec dernier message client entrant : répondre dans Sales Cockpit.",
-            }
-        if latest_direction == "outbound":
-            return {
-                "migration_status": "active",
-                "migration_action_type": "follow_up",
-                "migration_reason": "Conversation Front active avec dernier message équipe sortant : prévoir une relance ou revue.",
-            }
+            reason = (
+                "Conversation Front active avec dernier message client entrant : reprise transition Front "
+                "hors flux V1."
+            )
+        elif latest_direction == "outbound":
+            reason = (
+                "Conversation Front active avec dernier message équipe sortant : reprise transition Front "
+                "hors flux V1."
+            )
+        else:
+            reason = "Conversation Front active : reprise transition Front hors flux V1."
         return {
-            "migration_status": "manual_review",
-            "migration_action_type": None,
-            "migration_reason": "Conversation Front active mais aucun message exploitable : revue manuelle nécessaire.",
+            "migration_status": "active",
+            "migration_action_type": FRONT_TRANSITION_REVIEW_ACTION,
+            "migration_reason": reason,
         }
     return {
         "migration_status": "manual_review",
@@ -564,6 +570,275 @@ def purge_front_transition_import(import_run_id: str) -> dict[str, Any]:
     }
 
 
+def repair_front_imported_message_bodies(
+    import_run_id: str | None = None,
+    *,
+    dry_run: bool = True,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    filters = ["fm.imported_message_id IS NOT NULL"]
+    params: list[Any] = []
+    if import_run_id:
+        filters.append("fm.import_run_id = ?")
+        params.append(import_run_id)
+    limit_clause = ""
+    if limit is not None:
+        limit_clause = "LIMIT ?"
+        params.append(max(1, int(limit)))
+    with connect() as conn:
+        rows = rows_to_dicts(
+            conn.execute(
+                f"""
+                SELECT fm.id, fm.imported_message_id, fm.payload_json,
+                       fm.body AS front_body, m.body AS message_body
+                FROM front_messages fm
+                JOIN messages m ON m.id = fm.imported_message_id
+                WHERE {' AND '.join(filters)}
+                ORDER BY fm.id
+                {limit_clause}
+                """,
+                params,
+            ).fetchall()
+        )
+        updates: list[tuple[str, int, int]] = []
+        for row in rows:
+            body = _message_body(_json_payload(row.get("payload_json")))
+            if body and (body != row.get("front_body") or body != row.get("message_body")):
+                updates.append((body, int(row["id"]), int(row["imported_message_id"])))
+        if not dry_run:
+            now = iso_utc()
+            for body, front_message_id, message_id in updates:
+                conn.execute(
+                    "UPDATE front_messages SET body = ?, updated_at = ? WHERE id = ?",
+                    (body, now, front_message_id),
+                )
+                conn.execute("UPDATE messages SET body = ? WHERE id = ?", (body, message_id))
+    return {
+        "dry_run": dry_run,
+        "scanned": len(rows),
+        "would_update": len(updates),
+        "updated": 0 if dry_run else len(updates),
+    }
+
+
+def import_front_message_attachments(
+    import_run_id: str | None = None,
+    *,
+    dry_run: bool = True,
+    limit: int | None = None,
+    client: FrontClient | None = None,
+) -> dict[str, Any]:
+    filters = ["fm.imported_message_id IS NOT NULL", "fm.payload_json LIKE '%\"attachments\"%'"]
+    params: list[Any] = []
+    if import_run_id:
+        filters.append("fm.import_run_id = ?")
+        params.append(import_run_id)
+    limit_clause = ""
+    if limit is not None:
+        limit_clause = "LIMIT ?"
+        params.append(max(1, int(limit)))
+    with connect() as conn:
+        rows = rows_to_dicts(
+            conn.execute(
+                f"""
+                SELECT fm.id, fm.front_message_id, fm.imported_message_id, fm.payload_json
+                FROM front_messages fm
+                WHERE {' AND '.join(filters)}
+                ORDER BY fm.id
+                {limit_clause}
+                """,
+                params,
+            ).fetchall()
+        )
+
+    candidates: list[dict[str, Any]] = []
+    for row in rows:
+        payload = _json_payload(row.get("payload_json"))
+        for attachment in _front_attachment_payloads(payload):
+            source = f"front:{row['front_message_id']}:{attachment['front_attachment_id']}"
+            candidates.append(
+                {
+                    **attachment,
+                    "source": source,
+                    "message_id": int(row["imported_message_id"]),
+                    "front_message_row_id": int(row["id"]),
+                    "front_message_id": row["front_message_id"],
+                }
+            )
+
+    with connect() as conn:
+        existing_sources = {
+            row["source"]
+            for row in conn.execute(
+                "SELECT source FROM attachments WHERE source LIKE 'front:%'"
+            ).fetchall()
+        }
+    pending = [item for item in candidates if item["source"] not in existing_sources]
+    result: dict[str, Any] = {
+        "dry_run": dry_run,
+        "front_messages_scanned": len(rows),
+        "candidate_attachments": len(candidates),
+        "already_imported": len(candidates) - len(pending),
+        "would_import": len(pending),
+        "imported": 0,
+        "failed": 0,
+        "errors": [],
+    }
+    if dry_run or not pending:
+        return result
+
+    front_client = client or FrontClient.from_settings()
+    settings = get_settings()
+    now = iso_utc()
+    with connect() as conn:
+        for item in pending:
+            try:
+                downloaded = front_client.download_attachment(item["url"])
+                content = downloaded.get("content") or b""
+                if not isinstance(content, bytes) or not content:
+                    raise FrontApiError("Pièce jointe Front vide.")
+                file_name = _safe_attachment_filename(
+                    str(downloaded.get("file_name") or item.get("file_name") or "piece_jointe_front")
+                )
+                mime_type = str(downloaded.get("mime_type") or item.get("mime_type") or "application/octet-stream")
+                attachment_dir = settings.resolved_storage_path / "attachments" / str(item["message_id"])
+                attachment_dir.mkdir(parents=True, exist_ok=True)
+                storage_path = attachment_dir / f"{uuid4().hex}_{file_name}"
+                storage_path.write_bytes(content)
+                conn.execute(
+                    """
+                    INSERT INTO attachments (
+                        message_id, source, file_name, mime_type, size_bytes,
+                        storage_url_or_path, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item["message_id"],
+                        item["source"],
+                        file_name,
+                        mime_type,
+                        len(content),
+                        str(storage_path),
+                        now,
+                    ),
+                )
+                result["imported"] += 1
+            except Exception as exc:  # noqa: BLE001 - continue batch and report bad files.
+                result["failed"] += 1
+                if len(result["errors"]) < 20:
+                    result["errors"].append(
+                        {
+                            "front_message_id": item["front_message_id"],
+                            "front_attachment_id": item["front_attachment_id"],
+                            "error": str(exc),
+                        }
+                    )
+    return result
+
+
+def reconcile_front_transition_names(
+    import_run_id: str | None = None,
+    *,
+    dry_run: bool = True,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    filters = ["l.source = ?"]
+    params: list[Any] = [FRONT_TRANSITION_SOURCE]
+    if import_run_id:
+        filters.append("l.front_import_run_id = ?")
+        params.append(import_run_id)
+    limit_clause = ""
+    if limit is not None:
+        limit_clause = "LIMIT ?"
+        params.append(max(1, int(limit)))
+    with connect() as conn:
+        rows = rows_to_dicts(
+            conn.execute(
+                f"""
+                SELECT l.id, l.first_name, l.last_name, l.phone_e164,
+                       l.front_import_run_id, l.front_transition_key
+                FROM leads l
+                WHERE {' AND '.join(filters)}
+                ORDER BY l.id
+                {limit_clause}
+                """,
+                params,
+            ).fetchall()
+        )
+        decisions: list[dict[str, Any]] = []
+        for lead in rows:
+            if not _front_name_is_generic(lead.get("first_name"), lead.get("last_name")):
+                decisions.append({"lead_id": lead["id"], "decision": "skipped_named"})
+                continue
+            candidates = _front_name_candidates(conn, lead)
+            unique = _unique_name_candidates(candidates)
+            if len(unique) == 1:
+                first_name, last_name = _split_person_name(unique[0]["name"])
+                decisions.append(
+                    {
+                        "lead_id": lead["id"],
+                        "decision": "update",
+                        "first_name": first_name,
+                        "last_name": last_name,
+                        "candidates": candidates,
+                    }
+                )
+            elif len(unique) > 1:
+                decisions.append(
+                    {
+                        "lead_id": lead["id"],
+                        "decision": "ambiguous",
+                        "candidates": candidates,
+                    }
+                )
+            else:
+                decisions.append({"lead_id": lead["id"], "decision": "unchanged"})
+
+        if not dry_run:
+            now = iso_utc()
+            for decision in decisions:
+                if decision["decision"] == "update":
+                    conn.execute(
+                        """
+                        UPDATE leads
+                        SET first_name = ?, last_name = ?, identity_status = 'verified',
+                            identity_candidates_json = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            decision["first_name"],
+                            decision["last_name"],
+                            json.dumps(decision["candidates"], ensure_ascii=False),
+                            now,
+                            decision["lead_id"],
+                        ),
+                    )
+                elif decision["decision"] == "ambiguous":
+                    conn.execute(
+                        """
+                        UPDATE leads
+                        SET identity_status = 'ambiguous_identity',
+                            identity_candidates_json = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            json.dumps(decision["candidates"], ensure_ascii=False),
+                            now,
+                            decision["lead_id"],
+                        ),
+                    )
+
+    counts: dict[str, int] = {}
+    for decision in decisions:
+        counts[decision["decision"]] = counts.get(decision["decision"], 0) + 1
+    return {
+        "dry_run": dry_run,
+        "scanned": len(rows),
+        "counts": counts,
+        "samples": [item for item in decisions if item["decision"] in {"update", "ambiguous"}][:20],
+    }
+
+
 def rematch_front_buffer(limit: int = 500, attach_history: bool = False) -> dict[str, Any]:
     with connect() as conn:
         rows = conn.execute(
@@ -696,11 +971,10 @@ def _front_cutover_plan_row(record: dict[str, Any]) -> dict[str, Any]:
     elif migration_status == "resolved":
         decision = "history_only"
         reason = "Front indique une conversation terminée : importer comme historique, sans action."
-    elif migration_status == "active" and action_type in {"reply", "follow_up"}:
+    elif migration_status == "active" and action_type == FRONT_TRANSITION_REVIEW_ACTION:
         decision = "ready_to_convert"
         reason = (
-            "Conversation active et rattachée : une action Sales Cockpit peut être créée "
-            "après validation humaine."
+            "Conversation active et rattachée : créer une reprise transition Front hors flux V1."
         )
     else:
         decision = "manual_review"
@@ -728,10 +1002,8 @@ def _front_cutover_plan_row(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def _front_recommended_owner(action_type: str | None) -> str | None:
-    if action_type == "reply":
+    if action_type in {FRONT_TRANSITION_REVIEW_ACTION, FRONT_TRANSITION_FOLLOW_UP_ACTION}:
         return "Mihary"
-    if action_type == "follow_up":
-        return "Tanjona"
     return None
 
 
@@ -1033,7 +1305,7 @@ def _ensure_front_transition_review_action(
     ).fetchone()
     title = "Reprise transition Front"
     description = (
-        "Historique Front importé. Relire, répondre ou programmer une relance manuelle hors flux V1."
+        "Historique Front importé. Relire, répondre ou programmer une reprise manuelle hors flux V1."
     )
     urgency = "urgent" if has_latest_inbound else "normal"
     if existing:
@@ -1180,6 +1452,48 @@ def _front_id(payload: dict[str, Any]) -> str:
     return str(payload.get("id") or payload.get("uid") or "").strip()
 
 
+def _front_attachment_payloads(message: dict[str, Any]) -> list[dict[str, Any]]:
+    items = message.get("attachments") if isinstance(message, dict) else []
+    if not isinstance(items, list):
+        return []
+    attachments: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        links = item.get("_links") if isinstance(item.get("_links"), dict) else {}
+        url = str(
+            item.get("url")
+            or item.get("download_url")
+            or links.get("download")
+            or links.get("self")
+            or ""
+        ).strip()
+        if not url:
+            continue
+        front_attachment_id = str(item.get("id") or item.get("uid") or index).strip()
+        attachments.append(
+            {
+                "front_attachment_id": front_attachment_id,
+                "url": url,
+                "file_name": item.get("filename")
+                or item.get("file_name")
+                or item.get("name")
+                or f"piece_jointe_front_{index + 1}",
+                "mime_type": item.get("content_type") or item.get("mime_type") or item.get("content-type"),
+                "size_bytes": item.get("size"),
+                "is_inline": bool((item.get("metadata") or {}).get("is_inline")),
+            }
+        )
+    return attachments
+
+
+def _safe_attachment_filename(value: str) -> str:
+    name = Path(value).name.strip() or "piece_jointe_front"
+    name = re.sub(r"[^A-Za-z0-9._ -]+", "_", name)
+    name = re.sub(r"\s+", " ", name).strip(" .")
+    return name[:120] or "piece_jointe_front"
+
+
 def _json_payload(value: str | None) -> dict[str, Any]:
     if not value:
         return {}
@@ -1191,7 +1505,138 @@ def _json_payload(value: str | None) -> dict[str, Any]:
 
 
 def _message_body(message: dict[str, Any]) -> str:
-    return " ".join(str(message.get("text") or message.get("body") or "").split())
+    return front_message_body_text(message)
+
+
+def _front_name_is_generic(first_name: Any, last_name: Any) -> bool:
+    first = str(first_name or "").strip().lower()
+    last = str(last_name or "").strip()
+    return first in GENERIC_FRONT_FIRST_NAMES or first == "contact front" or last.startswith("Front ")
+
+
+def _front_name_candidates(conn: Any, lead: dict[str, Any]) -> list[dict[str, str]]:
+    candidates: list[dict[str, str]] = []
+    phone = lead.get("phone_e164")
+    if phone:
+        for row in rows_to_dicts(
+            conn.execute(
+                """
+                SELECT first_name, last_name, source
+                FROM leads
+                WHERE phone_e164 = ?
+                  AND source != ?
+                  AND id != ?
+                ORDER BY id DESC
+                """,
+                (phone, FRONT_TRANSITION_SOURCE, lead["id"]),
+            ).fetchall()
+        ):
+            name = _join_name(row.get("first_name"), row.get("last_name"))
+            if _usable_front_person_name(name):
+                candidates.append({"name": name, "source": f"lead:{row.get('source') or 'unknown'}"})
+
+    front_rows = rows_to_dicts(
+        conn.execute(
+            """
+            SELECT payload_json
+            FROM front_conversations
+            WHERE lead_id = ?
+            """,
+            (lead["id"],),
+        ).fetchall()
+    )
+    message_rows = rows_to_dicts(
+        conn.execute(
+            """
+            SELECT payload_json
+            FROM front_messages
+            WHERE lead_id = ?
+            ORDER BY front_created_at DESC, id DESC
+            LIMIT 50
+            """,
+            (lead["id"],),
+        ).fetchall()
+    )
+    for row in front_rows:
+        payload = _json_payload(row.get("payload_json"))
+        for name in _conversation_name_candidates(payload):
+            candidates.append({"name": name, "source": "front_conversation"})
+    for row in message_rows:
+        payload = _json_payload(row.get("payload_json"))
+        for name in _message_name_candidates(payload, phone):
+            candidates.append({"name": name, "source": "front_message"})
+    return candidates
+
+
+def _conversation_name_candidates(payload: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    recipient = payload.get("recipient")
+    if isinstance(recipient, dict):
+        names.append(str(recipient.get("name") or ""))
+    subject = str(payload.get("subject") or "")
+    match = re.search(r"conversation with (.+)$", subject, re.IGNORECASE)
+    if match:
+        names.append(match.group(1))
+    return [name for name in (_clean_candidate_name(item) for item in names) if _usable_front_person_name(name)]
+
+
+def _message_name_candidates(payload: dict[str, Any], phone: str | None) -> list[str]:
+    names: list[str] = []
+    is_inbound = bool(payload.get("is_inbound"))
+    prospect_role = "from" if is_inbound else "to"
+    for recipient in payload.get("recipients") or []:
+        if not isinstance(recipient, dict):
+            continue
+        role = str(recipient.get("role") or "").lower()
+        handle = str(recipient.get("handle") or "")
+        if role == prospect_role or (phone and normalize_phone_e164(handle) == phone):
+            names.append(str(recipient.get("name") or ""))
+    return [name for name in (_clean_candidate_name(item) for item in names) if _usable_front_person_name(name)]
+
+
+def _clean_candidate_name(value: str) -> str:
+    name = re.sub(r"\s+", " ", str(value or "").strip())
+    name = re.sub(r"^(?:WhatsApp|Facebook)\s+conversation\s+with\s+", "", name, flags=re.IGNORECASE)
+    return name.strip(" .")
+
+
+def _usable_front_person_name(value: str) -> bool:
+    name = _clean_candidate_name(value)
+    if len(name) < 2:
+        return False
+    lowered = name.lower()
+    if lowered in {"facebook", "whatsapp", "info", "essr", "none", "contact front"}:
+        return False
+    if lowered.startswith("contact front") or lowered.startswith("contact "):
+        return False
+    if "essr" in lowered or "@" in lowered:
+        return False
+    if normalize_phone_e164(name):
+        return False
+    return True
+
+
+def _unique_name_candidates(candidates: list[dict[str, str]]) -> list[dict[str, str]]:
+    unique: dict[str, dict[str, str]] = {}
+    for candidate in candidates:
+        name = _clean_candidate_name(candidate.get("name") or "")
+        key = re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
+        if key and key not in unique:
+            unique[key] = {"name": name, "source": candidate.get("source") or "unknown"}
+    return list(unique.values())
+
+
+def _split_person_name(value: str) -> tuple[str, str]:
+    parts = _clean_candidate_name(value).split()
+    if not parts:
+        return "Contact Front", ""
+    if len(parts) == 1:
+        return parts[0], ""
+    return parts[0], " ".join(parts[1:])
+
+
+def _join_name(first_name: Any, last_name: Any) -> str:
+    return " ".join(part for part in [str(first_name or "").strip(), str(last_name or "").strip()] if part)
 
 
 def _latest_front_message(messages: list[dict[str, Any]]) -> dict[str, Any] | None:

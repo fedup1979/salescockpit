@@ -24,7 +24,7 @@ OWNER_BY_ACTION = {
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Convert matched Front buffer rows into Sales Cockpit next actions."
+        description="Deprecated. Front transition imports must stay outside V1 flows."
     )
     parser.add_argument("--limit", type=int, default=500)
     parser.add_argument("--execute", action="store_true", help="Actually create/replace actions.")
@@ -38,6 +38,11 @@ def main() -> None:
 
     if args.limit < 1:
         raise SystemExit("--limit must be at least 1.")
+    raise SystemExit(
+        "front_convert_matched.py est désactivé : les conversations Front importées restent "
+        "hors flux V1. Utilise scripts/front_transition_import.py puis "
+        "scripts/front_transition_maintenance.py."
+    )
 
     init_db()
     admin_id = _first_admin_id()

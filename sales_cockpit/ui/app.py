@@ -377,7 +377,7 @@ DISPLAY_LABELS = {
     "manual_reprise_setter": "Reprise manuelle setter",
     "manual_reprise_closer": "Reprise manuelle closer",
     FRONT_TRANSITION_REVIEW_ACTION: "Reprise transition Front",
-    FRONT_TRANSITION_FOLLOW_UP_ACTION: "Relance transition Front",
+    FRONT_TRANSITION_FOLLOW_UP_ACTION: "Reprise transition Front",
     "other": "Autre",
     "assignee_name": "Responsable",
     "lead_name": "Prospect",
@@ -630,6 +630,7 @@ def render_inbox(user: dict) -> None:
         search = st.text_input("Recherche", placeholder="Nom, téléphone, cours, message...")
     conversations = list_conversations(
         search=search,
+        limit=None,
     )
     conversations = sort_conversations_for_attention(conversations)
 
@@ -678,12 +679,51 @@ def render_inbox(user: dict) -> None:
         render_conversation_detail(user, conversation_id)
 
 
+def row_pagination_signature(rows: list[dict], id_key: str) -> tuple:
+    if not rows:
+        return (0, None, None)
+    return (
+        len(rows),
+        rows[0].get(id_key),
+        rows[-1].get(id_key),
+    )
+
+
+def progressive_row_limit(scope: str, bucket: str, rows: list[dict], id_key: str = "id") -> int:
+    limit_key = f"{scope}_{bucket}_visible_rows"
+    signature_key = f"{scope}_{bucket}_visible_signature"
+    signature = row_pagination_signature(rows, id_key)
+    if st.session_state.get(signature_key) != signature:
+        st.session_state[signature_key] = signature
+        st.session_state[limit_key] = MAX_RENDERED_ROWS_PER_QUEUE
+    return int(st.session_state.get(limit_key, MAX_RENDERED_ROWS_PER_QUEUE))
+
+
+def render_progressive_row_button(scope: str, bucket: str, total: int, visible_count: int) -> None:
+    if total <= visible_count:
+        return
+    remaining = total - visible_count
+    increment = min(MAX_RENDERED_ROWS_PER_QUEUE, remaining)
+    if st.button(
+        f"Voir les {increment} suivantes",
+        key=f"{scope}_{bucket}_show_more",
+        use_container_width=True,
+    ):
+        st.session_state[f"{scope}_{bucket}_visible_rows"] = visible_count + increment
+        st.rerun()
+
+
 def render_conversation_rows(conversations: list[dict], bucket: str) -> None:
     if not conversations:
         st.info("Aucune conversation dans cette file.")
         return
 
-    for conv in conversations[:MAX_RENDERED_ROWS_PER_QUEUE]:
+    visible_count = progressive_row_limit("inbox", bucket, conversations, id_key="conversation_id")
+    visible_conversations = conversations[:visible_count]
+    if len(conversations) > MAX_RENDERED_ROWS_PER_QUEUE:
+        st.caption(f"{len(visible_conversations)} conversations affichées sur {len(conversations)}.")
+
+    for conv in visible_conversations:
         selected = st.session_state.get("selected_conversation_id") == conv["conversation_id"]
         button_type = "primary" if selected else "secondary"
         with st.container(border=True):
@@ -699,6 +739,7 @@ def render_conversation_rows(conversations: list[dict], bucket: str) -> None:
                 ):
                     st.session_state.selected_conversation_id = conv["conversation_id"]
                     st.rerun()
+    render_progressive_row_button("inbox", bucket, len(conversations), visible_count)
 
 
 def conversation_row_html(conv: dict) -> str:
@@ -1215,11 +1256,11 @@ def standard_action_assignee_options(users: list[dict], action_type: str) -> lis
         setters = [user for user in users if user.get("role") == "setter"]
         return tanjona or setters or users
     if action_type == FRONT_TRANSITION_FOLLOW_UP_ACTION:
-        tanjona = [
+        setter1 = [
             user for user in users
-            if (user.get("email") or "").lower() == "setter2@essr.ch"
+            if user.get("role") == "setter" and (user.get("email") or "").lower() != "setter2@essr.ch"
         ]
-        return tanjona or [user for user in users if user.get("role") == "setter"] or users
+        return setter1 or [user for user in users if user.get("role") == "setter"] or users
     if action_type in {"closing_call", "manual_reprise_closer"}:
         closers = [user for user in users if user.get("role") == "closer"]
         return closers or users
@@ -1232,9 +1273,80 @@ def standard_action_button_label(action_type: str) -> str:
         "closing_call": "Programmer un appel closing",
         "manual_reprise_setter": "Demander une reprise setter",
         "manual_reprise_closer": "Demander une reprise closer",
-        FRONT_TRANSITION_FOLLOW_UP_ACTION: "Programmer relance transition Front",
+        FRONT_TRANSITION_FOLLOW_UP_ACTION: "Programmer reprise transition Front",
     }
     return labels.get(action_type, labelize(action_type))
+
+
+def render_front_transition_send_plan_controls(conv: dict, key_prefix: str) -> dict:
+    mode = st.radio(
+        "Suite transition Front après envoi",
+        ["close", "follow_up"],
+        horizontal=True,
+        format_func=lambda value: (
+            "Aucune reprise" if value == "close" else "Programmer une reprise"
+        ),
+        key=f"{key_prefix}_mode_{conv['id']}",
+    )
+    if mode != "follow_up":
+        return {"mode": mode}
+
+    users = list_users()
+    assignee_options = standard_action_assignee_options(users, FRONT_TRANSITION_FOLLOW_UP_ACTION)
+    assignee = st.selectbox(
+        "Responsable de la reprise",
+        assignee_options,
+        format_func=format_user,
+        key=f"{key_prefix}_assignee_{conv['id']}",
+    ) if assignee_options else None
+    action_date = st.date_input(
+        "Date de reprise",
+        value=local_today(),
+        key=f"{key_prefix}_date_{conv['id']}",
+        format=DATE_INPUT_FORMAT,
+    )
+    action_time = st.time_input(
+        "Heure de reprise",
+        value=time(9, 0),
+        step=timedelta(minutes=1),
+        key=f"{key_prefix}_time_{conv['id']}",
+    )
+    note = st.text_area(
+        "Note de reprise obligatoire",
+        height=70,
+        key=f"{key_prefix}_note_{conv['id']}",
+    )
+    return {
+        "mode": mode,
+        "assigned_to_user_id": assignee["id"] if assignee else None,
+        "next_due_at": local_due_at(action_date, action_time),
+        "note": note,
+    }
+
+
+def front_transition_send_plan_payload(plan: dict) -> dict:
+    if plan.get("mode") != "follow_up":
+        return {
+            "ok": True,
+            "message": "",
+            "action_outcome": None,
+            "next_due_at": None,
+            "assigned_to_user_id": None,
+            "note": "",
+        }
+    note = str(plan.get("note") or "").strip()
+    if not note:
+        return {"ok": False, "message": "Ajoute une note pour programmer la reprise transition Front."}
+    if not plan.get("assigned_to_user_id"):
+        return {"ok": False, "message": "Aucun Setter I disponible pour programmer la reprise."}
+    return {
+        "ok": True,
+        "message": "",
+        "action_outcome": "front_transition_follow_up",
+        "next_due_at": plan.get("next_due_at"),
+        "assigned_to_user_id": plan.get("assigned_to_user_id"),
+        "note": note,
+    }
 
 
 def calendar_url_for_call(action_type: str) -> str | None:
@@ -1280,6 +1392,7 @@ def active_planned_call_for_lead(lead_id: int | None) -> dict | None:
 
 def render_composer(user: dict, conv: dict) -> None:
     action = next_action_context(conv)
+    front_action = action if action and action.get("type") in FRONT_TRANSITION_ACTION_TYPES else None
     if conv.get("contact_status") == "do_not_contact":
         st.error("Contact bloqué : le prospect est marqué Ne plus contacter. Modifiez la bulle Contact en haut de la fiche avant tout envoi.")
         return
@@ -1304,6 +1417,10 @@ def render_composer(user: dict, conv: dict) -> None:
                 key=attachment_key,
                 help="V1 : maximum 5 fichiers, 10 Mo par fichier. WhatsApp n'accepte les pièces jointes que pendant une fenêtre ouverte.",
             )
+            front_plan = render_front_transition_send_plan_controls(
+                conv,
+                key_prefix="freeform_front_transition",
+            ) if front_action else {"mode": "close"}
             submitted = st.form_submit_button("Envoyer le message libre")
         if submitted:
             attachments = [
@@ -1317,10 +1434,18 @@ def render_composer(user: dict, conv: dict) -> None:
             if not body.strip() and not attachments:
                 st.error("Écrivez un message ou ajoutez une pièce jointe avant l'envoi.")
                 return
+            plan_payload = front_transition_send_plan_payload(front_plan)
+            if not plan_payload["ok"]:
+                st.error(plan_payload["message"])
+                return
             ok, message = send_freeform_message(
                 conv["id"],
                 user["id"],
                 body.strip(),
+                action_outcome=plan_payload["action_outcome"],
+                next_due_at=plan_payload["next_due_at"],
+                assigned_to_user_id=plan_payload["assigned_to_user_id"],
+                note=plan_payload["note"],
                 attachments=attachments,
                 expected_action_id=(
                     action["id"]
@@ -1401,13 +1526,25 @@ def render_composer(user: dict, conv: dict) -> None:
         f'<div class="sc-template-preview">{message_body_html(resolved_body)}</div>',
         unsafe_allow_html=True,
     )
+    template_front_plan = render_front_transition_send_plan_controls(
+        conv,
+        key_prefix="template_front_transition",
+    ) if front_action else {"mode": "close"}
 
     if st.button("Envoyer le modèle approuvé"):
+        plan_payload = front_transition_send_plan_payload(template_front_plan)
+        if not plan_payload["ok"]:
+            st.error(plan_payload["message"])
+            return
         ok, message = send_template_message(
             conv["id"],
             user["id"],
             template["id"],
             variables,
+            action_outcome=plan_payload["action_outcome"],
+            next_due_at=plan_payload["next_due_at"],
+            assigned_to_user_id=plan_payload["assigned_to_user_id"],
+            note=plan_payload["note"],
             expected_action_id=(
                 action["id"]
                 if action and action.get("type") in {"reply", "follow_up", *FRONT_TRANSITION_ACTION_TYPES}
@@ -1725,7 +1862,7 @@ def action_consequence(action_type: str, outcome: str) -> str:
         ("contact_review", "maintain_do_not_contact"): "Maintient le blocage Ne plus contacter et clôture la conversation.",
         ("contact_review", "lift_do_not_contact"): "Le système lève le blocage et crée une action Répondre pour Setter I.",
         (FRONT_TRANSITION_REVIEW_ACTION, "front_transition_done"): "Clôture la reprise transition Front sans créer de flux automatique.",
-        (FRONT_TRANSITION_FOLLOW_UP_ACTION, "front_transition_done"): "Clôture la relance transition Front sans créer de flux automatique.",
+        (FRONT_TRANSITION_FOLLOW_UP_ACTION, "front_transition_done"): "Clôture la reprise transition Front sans créer de flux automatique.",
         (FRONT_TRANSITION_REVIEW_ACTION, "do_not_contact"): "Marque le contact Ne plus contacter et clôture la conversation.",
         (FRONT_TRANSITION_FOLLOW_UP_ACTION, "do_not_contact"): "Marque le contact Ne plus contacter et clôture la conversation.",
     }
@@ -1804,10 +1941,10 @@ def render_whatsapp_action_guidance(user: dict, conv: dict, action: dict) -> Non
 
     if action["type"] == FRONT_TRANSITION_FOLLOW_UP_ACTION:
         if conv["window_is_open"]:
-            st.info("Relance transition Front à envoyer. La fenêtre WhatsApp est ouverte : message libre ou modèle approuvé possible.")
+            st.info("Reprise transition Front à traiter. La fenêtre WhatsApp est ouverte : message libre ou modèle approuvé possible.")
         else:
-            st.warning("Relance transition Front à envoyer. Fenêtre WhatsApp fermée : modèle approuvé obligatoire.")
-        st.caption("L'envoi clôture cette relance manuelle sans créer de flux automatique.")
+            st.warning("Reprise transition Front à traiter. Fenêtre WhatsApp fermée : modèle approuvé obligatoire.")
+        st.caption("L'envoi clôture cette reprise manuelle sans créer de flux automatique.")
         return
 
     if action["type"] == "reply":
@@ -1831,37 +1968,88 @@ def render_whatsapp_action_guidance(user: dict, conv: dict, action: dict) -> Non
 
 
 def render_front_transition_action_form(user: dict, action: dict) -> None:
+    st.markdown("**Transition Front**")
+    st.caption(
+        "Cette conversation reste hors flux V1. Si une réponse est nécessaire, envoie-la depuis l'onglet Conversation ; "
+        "tu peux y programmer une reprise après l'envoi."
+    )
     action_id = action["id"]
     st.markdown("**Clôturer la transition Front**")
     with st.form(f"front_transition_action_form_{action_id}"):
-        outcome = st.selectbox(
-            "Issue",
-            ACTION_OUTCOMES[action["type"]],
-            format_func=labelize,
+        decision = st.selectbox(
+            "Décision",
+            ["front_transition_done", FRONT_TRANSITION_FOLLOW_UP_ACTION, "do_not_contact"],
+            format_func=lambda value: {
+                "front_transition_done": "Transition Front terminée",
+                FRONT_TRANSITION_FOLLOW_UP_ACTION: "Programmer une reprise sans répondre",
+                "do_not_contact": "Ne plus contacter",
+            }.get(value, labelize(value)),
             key=f"front_transition_outcome_{action_id}",
         )
-        st.caption(action_consequence(action["type"], outcome))
+        assigned_to_user_id = None
+        next_due_at = None
+        if decision == FRONT_TRANSITION_FOLLOW_UP_ACTION:
+            assignee_options = standard_action_assignee_options(list_users(), FRONT_TRANSITION_FOLLOW_UP_ACTION)
+            assignee = st.selectbox(
+                "Responsable de la reprise",
+                assignee_options,
+                format_func=format_user,
+                key=f"front_transition_assignee_{action_id}",
+            ) if assignee_options else None
+            next_date = st.date_input(
+                "Date de reprise",
+                value=local_today(),
+                key=f"front_transition_date_{action_id}",
+                format=DATE_INPUT_FORMAT,
+            )
+            next_time = st.time_input(
+                "Heure de reprise",
+                value=time(9, 0),
+                step=timedelta(minutes=1),
+                key=f"front_transition_time_{action_id}",
+            )
+            assigned_to_user_id = assignee["id"] if assignee else None
+            next_due_at = local_due_at(next_date, next_time)
+            st.caption("Crée une reprise transition Front future, sans flux V1 automatique.")
+        else:
+            st.caption(action_consequence(action["type"], decision))
         note = st.text_area(
             "Note obligatoire",
             height=100,
             key=f"front_transition_note_{action_id}",
         )
-        submitted = st.form_submit_button("Enregistrer")
+        submitted = st.form_submit_button("Enregistrer la décision")
     if submitted:
         if not note.strip():
             st.error("Ajoutez une note pour clôturer cette transition.")
             return
-        ok, message = complete_action_with_workflow(
-            action_id,
-            user["id"],
-            outcome,
-            note=note,
-        )
+        if decision == FRONT_TRANSITION_FOLLOW_UP_ACTION:
+            if not assigned_to_user_id:
+                st.error("Aucun Setter I disponible pour programmer la reprise.")
+                return
+            ok, message = assign_standard_next_action(
+                action["conversation_id"],
+                user["id"],
+                FRONT_TRANSITION_FOLLOW_UP_ACTION,
+                assigned_to_user_id,
+                next_due_at,
+                note.strip(),
+            )
+        else:
+            ok, message = complete_action_with_workflow(
+                action_id,
+                user["id"],
+                decision,
+                note=note,
+            )
         show_result(ok, message)
         if ok:
             clear_widget_keys(
                 f"front_transition_outcome_{action_id}",
                 f"front_transition_note_{action_id}",
+                f"front_transition_assignee_{action_id}",
+                f"front_transition_date_{action_id}",
+                f"front_transition_time_{action_id}",
             )
             st.rerun()
 
@@ -2494,10 +2682,10 @@ def render_front_transition_follow_up_section(
     if conv.get("source") != "front_transition" or conv.get("status") != "open":
         return
 
-    st.markdown("**Programmer une relance transition Front**")
+    st.markdown("**Programmer une reprise transition Front**")
     disabled_reason = None
     if presentation.get("terminal_reason"):
-        disabled_reason = f"{presentation['terminal_reason']} Aucune relance transition Front ne doit être programmée."
+        disabled_reason = f"{presentation['terminal_reason']} Aucune reprise transition Front ne doit être programmée."
     elif presentation.get("active_call"):
         disabled_reason = "Un appel est déjà planifié. Modifiez l'appel existant ou ajoutez une réponse urgente si nécessaire."
 
@@ -2783,9 +2971,6 @@ def render_stable_action_block(
     active_assignee_id: int,
     presentation: dict,
 ) -> None:
-    if conv.get("source") == "front_transition":
-        render_front_transition_follow_up_section(user, conv, users, active_assignee_id, presentation)
-        st.divider()
     render_schedule_call_section(user, conv, users, active_assignee_id, presentation)
     st.divider()
     render_document_call_section(user, conv, presentation)
@@ -2828,11 +3013,7 @@ def render_next_action_box(user: dict, conv: dict) -> None:
 
     if conv["status"] == "open" and action and action.get("type") in FRONT_TRANSITION_ACTION_TYPES:
         st.divider()
-        render_whatsapp_action_guidance(user, conv, action)
-        st.divider()
         render_front_transition_action_form(user, action)
-        st.divider()
-        render_stable_action_block(user, conv, users, active_assignee_id, presentation)
         return
 
     if conv["status"] == "open":
@@ -2972,7 +3153,12 @@ def render_action_rows(tasks: list[dict], bucket: str) -> None:
         st.info("Aucune action dans cette file.")
         return
 
-    for task in tasks[:MAX_RENDERED_ROWS_PER_QUEUE]:
+    visible_count = progressive_row_limit("tasks", bucket, tasks)
+    visible_tasks = tasks[:visible_count]
+    if len(tasks) > MAX_RENDERED_ROWS_PER_QUEUE:
+        st.caption(f"{len(visible_tasks)} tâches affichées sur {len(tasks)}.")
+
+    for task in visible_tasks:
         selected = st.session_state.get("selected_action_id") == task["id"]
         button_type = "primary" if selected else "secondary"
         with st.container(border=True):
@@ -2990,6 +3176,7 @@ def render_action_rows(tasks: list[dict], bucket: str) -> None:
                     if task.get("conversation_id"):
                         st.session_state.selected_conversation_id = task["conversation_id"]
                     st.rerun()
+    render_progressive_row_button("tasks", bucket, len(tasks), visible_count)
 
 
 def visible_work_queue_tasks_for_user(user: dict, tasks: list[dict]) -> list[dict]:
@@ -5390,7 +5577,7 @@ def render_admin(user: dict) -> None:
         with filter_cols[2]:
             front_action_filter = st.selectbox(
                 "Action recommandée",
-                ["all", "reply", "follow_up", "none"],
+                ["all", FRONT_TRANSITION_REVIEW_ACTION, FRONT_TRANSITION_FOLLOW_UP_ACTION, "none"],
                 format_func=labelize,
                 key="front_action_filter",
             )
