@@ -14,7 +14,7 @@ Sales Cockpit is deployed and running in staging on DigitalOcean. Production is 
 
 - Latest checkpoint before hardening audit: `a02f10c`.
 - Latest deployed staging UI/API check: OK on `ae9b832`; staging contains the reply no-response skip and the full SchoolDrive V1 contract hardening.
-- Latest observed production commit: `c5d1c04`; production has received the latest V1 hardening, rollback/mapping preparation, and Pilotage alignment, but remains cold/mock.
+- Latest observed production runtime includes `c5d1c04` and may include later docs-only commits; verify the exact server commit with `git -C /opt/sales-cockpit/prod/app rev-parse --short HEAD`. Production has received the latest V1 hardening, rollback/mapping preparation, and Pilotage alignment, but remains cold/mock.
 - Latest local automated validation for the SchoolDrive V1 business contract: `compileall` OK, `239 passed` with `.\.venv\Scripts\python.exe -m pytest --basetemp=.pytest-tmp\full-schooldrive-v1-final-2`, local `scripts/pre_cutover_check.py --allow-cold-prod` OK, and Playwright local non-mutating suite `14 passed / 8 skipped`.
 - Latest staging pre-cutover check before this audit: OK.
 - Staging Twilio mode: `mock`, no real WhatsApp send from Sales Cockpit.
@@ -47,7 +47,7 @@ Latest production preparation audit on 2026-06-30 18:14 Europe/Zurich:
 
 Latest production cold-prep update on 2026-07-01 11:00 Europe/Zurich:
 
-- Production deployed cold to `c5d1c04`.
+- Production deployed cold on latest `main`; runtime code includes `c5d1c04`.
 - Production health: API/UI active, API `/health` returns `mode=mock`.
 - Production env remains safe: `SALES_COCKPIT_TWILIO_MODE=mock`, `SALES_COCKPIT_TWILIO_CONTENT_READ_ONLY=true`, `SALES_COCKPIT_SEED_DEMO_DATA=false`.
 - Production cold `scripts/pre_cutover_check.py --allow-cold-prod`: OK.
