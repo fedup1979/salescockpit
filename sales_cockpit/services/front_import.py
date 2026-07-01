@@ -131,9 +131,14 @@ FRONT_NON_PERSON_NAMES = {
 }
 FRONT_NON_PERSON_NAME_TOKENS = {
     "academy",
+    "administratr",
+    "administrator",
     "association",
     "business",
+    "businesses",
     "cabinet",
+    "case",
+    "chat",
     "clinic",
     "compta",
     "company",
@@ -141,17 +146,25 @@ FRONT_NON_PERSON_NAME_TOKENS = {
     "ecoles",
     "formation",
     "formations",
+    "follower",
+    "followers",
+    "gain",
     "gmbh",
     "group",
     "groupe",
+    "ig",
     "institute",
+    "insta",
+    "instagram",
     "nutrition",
     "office",
+    "page",
     "sarl",
     "school",
     "support",
     "supports",
     "suisse",
+    "type",
 }
 FRONT_ACTIVE_STATUSES = {"assigned", "unassigned", "open", "waiting", "pending"}
 FRONT_RESOLVED_STATUSES = {"archived", "resolved", "closed", "deleted", "spam"}
@@ -1743,6 +1756,12 @@ def _usable_front_person_name(value: str) -> bool:
         return False
     lowered = name.lower()
     if lowered in FRONT_NON_PERSON_NAMES or lowered in GENERIC_FRONT_FIRST_NAMES:
+        return False
+    if re.search(r"[_!?]|\d", name):
+        return False
+    if "." in name and not re.search(r"\b(?:dr|mme|mr|mrs|ms|m)\.", lowered):
+        return False
+    if name.isupper() and len(name) > 3:
         return False
     normalized_tokens = set(re.sub(r"[^a-z0-9]+", " ", lowered).split())
     if len(normalized_tokens) < 2:

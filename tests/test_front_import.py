@@ -585,6 +585,68 @@ def test_front_name_reconciliation_ignores_uuid_names() -> None:
     assert result["counts"]["unchanged"] == 1
 
 
+def test_front_name_reconciliation_ignores_social_handles() -> None:
+    seed_initial_data()
+    import_front_transition_records(
+        [
+            {
+                "conversation": {
+                    **_front_conversation("cnv_social_handle_front", "+41760000113"),
+                    "recipient": {"name": "lamia.lylia94"},
+                },
+                "messages": [
+                    {
+                        **_front_message("msg_social_handle_front", is_inbound=True),
+                        "recipients": [
+                            {
+                                "role": "from",
+                                "handle": "+41760000113",
+                                "name": "lamia.lylia94",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+        "front-transition-social-handle",
+    )
+
+    result = reconcile_front_transition_names("front-transition-social-handle", dry_run=False)
+
+    assert result["counts"]["unchanged"] == 1
+
+
+def test_front_name_reconciliation_ignores_spam_labels() -> None:
+    seed_initial_data()
+    import_front_transition_records(
+        [
+            {
+                "conversation": {
+                    **_front_conversation("cnv_spam_label_front", "+41760000114"),
+                    "recipient": {"name": "GAIN IG FOLLOWER NOW ?"},
+                },
+                "messages": [
+                    {
+                        **_front_message("msg_spam_label_front", is_inbound=True),
+                        "recipients": [
+                            {
+                                "role": "from",
+                                "handle": "+41760000114",
+                                "name": "GAIN IG FOLLOWER NOW ?",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+        "front-transition-spam-label",
+    )
+
+    result = reconcile_front_transition_names("front-transition-spam-label", dry_run=False)
+
+    assert result["counts"]["unchanged"] == 1
+
+
 def test_list_front_import_records_shows_matching_status() -> None:
     _seed_lead_with_conversation("+41767270073")
     upsert_front_history(_front_conversation(), messages=[_front_message("msg_1")])
