@@ -420,6 +420,47 @@ def test_front_name_reconciliation_ignores_front_anonymized_aliases() -> None:
     assert lead["first_name"] == "Contact Front"
 
 
+def test_front_name_reconciliation_ignores_extended_front_aliases() -> None:
+    seed_initial_data()
+    import_front_transition_records(
+        [
+            {
+                "conversation": {
+                    **_front_conversation("cnv_extended_alias_name_front", "+41760000109"),
+                    "recipient": {"name": "Taupe Meerkat"},
+                },
+                "messages": [
+                    {
+                        **_front_message("msg_extended_alias_name_front", is_inbound=True),
+                        "recipients": [
+                            {
+                                "role": "from",
+                                "handle": "+41760000109",
+                                "name": "Taupe Meerkat",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+        "front-transition-extended-alias-name",
+    )
+
+    result = reconcile_front_transition_names("front-transition-extended-alias-name", dry_run=False)
+
+    assert result["counts"]["unchanged"] == 1
+    with connect() as conn:
+        lead = conn.execute(
+            """
+            SELECT first_name, last_name
+            FROM leads
+            WHERE source = 'front_transition'
+              AND front_import_run_id = 'front-transition-extended-alias-name'
+            """
+        ).fetchone()
+    assert lead["first_name"] == "Contact Front"
+
+
 def test_front_name_reconciliation_ignores_non_person_names() -> None:
     seed_initial_data()
     import_front_transition_records(
@@ -447,6 +488,37 @@ def test_front_name_reconciliation_ignores_non_person_names() -> None:
     )
 
     result = reconcile_front_transition_names("front-transition-non-person-name", dry_run=False)
+
+    assert result["counts"]["unchanged"] == 1
+
+
+def test_front_name_reconciliation_ignores_organization_names() -> None:
+    seed_initial_data()
+    import_front_transition_records(
+        [
+            {
+                "conversation": {
+                    **_front_conversation("cnv_organization_name_front", "+41760000110"),
+                    "recipient": {"name": "Perform'eat Nutrition"},
+                },
+                "messages": [
+                    {
+                        **_front_message("msg_organization_name_front", is_inbound=True),
+                        "recipients": [
+                            {
+                                "role": "from",
+                                "handle": "+41760000110",
+                                "name": "Perform'eat Nutrition",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+        "front-transition-organization-name",
+    )
+
+    result = reconcile_front_transition_names("front-transition-organization-name", dry_run=False)
 
     assert result["counts"]["unchanged"] == 1
 

@@ -56,34 +56,47 @@ FRONT_ANONYMIZED_FIRST_WORDS = {
     "tan",
     "tangerine",
     "teal",
+    "taupe",
     "turquoise",
+    "vermilion",
     "violet",
     "white",
     "yellow",
+    "fuchsia",
 }
 FRONT_ANONYMIZED_SECOND_WORDS = {
     "alligator",
     "antelope",
     "armadillo",
+    "axolotl",
     "badger",
     "beaver",
     "bison",
     "cheetah",
+    "coyote",
     "dolphin",
     "eagle",
+    "egret",
     "falcon",
     "gazelle",
+    "gecko",
     "hedgehog",
+    "iguana",
+    "kangaroo",
     "koala",
     "lemur",
     "lynx",
+    "meerkat",
+    "ocelot",
     "octopus",
     "panda",
     "platypus",
     "porcupine",
     "rhinoceros",
     "seahorse",
+    "sloth",
     "stork",
+    "walrus",
 }
 FRONT_NON_PERSON_NAMES = {
     "facebook",
@@ -93,6 +106,27 @@ FRONT_NON_PERSON_NAMES = {
     "meta",
     "none",
     "whatsapp",
+}
+FRONT_NON_PERSON_NAME_TOKENS = {
+    "academy",
+    "association",
+    "cabinet",
+    "clinic",
+    "compta",
+    "company",
+    "ecole",
+    "ecoles",
+    "formation",
+    "formations",
+    "gmbh",
+    "group",
+    "groupe",
+    "institute",
+    "nutrition",
+    "office",
+    "sarl",
+    "school",
+    "suisse",
 }
 FRONT_ACTIVE_STATUSES = {"assigned", "unassigned", "open", "waiting", "pending"}
 FRONT_RESOLVED_STATUSES = {"archived", "resolved", "closed", "deleted", "spam"}
@@ -1684,6 +1718,9 @@ def _usable_front_person_name(value: str) -> bool:
         return False
     lowered = name.lower()
     if lowered in FRONT_NON_PERSON_NAMES or lowered in GENERIC_FRONT_FIRST_NAMES:
+        return False
+    normalized_tokens = set(re.sub(r"[^a-z0-9]+", " ", lowered).split())
+    if normalized_tokens & FRONT_NON_PERSON_NAME_TOKENS:
         return False
     if lowered.startswith("contact front") or lowered.startswith("contact "):
         return False
