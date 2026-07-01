@@ -523,6 +523,68 @@ def test_front_name_reconciliation_ignores_organization_names() -> None:
     assert result["counts"]["unchanged"] == 1
 
 
+def test_front_name_reconciliation_ignores_single_word_handles() -> None:
+    seed_initial_data()
+    import_front_transition_records(
+        [
+            {
+                "conversation": {
+                    **_front_conversation("cnv_single_word_handle_front", "+41760000111"),
+                    "recipient": {"name": "kawkawhuetes"},
+                },
+                "messages": [
+                    {
+                        **_front_message("msg_single_word_handle_front", is_inbound=True),
+                        "recipients": [
+                            {
+                                "role": "from",
+                                "handle": "+41760000111",
+                                "name": "kawkawhuetes",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+        "front-transition-single-word-handle",
+    )
+
+    result = reconcile_front_transition_names("front-transition-single-word-handle", dry_run=False)
+
+    assert result["counts"]["unchanged"] == 1
+
+
+def test_front_name_reconciliation_ignores_uuid_names() -> None:
+    seed_initial_data()
+    import_front_transition_records(
+        [
+            {
+                "conversation": {
+                    **_front_conversation("cnv_uuid_name_front", "+41760000112"),
+                    "recipient": {"name": "7fbf1e4d-454d-4855-9a84-810fb850d777"},
+                },
+                "messages": [
+                    {
+                        **_front_message("msg_uuid_name_front", is_inbound=True),
+                        "recipients": [
+                            {
+                                "role": "from",
+                                "handle": "+41760000112",
+                                "name": "7fbf1e4d-454d-4855-9a84-810fb850d777",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+        "front-transition-uuid-name",
+    )
+
+    result = reconcile_front_transition_names("front-transition-uuid-name", dry_run=False)
+
+    assert result["counts"]["unchanged"] == 1
+
+
 def test_list_front_import_records_shows_matching_status() -> None:
     _seed_lead_with_conversation("+41767270073")
     upsert_front_history(_front_conversation(), messages=[_front_message("msg_1")])

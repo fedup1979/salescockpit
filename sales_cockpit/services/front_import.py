@@ -30,28 +30,45 @@ GENERIC_FRONT_FIRST_NAMES = {
 }
 FRONT_ANONYMIZED_FIRST_WORDS = {
     "amber",
+    "aqua",
+    "aquamarine",
     "azure",
+    "beige",
     "black",
     "blue",
+    "bronze",
     "brown",
+    "burgundy",
+    "charcoal",
     "coral",
     "crimson",
     "cyan",
+    "emerald",
+    "fuchsia",
+    "gold",
+    "golden",
     "gray",
     "green",
     "grey",
     "indigo",
+    "ivory",
+    "jade",
     "lavender",
     "lime",
     "magenta",
     "maroon",
+    "mauve",
     "navy",
     "olive",
     "orange",
+    "peach",
     "pink",
     "purple",
     "red",
+    "ruby",
     "salmon",
+    "sapphire",
+    "scarlet",
     "silver",
     "tan",
     "tangerine",
@@ -65,6 +82,7 @@ FRONT_ANONYMIZED_FIRST_WORDS = {
     "fuchsia",
 }
 FRONT_ANONYMIZED_SECOND_WORDS = {
+    "aardvark",
     "alligator",
     "antelope",
     "armadillo",
@@ -85,10 +103,13 @@ FRONT_ANONYMIZED_SECOND_WORDS = {
     "kangaroo",
     "koala",
     "lemur",
+    "llama",
     "lynx",
     "meerkat",
+    "nautilus",
     "ocelot",
     "octopus",
+    "okapi",
     "panda",
     "platypus",
     "porcupine",
@@ -96,6 +117,7 @@ FRONT_ANONYMIZED_SECOND_WORDS = {
     "seahorse",
     "sloth",
     "stork",
+    "tapir",
     "walrus",
 }
 FRONT_NON_PERSON_NAMES = {
@@ -110,6 +132,7 @@ FRONT_NON_PERSON_NAMES = {
 FRONT_NON_PERSON_NAME_TOKENS = {
     "academy",
     "association",
+    "business",
     "cabinet",
     "clinic",
     "compta",
@@ -126,6 +149,8 @@ FRONT_NON_PERSON_NAME_TOKENS = {
     "office",
     "sarl",
     "school",
+    "support",
+    "supports",
     "suisse",
 }
 FRONT_ACTIVE_STATUSES = {"assigned", "unassigned", "open", "waiting", "pending"}
@@ -1720,7 +1745,11 @@ def _usable_front_person_name(value: str) -> bool:
     if lowered in FRONT_NON_PERSON_NAMES or lowered in GENERIC_FRONT_FIRST_NAMES:
         return False
     normalized_tokens = set(re.sub(r"[^a-z0-9]+", " ", lowered).split())
+    if len(normalized_tokens) < 2:
+        return False
     if normalized_tokens & FRONT_NON_PERSON_NAME_TOKENS:
+        return False
+    if re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", lowered):
         return False
     if lowered.startswith("contact front") or lowered.startswith("contact "):
         return False
@@ -1737,8 +1766,7 @@ def _looks_like_front_anonymized_name(value: str) -> bool:
     parts = re.sub(r"[^A-Za-z ]+", " ", value).lower().split()
     return (
         len(parts) == 2
-        and parts[0] in FRONT_ANONYMIZED_FIRST_WORDS
-        and parts[1] in FRONT_ANONYMIZED_SECOND_WORDS
+        and (parts[0] in FRONT_ANONYMIZED_FIRST_WORDS or parts[1] in FRONT_ANONYMIZED_SECOND_WORDS)
     )
 
 
