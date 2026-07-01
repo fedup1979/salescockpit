@@ -1233,7 +1233,7 @@ def _ensure_front_transition_thread(
             FRONT_TRANSITION_LEAD_TYPE,
             FRONT_TRANSITION_SOURCE,
             _default_setter1_id(conn),
-            "verified" if phone else "needs_identification",
+            "needs_identification",
             import_run_id,
             group_key,
             now,

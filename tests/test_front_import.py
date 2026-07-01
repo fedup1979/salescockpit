@@ -376,7 +376,7 @@ def test_front_name_reconciliation_ignores_generic_existing_names() -> None:
         ).fetchone()
     assert lead["first_name"] == "Contact Front"
     assert lead["last_name"] == phone
-    assert lead["identity_status"] == "verified"
+    assert lead["identity_status"] == "needs_identification"
 
 
 def test_front_name_reconciliation_ignores_front_anonymized_aliases() -> None:
@@ -894,7 +894,7 @@ def test_front_transition_import_groups_same_phone_and_creates_review_action() -
     with connect() as conn:
         lead = conn.execute(
             """
-            SELECT id, source, lead_type, front_import_run_id, front_transition_key
+            SELECT id, source, lead_type, identity_status, front_import_run_id, front_transition_key
             FROM leads
             WHERE source = 'front_transition'
             """
@@ -926,6 +926,7 @@ def test_front_transition_import_groups_same_phone_and_creates_review_action() -
 
     assert lead["lead_type"] == "front_transition"
     assert lead["front_transition_key"] == "phone:+41760000010"
+    assert lead["identity_status"] == "needs_identification"
     assert conversation["status"] == "open"
     assert conversation["channel"] == "whatsapp_front_transition"
     assert task["status"] == "open"

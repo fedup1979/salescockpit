@@ -818,6 +818,7 @@ def render_conversation_detail(user: dict, conversation_id: int) -> None:
 
     render_conversation_context(conv)
     render_compact_lead_state(user, conv)
+    render_identity_review(user, conv)
     render_next_action_summary(user, conv)
     render_planned_call_notice(conv)
 

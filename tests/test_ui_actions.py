@@ -211,10 +211,13 @@ def test_front_transition_review_exposes_followup_planner() -> None:
     captions = "\n".join(item.value for item in app.caption)
     button_labels = [item.label for item in app.button]
     text_area_labels = [item.label for item in app.text_area]
+    text_input_labels = [item.label for item in app.text_input]
     selectbox_labels = [item.label for item in app.selectbox]
     assert "Action inconnue" not in markup
     assert "Transition Front" in markup
     assert "hors flux V1" in captions
+    assert "Prénom temporaire" in text_input_labels
+    assert "Nom temporaire" in text_input_labels
     assert "Clôturer la transition Front" in markup
     assert "Programmer une relance transition Front" not in markup
     assert "Programmer relance transition Front" not in button_labels
