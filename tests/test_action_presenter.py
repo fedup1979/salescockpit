@@ -64,6 +64,23 @@ def test_followup_due_and_blocked_banners() -> None:
     assert blocked_result["banner"]["severity"] == "orange"
 
 
+def test_front_transition_actions_have_specific_banners() -> None:
+    review = action("front_transition_review")
+    future_followup = action(
+        "front_transition_follow_up",
+        due_at=(NOW + timedelta(hours=2)).isoformat(),
+    )
+
+    review_result = presentation(review, conversation=conv(source="front_transition"))
+    followup_result = presentation(future_followup, conversation=conv(source="front_transition"))
+
+    assert review_result["banner"]["severity"] == "blue"
+    assert review_result["banner"]["title"] == "Reprise transition Front"
+    assert "Action inconnue" not in review_result["banner"]["title"]
+    assert followup_result["banner"]["severity"] == "blue"
+    assert followup_result["banner"]["title"] == "Relance transition Front planifiée"
+
+
 def test_call_future_is_visible_but_documentation_is_disabled_until_due() -> None:
     future_call = action("setting_call", due_at=(NOW + timedelta(hours=2)).isoformat())
     due_call = action("closing_call", due_at=(NOW - timedelta(minutes=5)).isoformat())

@@ -2484,6 +2484,113 @@ def render_call_schedule_form(
             st.rerun()
 
 
+def render_front_transition_follow_up_section(
+    user: dict,
+    conv: dict,
+    users: list[dict],
+    active_assignee_id: int,
+    presentation: dict,
+) -> None:
+    if conv.get("source") != "front_transition" or conv.get("status") != "open":
+        return
+
+    st.markdown("**Programmer une relance transition Front**")
+    disabled_reason = None
+    if presentation.get("terminal_reason"):
+        disabled_reason = f"{presentation['terminal_reason']} Aucune relance transition Front ne doit être programmée."
+    elif presentation.get("active_call"):
+        disabled_reason = "Un appel est déjà planifié. Modifiez l'appel existant ou ajoutez une réponse urgente si nécessaire."
+
+    render_front_transition_follow_up_form(
+        user,
+        conv,
+        users,
+        active_assignee_id,
+        disabled_reason,
+    )
+
+
+def render_front_transition_follow_up_form(
+    user: dict,
+    conv: dict,
+    users: list[dict],
+    active_assignee_id: int,
+    disabled_reason: str | None = None,
+) -> None:
+    action_type = FRONT_TRANSITION_FOLLOW_UP_ACTION
+    assignee_options = standard_action_assignee_options(users, action_type)
+    if not assignee_options:
+        st.warning("Aucun responsable compatible.")
+        return
+
+    disabled = disabled_reason is not None
+    if disabled_reason:
+        render_disabled_standard_section(disabled_reason)
+
+    default_assignee = active_assignee_id
+    if not any(item["id"] == default_assignee for item in assignee_options):
+        default_assignee = assignee_options[0]["id"]
+
+    now_selected = st.checkbox(
+        "Maintenant",
+        value=False,
+        key=f"front_transition_follow_up_now_{conv['id']}",
+        disabled=disabled,
+    )
+    with st.form(f"front_transition_follow_up_{conv['id']}"):
+        assignee = st.selectbox(
+            "Responsable",
+            assignee_options,
+            index=safe_user_index(assignee_options, default_assignee),
+            format_func=format_user,
+            key=f"front_transition_follow_up_assignee_{conv['id']}",
+            disabled=disabled,
+        )
+        due_at = iso_utc(utc_now())
+        if not now_selected:
+            action_date = st.date_input(
+                "Date",
+                value=local_today(),
+                key=f"front_transition_follow_up_date_{conv['id']}",
+                format=DATE_INPUT_FORMAT,
+                disabled=disabled,
+            )
+            action_time = st.time_input(
+                "Heure",
+                value=time(9, 0),
+                step=timedelta(minutes=1),
+                key=f"front_transition_follow_up_time_{conv['id']}",
+                disabled=disabled,
+            )
+            due_at = local_due_at(action_date, action_time)
+        note = st.text_area(
+            "Note obligatoire",
+            height=80,
+            key=f"front_transition_follow_up_note_{conv['id']}",
+            placeholder="Ex. Relancer avec le modèle adapté après lecture de l'historique Front.",
+            disabled=disabled,
+        )
+        submitted = st.form_submit_button(standard_action_button_label(action_type), disabled=disabled)
+    if submitted and not disabled:
+        ok, message = assign_standard_next_action(
+            conv["id"],
+            user["id"],
+            action_type,
+            assignee["id"],
+            due_at,
+            note,
+        )
+        show_result(ok, message)
+        if ok:
+            clear_widget_keys(
+                f"front_transition_follow_up_note_{conv['id']}",
+                f"front_transition_follow_up_date_{conv['id']}",
+                f"front_transition_follow_up_time_{conv['id']}",
+                f"front_transition_follow_up_now_{conv['id']}",
+            )
+            st.rerun()
+
+
 def render_schedule_call_section(
     user: dict,
     conv: dict,
@@ -2676,6 +2783,9 @@ def render_stable_action_block(
     active_assignee_id: int,
     presentation: dict,
 ) -> None:
+    if conv.get("source") == "front_transition":
+        render_front_transition_follow_up_section(user, conv, users, active_assignee_id, presentation)
+        st.divider()
     render_schedule_call_section(user, conv, users, active_assignee_id, presentation)
     st.divider()
     render_document_call_section(user, conv, presentation)

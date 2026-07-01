@@ -9,6 +9,8 @@ from sales_cockpit.services.whatsapp_rules import parse_dt, utc_now
 ACTIVE_ACTION_STATUSES = {"open", "in_progress", "planned", "blocked"}
 CALL_ACTION_TYPES = {"setting_call", "closing_call"}
 MANUAL_REPRISE_ACTION_TYPES = {"manual_reprise_setter", "manual_reprise_closer"}
+FRONT_TRANSITION_REVIEW_ACTION = "front_transition_review"
+FRONT_TRANSITION_FOLLOW_UP_ACTION = "front_transition_follow_up"
 TERMINAL_QUALIFICATION_STATUSES = {"not_relevant", "signed"}
 STOP_CONTACT_STATUSES = {"do_not_contact"}
 SKIPPABLE_FLOW_ACTION_TYPES = {"follow_up", "manual_reprise_setter", "manual_reprise_closer"}
@@ -161,6 +163,24 @@ def action_banner(
     if action_type in MANUAL_REPRISE_ACTION_TYPES:
         label = "setter" if action_type == "manual_reprise_setter" else "closer"
         return banner("blue", f"Reprise manuelle {label}", "Relisez la conversation, décidez de la suite, puis documentez la reprise avec une note.")
+    if action_type == FRONT_TRANSITION_REVIEW_ACTION:
+        return banner(
+            "blue",
+            "Reprise transition Front",
+            "Relisez l'historique importé Front, répondez si nécessaire, programmez une relance transition Front si utile, ou clôturez avec une note.",
+        )
+    if action_type == FRONT_TRANSITION_FOLLOW_UP_ACTION:
+        if action_is_due(current_action, now):
+            return banner(
+                "blue",
+                "Relance transition Front à traiter",
+                "Relisez l'historique, envoyez un message depuis Conversation si utile, puis clôturez la relance avec une note.",
+            )
+        return banner(
+            "blue",
+            "Relance transition Front planifiée",
+            "Cette relance de transition est prévue plus tard. Elle ne déclenche aucun flux V1 automatique.",
+        )
     return banner(
         "red",
         "Action inconnue",

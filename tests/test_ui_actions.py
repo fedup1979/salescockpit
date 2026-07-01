@@ -6,6 +6,7 @@ from uuid import uuid4
 from streamlit.testing.v1 import AppTest
 
 from sales_cockpit.db import seed_initial_data
+from sales_cockpit.services.front_import import import_front_transition_records
 from sales_cockpit.services.message_text import clean_message_body_text
 from sales_cockpit.store import (
     authenticate,
@@ -42,6 +43,10 @@ from sales_cockpit.ui.styles import APP_CSS
 
 def unique_phone() -> str:
     return "+4179" + uuid4().hex[:7]
+
+
+def unique_front_phone() -> str:
+    return "+4179" + "".join(str(int(char, 16) % 10) for char in uuid4().hex[:8])
 
 
 def render_selected_action(action_id: int, user_email: str = "service.etudiants@essr.ch") -> AppTest:
@@ -131,6 +136,48 @@ def test_message_body_html_preserves_line_breaks_without_raw_html() -> None:
 def test_front_transition_actions_have_human_labels() -> None:
     assert labelize("front_transition_review") == "Reprise transition Front"
     assert labelize("front_transition_follow_up") == "Relance transition Front"
+
+
+def test_front_transition_review_exposes_followup_planner() -> None:
+    seed_initial_data()
+    suffix = uuid4().hex[:8]
+    phone = unique_front_phone()
+    import_front_transition_records(
+        [
+            {
+                "conversation": {
+                    "id": f"cnv_front_transition_ui_{suffix}",
+                    "subject": f"WhatsApp thread with {phone}",
+                    "status": "assigned",
+                    "assignee": {"name": "info@essr.ch"},
+                },
+                "messages": [
+                    {
+                        "id": f"msg_front_transition_ui_{suffix}",
+                        "type": "whatsapp",
+                        "is_inbound": True,
+                        "created_at": datetime.now(timezone.utc).timestamp(),
+                        "text": "Historique Front importé.",
+                    }
+                ],
+            }
+        ],
+        f"front-transition-ui-{suffix}",
+    )
+    action = next(
+        item
+        for item in list_tasks("all")
+        if item["type"] == "front_transition_review" and item["phone_e164"] == phone
+    )
+
+    app = render_selected_action(action["id"], action["assigned_to_email"])
+
+    assert len(app.exception) == 0
+    markup = "\n".join(item.value for item in app.markdown)
+    button_labels = [item.label for item in app.button]
+    assert "Action inconnue" not in markup
+    assert "Programmer une relance transition Front" in markup
+    assert "Programmer relance transition Front" in button_labels
 
 
 def test_reply_action_guides_to_conversation_send_without_generic_completion() -> None:
