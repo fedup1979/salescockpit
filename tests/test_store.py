@@ -63,7 +63,7 @@ from sales_cockpit.store import (
     upsert_sequence_step,
     upsert_sequence_template_mapping,
 )
-from sales_cockpit.services.front_import import upsert_front_history
+from sales_cockpit.services.front_import import import_front_transition_records, upsert_front_history
 from scripts.schooldrive_smoke import build_smoke_steps
 
 
@@ -874,6 +874,82 @@ def test_reply_send_closes_reply_and_schedules_followup() -> None:
     next_action = get_next_action_for_lead(result["lead_id"])
     assert next_action["type"] == "follow_up"
     assert next_action["sequence_code"] == "setter_no_next_step"
+
+
+def test_front_transition_inbound_uses_transition_review_not_reply() -> None:
+    seed_initial_data()
+    phone = unique_numeric_phone()
+    lead_id, conversation_id = seed_front_transition_thread(phone, latest_inbound=False)
+
+    inbound = record_inbound_message(phone, "Je réponds depuis WhatsApp.")
+
+    assert inbound["lead_id"] == lead_id
+    assert inbound["conversation_id"] == conversation_id
+    next_action = get_next_action_for_lead(lead_id)
+    assert next_action["type"] == "front_transition_review"
+    assert next_action["urgency"] == "urgent"
+    actions = list_actions_for_lead(lead_id, "all")
+    assert [item for item in actions if item["type"] == "reply"] == []
+
+
+def test_front_transition_outbound_closes_action_without_v1_followup() -> None:
+    seed_initial_data()
+    lead_id, conversation_id = seed_front_transition_thread(unique_numeric_phone(), latest_inbound=True)
+    action = get_next_action_for_lead(lead_id)
+    assert action["type"] == "front_transition_review"
+
+    ok, message = send_freeform_message(
+        conversation_id,
+        action["assigned_to_user_id"],
+        "Bonjour, je reprends votre conversation.",
+        expected_action_id=action["id"],
+    )
+
+    assert ok is True, message
+    assert get_next_action_for_lead(lead_id) is None
+    conversation = get_conversation(conversation_id)
+    assert conversation["status"] == "resolved"
+    assert conversation["resolution_reason"] == "front_transition_handled"
+    active_flow_actions = [
+        item for item in list_actions_for_lead(lead_id, "all")
+        if item["type"] in {"reply", "follow_up"}
+        and item["status"] in {"open", "planned", "in_progress", "blocked"}
+    ]
+    assert active_flow_actions == []
+
+
+def test_front_transition_followup_is_manual_and_reopened_by_inbound() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    phone = unique_numeric_phone()
+    lead_id, conversation_id = seed_front_transition_thread(phone, latest_inbound=True)
+    setter2 = next(item for item in list_users() if item["email"] == "setter2@essr.ch")
+    due_at = iso_utc(utc_now() + timedelta(days=1))
+
+    ok, message = assign_standard_next_action(
+        conversation_id,
+        admin["id"],
+        "front_transition_follow_up",
+        setter2["id"],
+        due_at,
+        "Relance manuelle transition Front.",
+    )
+
+    assert ok is True, message
+    followup = get_next_action_for_lead(lead_id)
+    assert followup["type"] == "front_transition_follow_up"
+    assert followup["sequence_code"] is None
+    assert followup["assigned_to_email"] == "setter2@essr.ch"
+
+    inbound = record_inbound_message(phone, "Merci, je réponds.")
+
+    assert inbound["lead_id"] == lead_id
+    next_action = get_next_action_for_lead(lead_id)
+    assert next_action["type"] == "front_transition_review"
+    assert next_action["urgency"] == "urgent"
+    completed_followup = next(item for item in list_actions_for_lead(lead_id, "all") if item["id"] == followup["id"])
+    assert completed_followup["status"] == "done"
+    assert completed_followup["outcome"] == "Nouveau message reçu"
 
 
 def test_reply_no_response_needed_closes_reply_and_schedules_normal_followup() -> None:
@@ -3534,6 +3610,51 @@ def test_workflow_completion_refuses_missing_assignee_without_closing_action() -
 
 def unique_phone() -> str:
     return "+4179" + uuid4().hex[:8]
+
+
+def unique_numeric_phone() -> str:
+    return "+4179" + "".join(str(int(char, 16) % 10) for char in uuid4().hex[:8])
+
+
+def seed_front_transition_thread(phone: str, latest_inbound: bool = True) -> tuple[int, int]:
+    suffix = uuid4().hex[:8]
+    import_front_transition_records(
+        [
+            {
+                "conversation": {
+                    "id": f"cnv_front_transition_{suffix}",
+                    "subject": f"WhatsApp thread with {phone}",
+                    "status": "assigned",
+                    "assignee": {"name": "info@essr.ch"},
+                },
+                "messages": [
+                    {
+                        "id": f"msg_front_transition_{suffix}",
+                        "type": "whatsapp",
+                        "is_inbound": latest_inbound,
+                        "created_at": utc_now().timestamp(),
+                        "text": "Historique Front importé.",
+                    }
+                ],
+            }
+        ],
+        f"front-transition-store-{suffix}",
+    )
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT l.id AS lead_id, c.id AS conversation_id
+            FROM leads l
+            JOIN conversations c ON c.lead_id = l.id
+            WHERE l.source = 'front_transition'
+              AND l.phone_e164 = ?
+            ORDER BY l.id DESC
+            LIMIT 1
+            """,
+            (phone,),
+        ).fetchone()
+    assert row is not None
+    return int(row["lead_id"]), int(row["conversation_id"])
 
 
 def conversation_for_lead(lead_id: int) -> dict:

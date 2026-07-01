@@ -128,6 +128,11 @@ def test_message_body_html_preserves_line_breaks_without_raw_html() -> None:
     assert "</div>" not in html
 
 
+def test_front_transition_actions_have_human_labels() -> None:
+    assert labelize("front_transition_review") == "Reprise transition Front"
+    assert labelize("front_transition_follow_up") == "Relance transition Front"
+
+
 def test_reply_action_guides_to_conversation_send_without_generic_completion() -> None:
     seed_initial_data()
     user = authenticate("service.etudiants@essr.ch", "ChangeMe!2026")

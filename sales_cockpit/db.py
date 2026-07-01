@@ -74,6 +74,8 @@ CREATE TABLE IF NOT EXISTS leads (
     identity_status TEXT NOT NULL DEFAULT 'verified',
     identity_review_note TEXT,
     identity_candidates_json TEXT,
+    front_import_run_id TEXT,
+    front_transition_key TEXT,
     last_schooldrive_sync_at TEXT,
     last_notion_sync_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -94,6 +96,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     resolution_note TEXT,
     resolved_at TEXT,
     reopened_at TEXT,
+    front_import_run_id TEXT,
+    front_transition_key TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -209,6 +213,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     next_action_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL,
     cancelled_reason TEXT,
     blocked_reason TEXT,
+    front_import_run_id TEXT,
     metadata_json TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -483,6 +488,8 @@ CREATE TABLE IF NOT EXISTS front_conversations (
     match_confidence REAL,
     match_reason TEXT,
     phone_e164 TEXT,
+    front_group_key TEXT,
+    import_run_id TEXT,
     subject TEXT,
     front_status TEXT,
     assignee_name TEXT,
@@ -510,6 +517,8 @@ CREATE TABLE IF NOT EXISTS front_messages (
     lead_id INTEGER REFERENCES leads(id) ON DELETE SET NULL,
     conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
     imported_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+    import_run_id TEXT,
+    front_group_key TEXT,
     direction TEXT NOT NULL CHECK(direction IN ('inbound', 'outbound', 'manual_note')),
     body TEXT NOT NULL,
     front_type TEXT,
@@ -578,6 +587,8 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
             ("identity_status", "TEXT NOT NULL DEFAULT 'verified'"),
             ("identity_review_note", "TEXT"),
             ("identity_candidates_json", "TEXT"),
+            ("front_import_run_id", "TEXT"),
+            ("front_transition_key", "TEXT"),
         ],
     )
     add_missing_columns(
@@ -588,6 +599,8 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
             ("resolution_note", "TEXT"),
             ("resolved_at", "TEXT"),
             ("reopened_at", "TEXT"),
+            ("front_import_run_id", "TEXT"),
+            ("front_transition_key", "TEXT"),
         ],
     )
     add_missing_columns(
@@ -626,6 +639,7 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
             ("next_action_id", "INTEGER"),
             ("cancelled_reason", "TEXT"),
             ("blocked_reason", "TEXT"),
+            ("front_import_run_id", "TEXT"),
             ("metadata_json", "TEXT"),
         ],
     )
@@ -657,7 +671,29 @@ def ensure_schema_columns(conn: sqlite3.Connection) -> None:
             ("migration_status", "TEXT NOT NULL DEFAULT 'manual_review'"),
             ("migration_action_type", "TEXT"),
             ("migration_reason", "TEXT"),
+            ("front_group_key", "TEXT"),
+            ("import_run_id", "TEXT"),
         ],
+    )
+    add_missing_columns(
+        conn,
+        "front_messages",
+        [
+            ("import_run_id", "TEXT"),
+            ("front_group_key", "TEXT"),
+        ],
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_leads_front_transition
+        ON leads(source, front_import_run_id, front_transition_key)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_front_conversations_group
+        ON front_conversations(import_run_id, front_group_key)
+        """
     )
 
     conn.execute(

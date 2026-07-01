@@ -307,33 +307,40 @@ sudo bash /opt/sales-cockpit/staging/app/deploy/scripts/install_backup_cron.sh
 
 1. Tell the sales team to stop sending WhatsApp messages from Front.
 2. Keep Front available read-only.
-3. Run one last Front buffer import.
-4. Review `active` Front conversations.
-5. For each active matched Front conversation, decide the next operational handling in Sales Cockpit from the business context:
-   - customer waiting for an answer: create a response action for the appropriate Setter I;
-   - team waiting for the prospect: create or keep the appropriate structured relance for Setter II;
-   - appointment already agreed: create the corresponding setting or closing call action;
-   - unclear status: create a manual review with a note.
+3. Run the final Front transition import with a new final `import_run_id`.
+4. Review open transition conversations in Sales Cockpit.
+5. For each active Front transition conversation, handle it outside V1 flows:
+   - customer waiting for an answer: answer from the Conversation tab;
+   - team waiting for the prospect: schedule `front_transition_follow_up` for Setter II;
+   - appointment already agreed: create the corresponding setting or closing call action manually;
+   - unclear status: keep or close the transition review with a note.
 
-Controlled conversion from matched Front buffer rows exists via `scripts/front_convert_matched.py`, dry-run by default, with guards around existing open actions. It has not yet been validated for a large cutover. Until a reviewed conversion batch passes, create or assign these actions manually in Sales Cockpit.
-
-## T0: Attach History
-
-After review, attach matched Front messages as history:
+Use:
 
 ```bash
-python scripts/front_import_pilot.py --limit 10 --include-messages --messages-limit 100 --write --attach-history
+python scripts/front_transition_import.py --limit 200 --messages-limit 500 --allow-large --import-run-id front-transition-final-01 --write --json
 ```
 
-Increase limits only after verifying the first batch.
+Increase the batch size only after the previous batch has completed and the task counts look coherent.
 
-Attached Front messages use:
+## T0: Transition History
+
+Front transition import attaches messages directly as history:
 
 ```text
-channel = front_history
+lead source = front_transition
+conversation channel = whatsapp_front_transition
+message channel = front_history
+open task = front_transition_review or front_transition_follow_up
 ```
 
-They are historical context, not proof of a new Sales Cockpit action.
+They are historical context and manual transition work, not proof of a new V1 Sales Cockpit action.
+
+If the rehearsal import must be removed before the final freeze:
+
+```bash
+python scripts/front_transition_purge.py --import-run-id front-transition-dryrun-01 --yes --json
+```
 
 ## T0: Switch Twilio
 

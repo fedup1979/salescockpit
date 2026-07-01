@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from sales_cockpit.db import connect, init_db
+from sales_cockpit.db import connect, init_db, seed_initial_data
 from sales_cockpit.services.front_import import (
     build_front_cutover_plan,
     classify_front_migration,
     extract_front_phone,
+    import_front_transition_records,
     list_front_import_records,
     preview_front_conversation,
+    purge_front_transition_import,
     rematch_front_buffer,
     upsert_front_history,
 )
@@ -203,6 +205,182 @@ def test_rematch_front_buffer_matches_after_schooldrive_backfill() -> None:
     assert after[0]["match_status"] == "matched"
     assert after[0]["lead_id"] == lead_id
     assert after[0]["conversation_id"] == conversation_id
+
+
+def test_front_transition_import_groups_same_phone_and_creates_review_action() -> None:
+    seed_initial_data()
+    records = [
+        {
+            "conversation": _front_conversation("cnv_front_a", "+41760000010", status="assigned"),
+            "messages": [_front_message("msg_front_a", is_inbound=False, body="Message envoyé depuis Front")],
+        },
+        {
+            "conversation": _front_conversation("cnv_front_b", "+41760000010", status="assigned"),
+            "messages": [_front_message("msg_front_b", is_inbound=True, body="Réponse prospect Front")],
+        },
+    ]
+
+    result = import_front_transition_records(records, "front-transition-test")
+
+    assert result["group_count"] == 1
+    assert result["conversation_count"] == 2
+    assert result["created_leads"] == 1
+    assert result["created_actions"] == 1
+    assert result["attached_messages"] == 2
+    with connect() as conn:
+        lead = conn.execute(
+            """
+            SELECT id, source, lead_type, front_import_run_id, front_transition_key
+            FROM leads
+            WHERE source = 'front_transition'
+            """
+        ).fetchone()
+        conversation = conn.execute(
+            "SELECT status, channel, front_import_run_id FROM conversations WHERE lead_id = ?",
+            (lead["id"],),
+        ).fetchone()
+        task = conn.execute(
+            """
+            SELECT type, urgency, status, sequence_code, front_import_run_id
+            FROM tasks
+            WHERE lead_id = ? AND type = 'front_transition_review'
+            """,
+            (lead["id"],),
+        ).fetchone()
+        front_rows = conn.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM front_conversations
+            WHERE import_run_id = 'front-transition-test'
+              AND front_group_key = 'phone:+41760000010'
+            """
+        ).fetchone()["count"]
+        history_rows = conn.execute(
+            "SELECT COUNT(*) AS count FROM messages WHERE lead_id = ? AND channel = 'front_history'",
+            (lead["id"],),
+        ).fetchone()["count"]
+
+    assert lead["lead_type"] == "front_transition"
+    assert lead["front_transition_key"] == "phone:+41760000010"
+    assert conversation["status"] == "open"
+    assert conversation["channel"] == "whatsapp_front_transition"
+    assert task["status"] == "open"
+    assert task["urgency"] == "urgent"
+    assert task["sequence_code"] is None
+    assert task["front_import_run_id"] == "front-transition-test"
+    assert front_rows == 2
+    assert history_rows == 2
+
+
+def test_front_transition_import_archived_conversation_is_history_only() -> None:
+    seed_initial_data()
+    records = [
+        {
+            "conversation": _front_conversation("cnv_front_archived", "+41760000011", status="archived"),
+            "messages": [_front_message("msg_front_archived", is_inbound=False, body="Ancien message")],
+        }
+    ]
+
+    result = import_front_transition_records(records, "front-transition-archived")
+
+    assert result["group_count"] == 1
+    assert result["created_actions"] == 0
+    with connect() as conn:
+        lead = conn.execute(
+            "SELECT id FROM leads WHERE source = 'front_transition' AND front_import_run_id = ?",
+            ("front-transition-archived",),
+        ).fetchone()
+        conversation = conn.execute(
+            "SELECT status, resolution_reason FROM conversations WHERE lead_id = ?",
+            (lead["id"],),
+        ).fetchone()
+        action_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM tasks WHERE lead_id = ?",
+            (lead["id"],),
+        ).fetchone()["count"]
+
+    assert conversation["status"] == "resolved"
+    assert conversation["resolution_reason"] == "front_import_archived"
+    assert action_count == 0
+
+
+def test_front_transition_reimport_archived_cancels_open_transition_action() -> None:
+    seed_initial_data()
+    active_record = {
+        "conversation": _front_conversation("cnv_front_reimport", "+41760000014", status="assigned"),
+        "messages": [_front_message("msg_front_reimport", is_inbound=True, body="Message actif")],
+    }
+    archived_record = {
+        "conversation": _front_conversation("cnv_front_reimport", "+41760000014", status="archived"),
+        "messages": [_front_message("msg_front_reimport", is_inbound=True, body="Message actif")],
+    }
+
+    import_front_transition_records([active_record], "front-transition-reimport")
+    import_front_transition_records([archived_record], "front-transition-reimport")
+
+    with connect() as conn:
+        lead = conn.execute(
+            "SELECT id FROM leads WHERE source = 'front_transition' AND front_import_run_id = ?",
+            ("front-transition-reimport",),
+        ).fetchone()
+        conversation = conn.execute(
+            "SELECT status, resolution_reason FROM conversations WHERE lead_id = ?",
+            (lead["id"],),
+        ).fetchone()
+        action = conn.execute(
+            "SELECT status, outcome FROM tasks WHERE lead_id = ? AND type = 'front_transition_review'",
+            (lead["id"],),
+        ).fetchone()
+
+    assert conversation["status"] == "resolved"
+    assert conversation["resolution_reason"] == "front_import_archived"
+    assert action["status"] == "cancelled"
+    assert action["outcome"] == "Conversation Front terminée avant reprise"
+
+
+def test_front_transition_purge_removes_only_selected_run() -> None:
+    seed_initial_data()
+    import_front_transition_records(
+        [
+            {
+                "conversation": _front_conversation("cnv_front_purge_a", "+41760000012", status="assigned"),
+                "messages": [_front_message("msg_front_purge_a", is_inbound=True)],
+            }
+        ],
+        "front-transition-purge-a",
+    )
+    import_front_transition_records(
+        [
+            {
+                "conversation": _front_conversation("cnv_front_purge_b", "+41760000013", status="assigned"),
+                "messages": [_front_message("msg_front_purge_b", is_inbound=True)],
+            }
+        ],
+        "front-transition-purge-b",
+    )
+
+    result = purge_front_transition_import("front-transition-purge-a")
+
+    assert result["deleted_leads"] == 1
+    assert result["deleted_front_conversations"] == 1
+    assert result["deleted_front_messages"] == 1
+    with connect() as conn:
+        deleted_run_leads = conn.execute(
+            "SELECT COUNT(*) AS count FROM leads WHERE source = 'front_transition' AND front_import_run_id = ?",
+            ("front-transition-purge-a",),
+        ).fetchone()["count"]
+        remaining_run_leads = conn.execute(
+            "SELECT COUNT(*) AS count FROM leads WHERE source = 'front_transition' AND front_import_run_id = ?",
+            ("front-transition-purge-b",),
+        ).fetchone()["count"]
+        remaining_front_rows = conn.execute(
+            "SELECT COUNT(*) AS count FROM front_conversations WHERE import_run_id = ?",
+            ("front-transition-purge-b",),
+        ).fetchone()["count"]
+
+    assert deleted_run_leads == 0
+    assert remaining_run_leads == 1
+    assert remaining_front_rows == 1
 
 
 def _seed_lead_with_conversation(phone: str) -> tuple[int, int]:

@@ -4,17 +4,17 @@
 
 Front remains active until Sales Cockpit is validated. The Front import is read-only and exists only to recover historical WhatsApp conversations when the team is ready to migrate.
 
-Imported Front messages should be treated as history, not as operational actions. Sales Cockpit actions continue to come from SchoolDrive webhooks, Twilio webhooks, and explicit user actions in the cockpit.
+Imported Front messages should be treated as transition history, not as V1 SchoolDrive workflow input. Sales Cockpit V1 actions continue to come from SchoolDrive webhooks, Twilio webhooks, and explicit user actions in the cockpit.
 
 ## Recommended Approach
 
-1. Backfill SchoolDrive first so Sales Cockpit has the current lead and presubscription records.
-2. Use Front's Core API to search or list conversations.
-3. For each Front conversation, fetch its messages in chronological order.
-4. Match the conversation to a Sales Cockpit lead using phone number first, then email, then manual review.
-5. Store Front conversations and messages first in the dedicated `front_conversations` and `front_messages` buffer tables.
-6. Attach imported messages to the Sales Cockpit thread only after validation, with channel `front_history`.
-7. Preserve original Front IDs for idempotency before running any large import.
+1. Use Front's Core API to search or list conversations.
+2. For each Front conversation, fetch its messages in chronological order.
+3. Group conversations by normalized WhatsApp phone number; if no phone is available, keep one group per Front conversation.
+4. Import each group as a synthetic Sales Cockpit transition thread with `source = front_transition`.
+5. Store the raw Front records in `front_conversations` and `front_messages`, with the batch `import_run_id`.
+6. Attach imported messages to the transition thread as `front_history`.
+7. Keep every imported transition thread outside V1 flows (`APP/FSM/AS` sequences are not triggered by the import).
 
 ## Migration Classification
 
@@ -27,14 +27,29 @@ The Front buffer stores a migration recommendation for every Front conversation:
 | `archived`, `resolved`, `closed`, `deleted`, `spam` | `resolved` | none |
 | unknown status or no exploitable message | `manual_review` | none |
 
-This classification is intentionally conservative. It does not create Sales Cockpit actions by itself. At cutover, the operator must review the Front buffer first, then decide whether to convert active Front conversations into Sales Cockpit actions.
+This legacy buffer classification is intentionally conservative. It does not create Sales Cockpit actions by itself. The current cutover approach does not convert matched Front rows into V1 actions automatically.
 
-The target cutover behavior is:
+The legacy matched-conversion behavior was:
 
 - `active` + `reply`: Sales Cockpit conversation active, next action `Répondre au message`, usually assigned to Mihary.
 - `active` + `follow_up`: Sales Cockpit conversation active, next action `Envoyer relance` or manual review, usually assigned to Tanjona.
 - `resolved`: Sales Cockpit history visible, conversation terminated, no next action.
 - `manual_review`: no automatic migration; admin review required.
+
+## Transition Import Behavior
+
+The current cutover behavior is deliberately simpler:
+
+- all imported Front threads get `source = front_transition` and `lead_type = front_transition`;
+- active Front groups create one `front_transition_review` task, assigned to Setter I;
+- archived/resolved Front groups are imported as resolved history only, with no task;
+- several Front conversations with the same phone are merged into one Sales Cockpit transition conversation;
+- no imported Front conversation is matched to a SchoolDrive V1 flow;
+- no `reply` or V1 `follow_up` is created by the import;
+- a setter can respond from the Conversation tab or close the transition with a required note;
+- a setter can schedule `front_transition_follow_up`, assigned to Setter II, with no `sequence_code`;
+- if a prospect replies on an open transition thread, Sales Cockpit creates or updates `front_transition_review`, not a V1 `reply`;
+- every run can be purged by `import_run_id` before the final cutover import.
 
 ## API Surfaces
 
@@ -91,6 +106,8 @@ Implemented:
 - `scripts/front_cutover_plan.py`, which reads the buffer and produces a conservative read-only cutover plan.
 - `scripts/front_rematch_buffer.py`, which recomputes buffered Front matches after a later SchoolDrive backfill.
 - `scripts/front_convert_matched.py`, which can convert only `matched` + `active` buffer rows into Sales Cockpit actions. It is dry-run by default and skips existing open actions unless explicitly told to replace them.
+- `scripts/front_transition_import.py`, which imports Front conversations as manual transition threads outside V1 flows. It is dry-run by default.
+- `scripts/front_transition_purge.py`, which purges one transition import run by `import_run_id`.
 
 Latest staging pilot:
 
@@ -105,7 +122,6 @@ Not implemented yet:
 
 - UI filter to show/hide attached Front history inside a conversation.
 - Phone/email/manual matching review workflow for ambiguous or unmatched Front conversations.
-- Full import command for all history.
 
 ## Dry-Run Command
 
@@ -194,3 +210,45 @@ python scripts/front_convert_matched.py --limit 500 --execute
 ```
 
 By default, conversion skips leads that already have an open next action. Use `--replace-existing` only during a controlled cutover if replacing those actions is intentional.
+
+## Transition Import Commands
+
+Preview a transition import without writing:
+
+```bash
+python scripts/front_transition_import.py --limit 10 --messages-limit 500 --json
+```
+
+Write a controlled batch:
+
+```bash
+python scripts/front_transition_import.py --limit 10 --messages-limit 500 --import-run-id front-transition-dryrun-01 --write --json
+```
+
+For larger batches, increase the limit only after the previous batch has been reviewed:
+
+```bash
+python scripts/front_transition_import.py --limit 200 --messages-limit 500 --allow-large --import-run-id front-transition-dryrun-01 --write --json
+```
+
+Preview deletion of one run:
+
+```bash
+python scripts/front_transition_purge.py --import-run-id front-transition-dryrun-01 --json
+```
+
+Purge one run:
+
+```bash
+python scripts/front_transition_purge.py --import-run-id front-transition-dryrun-01 --yes --json
+```
+
+The intended rehearsal is:
+
+1. keep Twilio in `mock`;
+2. import Front transition data with a dry-run `import_run_id`;
+3. test review, reply, manual follow-up, inbound reopen, and closure;
+4. purge the dry-run import;
+5. freeze Front;
+6. reimport with the final `import_run_id`;
+7. only then switch Twilio routing.

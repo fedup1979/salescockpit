@@ -12,6 +12,14 @@ from sales_cockpit.services.whatsapp_rules import iso_utc
 PHONE_PATTERN = re.compile(r"(?:whatsapp:)?(\+?\d[\d\s().-]{6,}\d)", re.IGNORECASE)
 FRONT_ACTIVE_STATUSES = {"assigned", "unassigned", "open", "waiting", "pending"}
 FRONT_RESOLVED_STATUSES = {"archived", "resolved", "closed", "deleted", "spam"}
+FRONT_TRANSITION_SOURCE = "front_transition"
+FRONT_TRANSITION_LEAD_TYPE = "front_transition"
+FRONT_TRANSITION_REVIEW_ACTION = "front_transition_review"
+FRONT_TRANSITION_FOLLOW_UP_ACTION = "front_transition_follow_up"
+FRONT_TRANSITION_ACTION_TYPES = {
+    FRONT_TRANSITION_REVIEW_ACTION,
+    FRONT_TRANSITION_FOLLOW_UP_ACTION,
+}
 
 
 def normalize_phone_e164(raw_phone: Any, default_country: str = "CH") -> str | None:
@@ -311,6 +319,251 @@ def upsert_front_history(
     }
 
 
+def import_front_transition_records(
+    records: list[dict[str, Any]],
+    import_run_id: str,
+) -> dict[str, Any]:
+    """Import Front records as manual transition threads, never as V1 workflow items."""
+    import_run_id = str(import_run_id or "").strip()
+    if not import_run_id:
+        raise ValueError("import_run_id is required.")
+    grouped: dict[str, dict[str, Any]] = {}
+    skipped = 0
+    for record in records:
+        conversation = record.get("conversation") if isinstance(record, dict) else None
+        if not isinstance(conversation, dict):
+            conversation = record if isinstance(record, dict) else {}
+        messages = record.get("messages") if isinstance(record, dict) else []
+        messages = messages if isinstance(messages, list) else []
+        front_conversation_id = _front_id(conversation)
+        if not front_conversation_id:
+            skipped += 1
+            continue
+        phone = extract_front_phone(conversation, messages)
+        group_key = _front_transition_group_key(phone, front_conversation_id)
+        group = grouped.setdefault(
+            group_key,
+            {
+                "front_group_key": group_key,
+                "phone_e164": phone,
+                "records": [],
+                "is_open": False,
+                "has_latest_inbound": False,
+            },
+        )
+        if phone and not group.get("phone_e164"):
+            group["phone_e164"] = phone
+        migration = classify_front_migration(conversation, messages)
+        status = str(conversation.get("status") or "").strip().lower()
+        is_open = status in FRONT_ACTIVE_STATUSES or migration.get("migration_status") in {
+            "active",
+            "manual_review",
+        }
+        group["is_open"] = bool(group["is_open"] or is_open)
+        latest = _latest_front_message(messages)
+        group["has_latest_inbound"] = bool(
+            group["has_latest_inbound"] or (latest and latest.get("is_inbound"))
+        )
+        group["records"].append(
+            {
+                "conversation": conversation,
+                "messages": messages,
+                "migration": migration,
+                "is_open": is_open,
+            }
+        )
+
+    started_at = iso_utc()
+    processed_conversations = 0
+    created_leads = 0
+    created_conversations = 0
+    created_actions = 0
+    created_front_messages = 0
+    attached_messages = 0
+    with connect() as conn:
+        for group in grouped.values():
+            lead_id, conversation_id, lead_created, conversation_created = _ensure_front_transition_thread(
+                conn,
+                group,
+                import_run_id,
+                started_at,
+            )
+            created_leads += 1 if lead_created else 0
+            created_conversations += 1 if conversation_created else 0
+            group_message_times: list[tuple[str, str]] = []
+            for record in group["records"]:
+                front_row_id = _upsert_front_transition_conversation(
+                    conn,
+                    record["conversation"],
+                    record["migration"],
+                    import_run_id=import_run_id,
+                    front_group_key=group["front_group_key"],
+                    phone_e164=group.get("phone_e164"),
+                    lead_id=lead_id,
+                    conversation_id=conversation_id,
+                    now=started_at,
+                )
+                processed_conversations += 1
+                for message in record["messages"]:
+                    result = _upsert_front_message(
+                        conn,
+                        front_conversation_id=_front_id(record["conversation"]),
+                        front_conversation_row_id=front_row_id,
+                        lead_id=lead_id,
+                        conversation_id=conversation_id,
+                        message=message,
+                        attach_history=True,
+                        now=started_at,
+                        import_run_id=import_run_id,
+                        front_group_key=group["front_group_key"],
+                    )
+                    created_front_messages += 1 if result["created"] else 0
+                    attached_messages += 1 if result["attached"] else 0
+                    created_at = _front_timestamp_to_iso(message.get("created_at"))
+                    if created_at:
+                        direction = "inbound" if message.get("is_inbound") else "outbound"
+                        group_message_times.append((direction, created_at))
+
+            _sync_front_transition_conversation_state(
+                conn,
+                lead_id=lead_id,
+                conversation_id=conversation_id,
+                import_run_id=import_run_id,
+                front_group_key=group["front_group_key"],
+                is_open=bool(group["is_open"]),
+                message_times=group_message_times,
+                now=started_at,
+            )
+            if group["is_open"]:
+                created_actions += _ensure_front_transition_review_action(
+                    conn,
+                    lead_id=lead_id,
+                    conversation_id=conversation_id,
+                    import_run_id=import_run_id,
+                    front_group_key=group["front_group_key"],
+                    has_latest_inbound=bool(group["has_latest_inbound"]),
+                    now=started_at,
+                )
+            insert_event(
+                conn,
+                lead_id,
+                "front_transition_imported",
+                new={
+                    "import_run_id": import_run_id,
+                    "front_group_key": group["front_group_key"],
+                    "conversation_count": len(group["records"]),
+                    "status": "open" if group["is_open"] else "resolved",
+                },
+                metadata={
+                    "conversation_id": conversation_id,
+                    "import_run_id": import_run_id,
+                    "front_group_key": group["front_group_key"],
+                },
+            )
+        conn.execute(
+            """
+            INSERT INTO integration_sync_runs (
+                integration, status, started_at, finished_at, records_processed, metadata_json
+            ) VALUES ('front_transition_import', 'completed', ?, ?, ?, ?)
+            """,
+            (
+                started_at,
+                iso_utc(),
+                processed_conversations,
+                json.dumps(
+                    {
+                        "import_run_id": import_run_id,
+                        "group_count": len(grouped),
+                        "skipped": skipped,
+                    },
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+
+    return {
+        "import_run_id": import_run_id,
+        "group_count": len(grouped),
+        "conversation_count": processed_conversations,
+        "skipped": skipped,
+        "created_leads": created_leads,
+        "created_conversations": created_conversations,
+        "created_actions": created_actions,
+        "created_front_messages": created_front_messages,
+        "attached_messages": attached_messages,
+    }
+
+
+def purge_front_transition_import(import_run_id: str) -> dict[str, Any]:
+    import_run_id = str(import_run_id or "").strip()
+    if not import_run_id:
+        raise ValueError("import_run_id is required.")
+    with connect() as conn:
+        lead_ids = [
+            int(row["id"])
+            for row in conn.execute(
+                """
+                SELECT id
+                FROM leads
+                WHERE source = ? AND front_import_run_id = ?
+                """,
+                (FRONT_TRANSITION_SOURCE, import_run_id),
+            ).fetchall()
+        ]
+        front_conversation_count = conn.execute(
+            "SELECT COUNT(*) AS total FROM front_conversations WHERE import_run_id = ?",
+            (import_run_id,),
+        ).fetchone()["total"]
+        front_message_count = conn.execute(
+            "SELECT COUNT(*) AS total FROM front_messages WHERE import_run_id = ?",
+            (import_run_id,),
+        ).fetchone()["total"]
+        if lead_ids:
+            placeholders = ", ".join("?" for _ in lead_ids)
+            action_count = conn.execute(
+                f"SELECT COUNT(*) AS total FROM tasks WHERE lead_id IN ({placeholders})",
+                lead_ids,
+            ).fetchone()["total"]
+            message_count = conn.execute(
+                f"SELECT COUNT(*) AS total FROM messages WHERE lead_id IN ({placeholders})",
+                lead_ids,
+            ).fetchone()["total"]
+            conn.execute(
+                f"DELETE FROM user_activity_log WHERE lead_id IN ({placeholders})",
+                lead_ids,
+            )
+        else:
+            action_count = 0
+            message_count = 0
+        conn.execute("DELETE FROM front_conversations WHERE import_run_id = ?", (import_run_id,))
+        if lead_ids:
+            placeholders = ", ".join("?" for _ in lead_ids)
+            conn.execute(f"DELETE FROM leads WHERE id IN ({placeholders})", lead_ids)
+        conn.execute(
+            """
+            DELETE FROM user_activity_log
+            WHERE metadata_json LIKE ?
+            """,
+            (f"%{import_run_id}%",),
+        )
+        conn.execute(
+            """
+            DELETE FROM integration_sync_runs
+            WHERE integration = 'front_transition_import'
+              AND metadata_json LIKE ?
+            """,
+            (f"%{import_run_id}%",),
+        )
+    return {
+        "import_run_id": import_run_id,
+        "deleted_leads": len(lead_ids),
+        "deleted_front_conversations": int(front_conversation_count),
+        "deleted_front_messages": int(front_message_count),
+        "deleted_messages": int(message_count),
+        "deleted_actions": int(action_count),
+    }
+
+
 def rematch_front_buffer(limit: int = 500, attach_history: bool = False) -> dict[str, Any]:
     with connect() as conn:
         rows = conn.execute(
@@ -482,6 +735,352 @@ def _front_recommended_owner(action_type: str | None) -> str | None:
     return None
 
 
+def _front_transition_group_key(phone: str | None, front_conversation_id: str) -> str:
+    if phone:
+        return f"phone:{phone}"
+    return f"front:{front_conversation_id}"
+
+
+def _ensure_front_transition_thread(
+    conn: Any,
+    group: dict[str, Any],
+    import_run_id: str,
+    now: str,
+) -> tuple[int, int, bool, bool]:
+    group_key = group["front_group_key"]
+    phone = group.get("phone_e164")
+    existing = row_to_dict(
+        conn.execute(
+            """
+            SELECT l.id AS lead_id, c.id AS conversation_id
+            FROM leads l
+            LEFT JOIN conversations c ON c.lead_id = l.id
+            WHERE l.source = ?
+              AND l.front_import_run_id = ?
+              AND l.front_transition_key = ?
+            ORDER BY c.id DESC
+            LIMIT 1
+            """,
+            (FRONT_TRANSITION_SOURCE, import_run_id, group_key),
+        ).fetchone()
+    )
+    if existing:
+        lead_id = int(existing["lead_id"])
+        conversation_id = existing.get("conversation_id")
+        if conversation_id:
+            return lead_id, int(conversation_id), False, False
+        cursor = conn.execute(
+            """
+            INSERT INTO conversations (
+                lead_id, channel, recipient_phone_e164, front_import_run_id,
+                front_transition_key, created_at, updated_at
+            ) VALUES (?, 'whatsapp_front_transition', ?, ?, ?, ?, ?)
+            """,
+            (lead_id, phone, import_run_id, group_key, now, now),
+        )
+        return lead_id, int(cursor.lastrowid), False, True
+
+    label = phone or group_key.replace("front:", "Front ")
+    cursor = conn.execute(
+        """
+        INSERT INTO leads (
+            first_name, last_name, phone_e164, phone_raw, course_title,
+            lead_type, source, acquisition_type, lead_status, contact_status,
+            sales_stage, temperature, setter_user_id, identity_status,
+            front_import_run_id, front_transition_key, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'Transition Front', ?, ?, 'front_transition',
+            'eligible', 'contact_allowed', 'new', 'warm', ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "Contact Front",
+            label,
+            phone,
+            phone,
+            FRONT_TRANSITION_LEAD_TYPE,
+            FRONT_TRANSITION_SOURCE,
+            _default_setter1_id(conn),
+            "verified" if phone else "needs_identification",
+            import_run_id,
+            group_key,
+            now,
+            now,
+        ),
+    )
+    lead_id = int(cursor.lastrowid)
+    conversation_cursor = conn.execute(
+        """
+        INSERT INTO conversations (
+            lead_id, channel, recipient_phone_e164, front_import_run_id,
+            front_transition_key, created_at, updated_at
+        ) VALUES (?, 'whatsapp_front_transition', ?, ?, ?, ?, ?)
+        """,
+        (lead_id, phone, import_run_id, group_key, now, now),
+    )
+    return lead_id, int(conversation_cursor.lastrowid), True, True
+
+
+def _default_setter1_id(conn: Any) -> int | None:
+    row = conn.execute(
+        """
+        SELECT id
+        FROM users
+        WHERE role = 'setter'
+          AND active = 1
+          AND lower(email) != 'setter2@essr.ch'
+        ORDER BY id
+        LIMIT 1
+        """
+    ).fetchone()
+    if row:
+        return int(row["id"])
+    row = conn.execute(
+        "SELECT id FROM users WHERE role = 'setter' AND active = 1 ORDER BY id LIMIT 1"
+    ).fetchone()
+    return int(row["id"]) if row else None
+
+
+def _default_setter2_id(conn: Any) -> int | None:
+    row = conn.execute(
+        """
+        SELECT id
+        FROM users
+        WHERE active = 1 AND lower(email) = 'setter2@essr.ch'
+        LIMIT 1
+        """
+    ).fetchone()
+    if row:
+        return int(row["id"])
+    row = conn.execute(
+        "SELECT id FROM users WHERE role = 'setter' AND active = 1 ORDER BY id LIMIT 1"
+    ).fetchone()
+    return int(row["id"]) if row else None
+
+
+def _upsert_front_transition_conversation(
+    conn: Any,
+    conversation: dict[str, Any],
+    migration: dict[str, Any],
+    *,
+    import_run_id: str,
+    front_group_key: str,
+    phone_e164: str | None,
+    lead_id: int,
+    conversation_id: int,
+    now: str,
+) -> int:
+    front_conversation_id = _front_id(conversation)
+    payload_json = json.dumps(conversation, ensure_ascii=False, sort_keys=True)
+    links = conversation.get("_links") if isinstance(conversation.get("_links"), dict) else {}
+    status = str(conversation.get("status") or "").strip().lower()
+    is_open = status in FRONT_ACTIVE_STATUSES
+    values = (
+        lead_id,
+        conversation_id,
+        "front_transition",
+        1.0 if phone_e164 else 0.5,
+        "Transition Front groupée par numéro." if phone_e164 else "Transition Front sans numéro exploitable.",
+        phone_e164,
+        front_group_key,
+        import_run_id,
+        conversation.get("subject") or "",
+        conversation.get("status") or "",
+        _name_or_id(conversation.get("assignee")),
+        "active" if is_open else migration.get("migration_status", "resolved"),
+        FRONT_TRANSITION_REVIEW_ACTION if is_open else None,
+        (
+            "Conversation Front ouverte : reprise manuelle hors flux V1."
+            if is_open
+            else "Conversation Front terminée : historique seulement."
+        ),
+        links.get("self") if isinstance(links, dict) else None,
+        payload_json,
+        now,
+        now,
+    )
+    existing = row_to_dict(
+        conn.execute(
+            "SELECT id FROM front_conversations WHERE front_conversation_id = ?",
+            (front_conversation_id,),
+        ).fetchone()
+    )
+    if existing:
+        conn.execute(
+            """
+            UPDATE front_conversations
+            SET lead_id = ?, conversation_id = ?, match_status = ?,
+                match_confidence = ?, match_reason = ?, phone_e164 = ?,
+                front_group_key = ?, import_run_id = ?, subject = ?,
+                front_status = ?, assignee_name = ?, migration_status = ?,
+                migration_action_type = ?, migration_reason = ?, api_link = ?,
+                payload_json = ?, last_seen_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (*values, existing["id"]),
+        )
+        return int(existing["id"])
+    cursor = conn.execute(
+        """
+        INSERT INTO front_conversations (
+            front_conversation_id, lead_id, conversation_id, match_status,
+            match_confidence, match_reason, phone_e164, front_group_key,
+            import_run_id, subject, front_status, assignee_name, migration_status,
+            migration_action_type, migration_reason, api_link, payload_json,
+            last_seen_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (front_conversation_id, *values),
+    )
+    return int(cursor.lastrowid)
+
+
+def _sync_front_transition_conversation_state(
+    conn: Any,
+    *,
+    lead_id: int,
+    conversation_id: int,
+    import_run_id: str,
+    front_group_key: str,
+    is_open: bool,
+    message_times: list[tuple[str, str]],
+    now: str,
+) -> None:
+    last_inbound = max((value for direction, value in message_times if direction == "inbound"), default=None)
+    last_outbound = max((value for direction, value in message_times if direction == "outbound"), default=None)
+    conn.execute(
+        """
+        UPDATE conversations
+        SET status = ?,
+            resolution_reason = ?,
+            resolution_note = ?,
+            resolved_at = ?,
+            last_inbound_at = coalesce(?, last_inbound_at),
+            last_outbound_at = coalesce(?, last_outbound_at),
+            front_import_run_id = ?,
+            front_transition_key = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            "open" if is_open else "resolved",
+            None if is_open else "front_import_archived",
+            None if is_open else "Conversation Front importée comme historique terminé.",
+            None if is_open else now,
+            last_inbound,
+            last_outbound,
+            import_run_id,
+            front_group_key,
+            now,
+            conversation_id,
+        ),
+    )
+    conn.execute(
+        """
+        UPDATE leads
+        SET front_import_run_id = ?, front_transition_key = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (import_run_id, front_group_key, now, lead_id),
+    )
+    if not is_open:
+        conn.execute(
+            """
+            UPDATE tasks
+            SET status = 'cancelled',
+                outcome = 'Conversation Front terminée avant reprise',
+                completed_at = ?,
+                updated_at = ?
+            WHERE lead_id = ?
+              AND conversation_id = ?
+              AND type IN (?, ?)
+              AND status IN ('open', 'in_progress', 'planned', 'blocked')
+            """,
+            (
+                now,
+                now,
+                lead_id,
+                conversation_id,
+                FRONT_TRANSITION_REVIEW_ACTION,
+                FRONT_TRANSITION_FOLLOW_UP_ACTION,
+            ),
+        )
+
+
+def _ensure_front_transition_review_action(
+    conn: Any,
+    *,
+    lead_id: int,
+    conversation_id: int,
+    import_run_id: str,
+    front_group_key: str,
+    has_latest_inbound: bool,
+    now: str,
+) -> int:
+    assignee_id = _default_setter1_id(conn)
+    if not assignee_id:
+        return 0
+    existing = conn.execute(
+        """
+        SELECT id
+        FROM tasks
+        WHERE lead_id = ?
+          AND conversation_id = ?
+          AND type = ?
+          AND status IN ('open', 'in_progress', 'planned', 'blocked')
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (lead_id, conversation_id, FRONT_TRANSITION_REVIEW_ACTION),
+    ).fetchone()
+    title = "Reprise transition Front"
+    description = (
+        "Historique Front importé. Relire, répondre ou programmer une relance manuelle hors flux V1."
+    )
+    urgency = "urgent" if has_latest_inbound else "normal"
+    if existing:
+        conn.execute(
+            """
+            UPDATE tasks
+            SET assigned_to_user_id = ?, due_at = ?, urgency = ?,
+                description = ?, front_import_run_id = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (assignee_id, now, urgency, description, import_run_id, now, existing["id"]),
+        )
+        return 0
+    conn.execute(
+        """
+        INSERT INTO tasks (
+            lead_id, conversation_id, type, title, description, assigned_to_user_id,
+            created_by_user_id, due_at, urgency, status, trigger_reason,
+            front_import_run_id, metadata_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 'open',
+            'front_transition_import_open_conversation', ?, ?, ?, ?)
+        """,
+        (
+            lead_id,
+            conversation_id,
+            FRONT_TRANSITION_REVIEW_ACTION,
+            title,
+            description,
+            assignee_id,
+            now,
+            urgency,
+            import_run_id,
+            json.dumps(
+                {
+                    "import_run_id": import_run_id,
+                    "front_group_key": front_group_key,
+                    "has_latest_inbound": has_latest_inbound,
+                },
+                ensure_ascii=False,
+            ),
+            now,
+            now,
+        ),
+    )
+    return 1
+
+
 def _upsert_front_message(
     conn: Any,
     front_conversation_id: str,
@@ -491,6 +1090,8 @@ def _upsert_front_message(
     message: dict[str, Any],
     attach_history: bool,
     now: str,
+    import_run_id: str | None = None,
+    front_group_key: str | None = None,
 ) -> dict[str, bool]:
     front_message_id = _front_id(message)
     if not front_message_id:
@@ -536,6 +1137,8 @@ def _upsert_front_message(
         lead_id,
         conversation_id,
         imported_message_id,
+        import_run_id,
+        front_group_key,
         direction,
         body,
         message.get("type") or "",
@@ -550,6 +1153,8 @@ def _upsert_front_message(
             UPDATE front_messages
             SET front_conversation_id = ?, front_conversation_row_id = ?,
                 lead_id = ?, conversation_id = ?, imported_message_id = ?,
+                import_run_id = coalesce(?, import_run_id),
+                front_group_key = coalesce(?, front_group_key),
                 direction = ?, body = ?, front_type = ?, front_created_at = ?,
                 author_name = ?, payload_json = ?, updated_at = ?
             WHERE id = ?
@@ -561,9 +1166,10 @@ def _upsert_front_message(
         """
         INSERT INTO front_messages (
             front_message_id, front_conversation_id, front_conversation_row_id,
-            lead_id, conversation_id, imported_message_id, direction, body,
-            front_type, front_created_at, author_name, payload_json, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            lead_id, conversation_id, imported_message_id, import_run_id,
+            front_group_key, direction, body, front_type, front_created_at,
+            author_name, payload_json, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (front_message_id, *values),
     )

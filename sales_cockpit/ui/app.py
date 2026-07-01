@@ -111,6 +111,9 @@ WORK_QUEUES = ["todo", "waiting", "resolved"]
 INBOX_QUEUES = WORK_QUEUES + ["all"]
 ACTION_QUEUES = ["due", "future", "completed", "all"]
 MAX_RENDERED_ROWS_PER_QUEUE = 50
+FRONT_TRANSITION_REVIEW_ACTION = "front_transition_review"
+FRONT_TRANSITION_FOLLOW_UP_ACTION = "front_transition_follow_up"
+FRONT_TRANSITION_ACTION_TYPES = {FRONT_TRANSITION_REVIEW_ACTION, FRONT_TRANSITION_FOLLOW_UP_ACTION}
 STANDARD_NEXT_ACTION_TYPES = ["setting_call", "closing_call", "manual_reprise_setter", "manual_reprise_closer"]
 DATE_INPUT_FORMAT = "DD.MM.YYYY"
 DISPLAY_TZ = ZoneInfo("Europe/Zurich")
@@ -130,6 +133,8 @@ ACTION_OUTCOMES = {
     "other": ["done"],
     "manual_reprise_setter": ["done"],
     "manual_reprise_closer": ["done"],
+    FRONT_TRANSITION_REVIEW_ACTION: ["front_transition_done", "do_not_contact"],
+    FRONT_TRANSITION_FOLLOW_UP_ACTION: ["front_transition_done", "do_not_contact"],
 }
 CALL_ACTION_TYPES = {"setting_call", "closing_call"}
 PILOTAGE_SUPPORTED_CATEGORIES = ["FSM", "APP", "AS"]
@@ -371,6 +376,8 @@ DISPLAY_LABELS = {
     "contact_review": "Revue contact",
     "manual_reprise_setter": "Reprise manuelle setter",
     "manual_reprise_closer": "Reprise manuelle closer",
+    FRONT_TRANSITION_REVIEW_ACTION: "Reprise transition Front",
+    FRONT_TRANSITION_FOLLOW_UP_ACTION: "Relance transition Front",
     "other": "Autre",
     "assignee_name": "Responsable",
     "lead_name": "Prospect",
@@ -1207,6 +1214,12 @@ def standard_action_assignee_options(users: list[dict], action_type: str) -> lis
         ]
         setters = [user for user in users if user.get("role") == "setter"]
         return tanjona or setters or users
+    if action_type == FRONT_TRANSITION_FOLLOW_UP_ACTION:
+        tanjona = [
+            user for user in users
+            if (user.get("email") or "").lower() == "setter2@essr.ch"
+        ]
+        return tanjona or [user for user in users if user.get("role") == "setter"] or users
     if action_type in {"closing_call", "manual_reprise_closer"}:
         closers = [user for user in users if user.get("role") == "closer"]
         return closers or users
@@ -1219,6 +1232,7 @@ def standard_action_button_label(action_type: str) -> str:
         "closing_call": "Programmer un appel closing",
         "manual_reprise_setter": "Demander une reprise setter",
         "manual_reprise_closer": "Demander une reprise closer",
+        FRONT_TRANSITION_FOLLOW_UP_ACTION: "Programmer relance transition Front",
     }
     return labels.get(action_type, labelize(action_type))
 
@@ -1276,6 +1290,8 @@ def render_composer(user: dict, conv: dict) -> None:
         st.success("Fenêtre WhatsApp ouverte : message libre autorisé.")
         if action and action.get("type") == "reply":
             st.caption("Envoyez la réponse ici. Si un RDV ou une reprise doit être créée ensuite, faites-le dans Actions.")
+        elif action and action.get("type") in FRONT_TRANSITION_ACTION_TYPES:
+            st.caption("Transition Front : l'envoi clôture uniquement cette action de reprise, sans déclencher de flux V1.")
         freeform_base_key = f"freeform_body_{conv['id']}"
         freeform_key = resettable_widget_key(freeform_base_key)
         attachment_base_key = f"freeform_attachments_{conv['id']}"
@@ -1306,7 +1322,11 @@ def render_composer(user: dict, conv: dict) -> None:
                 user["id"],
                 body.strip(),
                 attachments=attachments,
-                expected_action_id=action["id"] if action and action.get("type") in {"reply", "follow_up"} else None,
+                expected_action_id=(
+                    action["id"]
+                    if action and action.get("type") in {"reply", "follow_up", *FRONT_TRANSITION_ACTION_TYPES}
+                    else None
+                ),
             )
             show_result(ok, message)
             if ok:
@@ -1388,7 +1408,11 @@ def render_composer(user: dict, conv: dict) -> None:
             user["id"],
             template["id"],
             variables,
-            expected_action_id=action["id"] if action and action.get("type") in {"reply", "follow_up"} else None,
+            expected_action_id=(
+                action["id"]
+                if action and action.get("type") in {"reply", "follow_up", *FRONT_TRANSITION_ACTION_TYPES}
+                else None
+            ),
         )
         show_result(ok, message)
         if ok:
@@ -1406,7 +1430,11 @@ def render_template_request_form(user: dict, conv: dict, action: dict | None) ->
         st.success(flash)
     st.markdown("**Demander un nouveau modèle WhatsApp**")
     st.caption("À utiliser uniquement si aucun modèle approuvé ne convient.")
-    linked_task_id = action["id"] if action and action.get("type") == "follow_up" else None
+    linked_task_id = (
+        action["id"]
+        if action and action.get("type") in {"follow_up", FRONT_TRANSITION_FOLLOW_UP_ACTION}
+        else None
+    )
     request_key_prefix = f"template_request_{conv['id']}_{linked_task_id or 'general'}"
     default_context = "" if flash else conv.get("last_message_body") or ""
     reason_key = resettable_widget_key(f"{request_key_prefix}_reason")
@@ -1696,6 +1724,10 @@ def action_consequence(action_type: str, outcome: str) -> str:
         ("closing_call", "not_relevant"): "Clôture la conversation et annule les relances futures.",
         ("contact_review", "maintain_do_not_contact"): "Maintient le blocage Ne plus contacter et clôture la conversation.",
         ("contact_review", "lift_do_not_contact"): "Le système lève le blocage et crée une action Répondre pour Setter I.",
+        (FRONT_TRANSITION_REVIEW_ACTION, "front_transition_done"): "Clôture la reprise transition Front sans créer de flux automatique.",
+        (FRONT_TRANSITION_FOLLOW_UP_ACTION, "front_transition_done"): "Clôture la relance transition Front sans créer de flux automatique.",
+        (FRONT_TRANSITION_REVIEW_ACTION, "do_not_contact"): "Marque le contact Ne plus contacter et clôture la conversation.",
+        (FRONT_TRANSITION_FOLLOW_UP_ACTION, "do_not_contact"): "Marque le contact Ne plus contacter et clôture la conversation.",
     }
     return consequences.get((action_type, outcome), "Le système appliquera la suite prévue par la règle métier.")
 
@@ -1765,6 +1797,19 @@ def render_skip_sequence_step_control(
 
 
 def render_whatsapp_action_guidance(user: dict, conv: dict, action: dict) -> None:
+    if action["type"] == FRONT_TRANSITION_REVIEW_ACTION:
+        st.info("Conversation importée depuis Front : relisez l'historique, répondez depuis Conversation si nécessaire, ou clôturez cette reprise avec une note.")
+        st.caption("Cette action reste hors flux V1 : aucun scénario automatique APP/FSM/AS n'est déclenché.")
+        return
+
+    if action["type"] == FRONT_TRANSITION_FOLLOW_UP_ACTION:
+        if conv["window_is_open"]:
+            st.info("Relance transition Front à envoyer. La fenêtre WhatsApp est ouverte : message libre ou modèle approuvé possible.")
+        else:
+            st.warning("Relance transition Front à envoyer. Fenêtre WhatsApp fermée : modèle approuvé obligatoire.")
+        st.caption("L'envoi clôture cette relance manuelle sans créer de flux automatique.")
+        return
+
     if action["type"] == "reply":
         st.info("Le client attend une réponse. Cette action sera clôturée quand le message sera envoyé dans l'onglet Conversation.")
         st.caption("L'envoi se fait dans l'onglet Conversation. Si une suite doit être créée après le message, utilisez ensuite le bloc standard de l'onglet Actions.")
@@ -1783,6 +1828,42 @@ def render_whatsapp_action_guidance(user: dict, conv: dict, action: dict) -> Non
             st.warning("Relance à envoyer. Fenêtre WhatsApp fermée : modèle approuvé obligatoire.")
         st.caption("L'action sera clôturée uniquement quand le message ou le modèle aura été envoyé dans l'onglet Conversation.")
         render_skip_sequence_step_control(user, action)
+
+
+def render_front_transition_action_form(user: dict, action: dict) -> None:
+    action_id = action["id"]
+    st.markdown("**Clôturer la transition Front**")
+    with st.form(f"front_transition_action_form_{action_id}"):
+        outcome = st.selectbox(
+            "Issue",
+            ACTION_OUTCOMES[action["type"]],
+            format_func=labelize,
+            key=f"front_transition_outcome_{action_id}",
+        )
+        st.caption(action_consequence(action["type"], outcome))
+        note = st.text_area(
+            "Note obligatoire",
+            height=100,
+            key=f"front_transition_note_{action_id}",
+        )
+        submitted = st.form_submit_button("Enregistrer")
+    if submitted:
+        if not note.strip():
+            st.error("Ajoutez une note pour clôturer cette transition.")
+            return
+        ok, message = complete_action_with_workflow(
+            action_id,
+            user["id"],
+            outcome,
+            note=note,
+        )
+        show_result(ok, message)
+        if ok:
+            clear_widget_keys(
+                f"front_transition_outcome_{action_id}",
+                f"front_transition_note_{action_id}",
+            )
+            st.rerun()
 
 
 def render_call_action_form(user: dict, action: dict) -> None:
@@ -2232,14 +2313,17 @@ def render_standard_action_planner(user: dict, conv: dict, users: list[dict], ac
 
     st.markdown("**Programmer un appel ou une reprise**")
     st.caption("Choisissez une suite standard. Les réponses et relances WhatsApp se traitent depuis Conversation afin de garder une preuve d'envoi.")
+    action_options = list(STANDARD_NEXT_ACTION_TYPES)
+    if conv.get("source") == "front_transition":
+        action_options.insert(0, FRONT_TRANSITION_FOLLOW_UP_ACTION)
     action_type = st.selectbox(
         "Action",
-        STANDARD_NEXT_ACTION_TYPES,
+        action_options,
         format_func=standard_action_button_label,
         key=f"standard_action_type_{conv['id']}",
     )
     active_call = active_planned_call_for_lead(conv.get("lead_id"))
-    followup_blocked_by_call = action_type == "follow_up" and active_call is not None
+    followup_blocked_by_call = action_type in {"follow_up", FRONT_TRANSITION_FOLLOW_UP_ACTION} and active_call is not None
     if action_type == "reply" and active_call:
         st.info("Un appel est déjà planifié. La réponse sera ajoutée sans annuler cet appel.")
     if followup_blocked_by_call:
@@ -2630,6 +2714,15 @@ def render_next_action_box(user: dict, conv: dict) -> None:
     if conv["status"] == "open" and action and action.get("type") == "contact_review":
         st.divider()
         render_contact_review_action(user, action)
+        return
+
+    if conv["status"] == "open" and action and action.get("type") in FRONT_TRANSITION_ACTION_TYPES:
+        st.divider()
+        render_whatsapp_action_guidance(user, conv, action)
+        st.divider()
+        render_front_transition_action_form(user, action)
+        st.divider()
+        render_stable_action_block(user, conv, users, active_assignee_id, presentation)
         return
 
     if conv["status"] == "open":

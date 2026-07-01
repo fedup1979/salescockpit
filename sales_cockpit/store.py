@@ -30,7 +30,14 @@ from sales_cockpit.services.twilio_client import (
     TwilioMessageError,
     get_whatsapp_client,
 )
-from sales_cockpit.services.front_import import build_front_cutover_plan, list_front_import_records
+from sales_cockpit.services.front_import import (
+    FRONT_TRANSITION_ACTION_TYPES,
+    FRONT_TRANSITION_FOLLOW_UP_ACTION,
+    FRONT_TRANSITION_REVIEW_ACTION,
+    FRONT_TRANSITION_SOURCE,
+    build_front_cutover_plan,
+    list_front_import_records,
+)
 from sales_cockpit.services.message_text import clean_message_body_text
 from sales_cockpit.services.whatsapp_rules import calculate_window, iso_utc, parse_dt, utc_now
 
@@ -63,6 +70,7 @@ VALID_ACTION_TYPES = {
     "contact_review",
     "other",
     *MANUAL_REPRISE_ACTION_TYPES,
+    *FRONT_TRANSITION_ACTION_TYPES,
 }
 VALID_TASK_STATUSES = {"open", "in_progress", "planned", "blocked", "done", "cancelled"}
 VALID_CONTACT_STATUSES = {"contact_allowed", "do_not_contact"}
@@ -339,6 +347,8 @@ JOURNAL_TASK_TYPE_LABELS = {
     "contact_review": "Revue contact",
     "manual_reprise_setter": "Reprise setter",
     "manual_reprise_closer": "Reprise closer",
+    FRONT_TRANSITION_REVIEW_ACTION: "Reprise transition Front",
+    FRONT_TRANSITION_FOLLOW_UP_ACTION: "Relance transition Front",
     "other": "Anomalie / revue humaine",
 }
 
@@ -2456,7 +2466,7 @@ def _park_schooldrive_record_without_automation(
         lead_id,
         user_id=None,
         outcome=f"SchoolDrive V1 sans automatisation : {reason}",
-        included_types=("follow_up",),
+        included_types=("follow_up", FRONT_TRANSITION_FOLLOW_UP_ACTION),
     )
     if _active_human_action_for_lead(conn, lead_id):
         return
@@ -3604,6 +3614,9 @@ def list_conversations(
             l.session_id,
             l.session_name,
             l.course_start_date,
+            l.source,
+            l.front_import_run_id,
+            l.front_transition_key,
             l.capacity_total,
             l.capacity_occupied,
             l.capacity_available,
@@ -3743,6 +3756,9 @@ def get_conversation(conversation_id: int) -> dict[str, Any] | None:
                 l.session_id,
                 l.session_name,
                 l.course_start_date,
+                l.source,
+                l.front_import_run_id,
+                l.front_transition_key,
                 l.capacity_total,
                 l.capacity_occupied,
                 l.capacity_available,
@@ -3968,7 +3984,13 @@ def assign_standard_next_action(
     due_at: str,
     note: str,
 ) -> tuple[bool, str]:
-    allowed_types = {"setting_call", "closing_call", "manual_reprise_setter", "manual_reprise_closer"}
+    allowed_types = {
+        "setting_call",
+        "closing_call",
+        "manual_reprise_setter",
+        "manual_reprise_closer",
+        FRONT_TRANSITION_FOLLOW_UP_ACTION,
+    }
     if action_type not in allowed_types:
         return False, "Action standard invalide."
 
@@ -3982,10 +4004,13 @@ def assign_standard_next_action(
     if conv.get("status") != "open":
         return False, "Conversation terminée : réactivez-la avant de créer une action."
     call_action = action_type in {"setting_call", "closing_call"}
+    front_transition_followup = action_type == FRONT_TRANSITION_FOLLOW_UP_ACTION
     manual_reprise_action = action_type in MANUAL_REPRISE_ACTION_TYPES
-    if call_action and conv.get("contact_status") in STOP_CONTACT_STATUSES:
+    if front_transition_followup and conv.get("source") != FRONT_TRANSITION_SOURCE:
+        return False, "Cette relance est réservée aux conversations importées depuis Front."
+    if (call_action or front_transition_followup) and conv.get("contact_status") in STOP_CONTACT_STATUSES:
         return False, "Contact bloqué : le statut Ne plus contacter doit être levé avant de créer une action."
-    if call_action and conv.get("lead_status") in STOP_QUALIFICATION_STATUSES:
+    if (call_action or front_transition_followup) and conv.get("lead_status") in STOP_QUALIFICATION_STATUSES:
         return False, "Qualification terminale : remettez le prospect Éligible avant de créer une action."
 
     with connect() as conn:
@@ -4007,6 +4032,11 @@ def assign_standard_next_action(
         if action_type in {"closing_call", "manual_reprise_closer"} and assignee_role != "closer":
             return False, "Cette action doit être attribuée à un closer."
 
+        if action_type == FRONT_TRANSITION_FOLLOW_UP_ACTION and (
+            assignee_role != "setter" or assignee_email != "setter2@essr.ch"
+        ):
+            return False, "Cette relance transition Front doit être attribuée à Setter II."
+
         now = iso_utc()
         full_name = lead_full_name(conv)
         titles = {
@@ -4021,6 +4051,8 @@ def assign_standard_next_action(
             "manual_reprise_setter": "standard_manual_reprise_setter_requested",
             "manual_reprise_closer": "standard_manual_reprise_closer_requested",
         }
+        titles[FRONT_TRANSITION_FOLLOW_UP_ACTION] = f"Relance transition Front · {full_name}"
+        trigger_reasons[FRONT_TRANSITION_FOLLOW_UP_ACTION] = "front_transition_follow_up_scheduled"
 
         active_call = _first_active_action_for_lead(
             conn,
@@ -4086,6 +4118,16 @@ def assign_standard_next_action(
                 """,
                 (assigned_to_user_id, now, conv["lead_id"]),
             )
+        elif action_type == FRONT_TRANSITION_FOLLOW_UP_ACTION:
+            conn.execute(
+                """
+                UPDATE leads
+                SET setter_user_id = coalesce(setter_user_id, ?),
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (assigned_to_user_id, now, conv["lead_id"]),
+            )
 
         action_id = _insert_next_action(
             conn,
@@ -4101,6 +4143,7 @@ def assign_standard_next_action(
             trigger_reason=trigger_reasons[action_type],
             call_cycle_id=str(uuid4()) if action_type in {"setting_call", "closing_call"} else None,
             call_attempt_index=1 if action_type in {"setting_call", "closing_call"} else None,
+            metadata={"front_transition": True} if action_type == FRONT_TRANSITION_FOLLOW_UP_ACTION else None,
         )
         _insert_internal_note_message(
             conn,
@@ -4795,6 +4838,7 @@ def _first_active_action_for_lead(
     action_types: tuple[str, ...] | None = None,
     include_blocked: bool = True,
     sequence_codes: tuple[str, ...] | None = None,
+    excluded_action_id: int | None = None,
 ) -> dict[str, Any] | None:
     statuses = "('open', 'in_progress', 'planned', 'blocked')" if include_blocked else "('open', 'in_progress', 'planned')"
     filters = ["lead_id = ?", f"status IN {statuses}"]
@@ -4807,6 +4851,9 @@ def _first_active_action_for_lead(
         placeholders = ", ".join("?" for _ in sequence_codes)
         filters.append(f"sequence_code IN ({placeholders})")
         params.extend(sequence_codes)
+    if excluded_action_id:
+        filters.append("id != ?")
+        params.append(excluded_action_id)
     row = conn.execute(
         f"""
         SELECT *
@@ -4815,10 +4862,12 @@ def _first_active_action_for_lead(
         ORDER BY
             CASE type
                 WHEN 'reply' THEN 0
-                WHEN 'follow_up' THEN 1
-                WHEN 'setting_call' THEN 2
-                WHEN 'closing_call' THEN 3
-                ELSE 4
+                WHEN 'front_transition_review' THEN 1
+                WHEN 'follow_up' THEN 2
+                WHEN 'front_transition_follow_up' THEN 3
+                WHEN 'setting_call' THEN 4
+                WHEN 'closing_call' THEN 5
+                ELSE 6
             END,
             datetime(coalesce(due_at, created_at)) ASC,
             id ASC
@@ -5249,6 +5298,8 @@ def _validate_outbound_action_can_chain(
 ) -> tuple[bool, str]:
     if not action:
         return True, ""
+    if action.get("type") in FRONT_TRANSITION_ACTION_TYPES:
+        return True, ""
     if action.get("type") == "reply":
         allowed = {None, "setting_booked", "closing_booked", "not_relevant", "do_not_contact"}
         if action_outcome not in allowed:
@@ -5307,17 +5358,27 @@ def _close_outbound_action_and_chain(
                 FROM tasks
                 WHERE id = ?
                   AND lead_id = ?
-                  AND type IN ('reply', 'follow_up')
+                  AND type IN ('reply', 'follow_up', ?, ?)
                   AND status IN ('open', 'in_progress', 'planned', 'blocked')
                 """,
-                (action_id, conv["lead_id"]),
+                (
+                    action_id,
+                    conv["lead_id"],
+                    FRONT_TRANSITION_REVIEW_ACTION,
+                    FRONT_TRANSITION_FOLLOW_UP_ACTION,
+                ),
             ).fetchone()
         )
     else:
         action = _first_active_action_for_lead(
             conn,
             conv["lead_id"],
-            action_types=("reply", "follow_up"),
+            action_types=(
+                "reply",
+                "follow_up",
+                FRONT_TRANSITION_REVIEW_ACTION,
+                FRONT_TRANSITION_FOLLOW_UP_ACTION,
+            ),
             include_blocked=True,
         )
     if not action:
@@ -5369,6 +5430,25 @@ def _close_outbound_action_and_chain(
         )
 
     full_name = lead_full_name(conv)
+    if action["type"] in FRONT_TRANSITION_ACTION_TYPES:
+        if not _first_active_action_for_lead(
+            conn,
+            conv["lead_id"],
+            excluded_action_id=action["id"],
+        ):
+            conn.execute(
+                """
+                UPDATE conversations
+                SET status = 'resolved',
+                    resolution_reason = 'front_transition_handled',
+                    resolution_note = ?,
+                    resolved_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (note or "Action transition Front traitÃ©e.", sent_at, sent_at, conv["id"]),
+            )
+        return
     if action["type"] == "reply":
         if action_outcome == "setting_booked":
             assignee_id = (
@@ -5732,7 +5812,8 @@ def _upsert_reply_action_for_inbound(
     lead = row_to_dict(
         conn.execute(
             """
-            SELECT first_name, last_name, setter_user_id, lead_status, contact_status
+            SELECT first_name, last_name, setter_user_id, lead_status, contact_status,
+                   source, front_import_run_id, front_transition_key
             FROM leads
             WHERE id = ?
             """,
@@ -5755,8 +5836,61 @@ def _upsert_reply_action_for_inbound(
         lead_id,
         user_id=None,
         outcome="Nouveau message reçu",
-        included_types=("follow_up",),
+        included_types=("follow_up", FRONT_TRANSITION_FOLLOW_UP_ACTION),
     )
+
+    if lead.get("source") == FRONT_TRANSITION_SOURCE:
+        title = f"Reprise transition Front · {lead_full_name(lead)}"
+        existing = conn.execute(
+            """
+            SELECT id FROM tasks
+            WHERE lead_id = ? AND conversation_id = ? AND type = ?
+              AND status IN ('open', 'in_progress', 'planned', 'blocked')
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (lead_id, conversation_id, FRONT_TRANSITION_REVIEW_ACTION),
+        ).fetchone()
+        metadata = {
+            "import_run_id": lead.get("front_import_run_id"),
+            "front_group_key": lead.get("front_transition_key"),
+            "inbound_reopened": True,
+        }
+        if existing:
+            conn.execute(
+                """
+                UPDATE tasks
+                SET title = ?, assigned_to_user_id = ?, due_at = ?,
+                    urgency = 'urgent', metadata_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (title, setter_id, now, json.dumps(metadata, ensure_ascii=False), now, existing["id"]),
+            )
+        else:
+            action_id = _insert_next_action(
+                conn,
+                lead_id=lead_id,
+                conversation_id=conversation_id,
+                action_type=FRONT_TRANSITION_REVIEW_ACTION,
+                title=title,
+                assigned_to_user_id=setter_id,
+                created_by_user_id=None,
+                urgency="urgent",
+                due_at=now,
+                trigger_reason="front_transition_inbound_received",
+                metadata=metadata,
+            )
+            insert_event(
+                conn,
+                lead_id,
+                "front_transition_review_created_from_inbound",
+                new={
+                    "task_id": action_id,
+                    "assigned_to_user_id": setter_id,
+                    "conversation_id": conversation_id,
+                },
+            )
+        return
 
     if lead.get("contact_status") in STOP_CONTACT_STATUSES:
         _upsert_contact_review_action(
@@ -5849,6 +5983,12 @@ def _phone_match_candidates(conn: Any, from_phone: str) -> list[dict[str, Any]]:
                 ORDER BY c2.id DESC
                 LIMIT 1
             ) AS conversation_id,
+            (
+                SELECT c2.status FROM conversations c2
+                WHERE c2.lead_id = l.id
+                ORDER BY c2.id DESC
+                LIMIT 1
+            ) AS conversation_status,
             l.schooldrive_lead_id,
             l.first_name,
             l.last_name,
@@ -6001,6 +6141,14 @@ def _select_inbound_match(
     from_phone: str,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]], str]:
     candidates = _phone_match_candidates(conn, from_phone)
+    active_front_transitions = [
+        candidate
+        for candidate in candidates
+        if candidate.get("source") == FRONT_TRANSITION_SOURCE
+        and candidate.get("conversation_status") == "open"
+    ]
+    if active_front_transitions:
+        return active_front_transitions[0], candidates, "matched_front_transition"
     review_records = [
         candidate
         for candidate in candidates
@@ -8843,7 +8991,7 @@ def _mark_outbound_message_send_error(
 
 def _active_outbound_action_kind(conn: Any, lead_id: int) -> str:
     action = _active_outbound_action(conn, lead_id)
-    if action and action.get("type") == "follow_up":
+    if action and action.get("type") in {"follow_up", FRONT_TRANSITION_FOLLOW_UP_ACTION}:
         return "follow_up"
     return "reply"
 
@@ -8852,13 +9000,22 @@ def _active_outbound_action(conn: Any, lead_id: int) -> dict[str, Any] | None:
     return _first_active_action_for_lead(
         conn,
         lead_id,
-        action_types=("reply", "follow_up"),
+        action_types=(
+            "reply",
+            "follow_up",
+            FRONT_TRANSITION_REVIEW_ACTION,
+            FRONT_TRANSITION_FOLLOW_UP_ACTION,
+        ),
         include_blocked=True,
     )
 
 
 def _outbound_action_kind(action: dict[str, Any] | None) -> str:
-    return "follow_up" if action and action.get("type") == "follow_up" else "reply"
+    return (
+        "follow_up"
+        if action and action.get("type") in {"follow_up", FRONT_TRANSITION_FOLLOW_UP_ACTION}
+        else "reply"
+    )
 
 
 def _outbound_send_already_claimed_message() -> str:
@@ -9365,6 +9522,8 @@ def _validate_action_workflow_completion(
         },
         "manual_reprise_setter": {"done"},
         "manual_reprise_closer": {"done"},
+        FRONT_TRANSITION_REVIEW_ACTION: {"front_transition_done", "do_not_contact"},
+        FRONT_TRANSITION_FOLLOW_UP_ACTION: {"front_transition_done", "do_not_contact"},
         "other": {"done"},
     }
     allowed = allowed_by_type.get(str(action_type), set())
@@ -9509,6 +9668,8 @@ def complete_action_with_workflow(
             return False, "Une mini note est obligatoire après un appel."
         if task["type"] in MANUAL_REPRISE_ACTION_TYPES and not note:
             return False, "Une note est obligatoire pour terminer cette reprise manuelle."
+        if task["type"] in FRONT_TRANSITION_ACTION_TYPES and not note:
+            return False, "Une note est obligatoire pour terminer cette transition Front."
         ok_transition, transition_message = _validate_action_workflow_completion(
             conn,
             task,
@@ -9613,6 +9774,8 @@ def complete_action_with_workflow(
                 "contact_review": "Note de revue contact",
                 "manual_reprise_setter": "Note de reprise manuelle setter",
                 "manual_reprise_closer": "Note de reprise manuelle closer",
+                FRONT_TRANSITION_REVIEW_ACTION: "Note de reprise transition Front",
+                FRONT_TRANSITION_FOLLOW_UP_ACTION: "Note de relance transition Front",
                 "other": "Note d'action",
             }
             action_note_label = action_note_labels.get(task["type"], "Note d'action")
@@ -10174,6 +10337,12 @@ def complete_action_with_workflow(
                     )
                 else:
                     resolve("handled_elsewhere")
+
+        elif task["type"] in FRONT_TRANSITION_ACTION_TYPES:
+            if outcome == "do_not_contact":
+                resolve("do_not_contact")
+            elif outcome == "front_transition_done":
+                resolve("front_transition_handled")
 
         elif task["type"] == "other":
             if task.get("sequence_code") and task.get("sequence_step_index"):
