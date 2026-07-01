@@ -61,18 +61,25 @@ def clean_message_body_text(value: Any) -> str:
             return converted
         if re.search(r"<\s*img\b", text, re.IGNORECASE):
             return "Pièce jointe Front"
+        return ""
     return _normalize_message_text(text)
 
 
 def front_message_body_text(message: dict[str, Any]) -> str:
     raw_text = str(message.get("text") or "").replace("\xa0", " ")
     if raw_text.strip():
-        return clean_message_body_text(raw_text)
+        converted = clean_message_body_text(raw_text)
+        if converted:
+            return converted
+        if _FRONT_HTML_TAG_RE.search(raw_text):
+            return "Message Front vide"
     raw_body = str(message.get("body") or "")
     if raw_body.strip():
         converted = clean_message_body_text(raw_body)
         if converted:
             return converted
+        if _FRONT_HTML_TAG_RE.search(raw_body):
+            return "Message Front vide"
     if message.get("attachments"):
         return "Pièce jointe Front"
     return ""

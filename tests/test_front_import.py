@@ -217,6 +217,40 @@ def test_front_body_repair_updates_existing_imported_messages() -> None:
     assert row["message_body"] == "Bonjour\n\nMerci"
 
 
+def test_front_body_repair_replaces_empty_html_shells() -> None:
+    seed_initial_data()
+    raw_body = "<div></div>"
+    import_front_transition_records(
+        [
+            {
+                "conversation": _front_conversation("cnv_empty_html_front", "+41760000106"),
+                "messages": [
+                    {
+                        "id": "msg_empty_html_front",
+                        "type": "whatsapp",
+                        "is_inbound": True,
+                        "created_at": 1781157301,
+                        "text": raw_body,
+                    }
+                ],
+            }
+        ],
+        "front-transition-empty-html",
+    )
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT fm.body AS front_body, m.body AS message_body
+            FROM front_messages fm
+            JOIN messages m ON m.id = fm.imported_message_id
+            WHERE fm.front_message_id = 'msg_empty_html_front'
+            """
+        ).fetchone()
+
+    assert row["front_body"] == "Message Front vide"
+    assert row["message_body"] == "Message Front vide"
+
+
 def test_front_attachment_import_is_idempotent_and_downloadable(monkeypatch) -> None:
     monkeypatch.setenv("SALES_COCKPIT_PUBLIC_API_BASE_URL", "https://cockpit.example.test")
     get_settings.cache_clear()
