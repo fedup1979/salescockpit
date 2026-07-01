@@ -1,16 +1,16 @@
 # Front Emergency Rollback
 
-Last updated: 2026-07-01 10:05 Europe/Zurich.
+Last updated: 2026-07-01 11:00 Europe/Zurich.
 
 This is the emergency procedure if the WhatsApp cutover to Sales Cockpit causes a major incident and ESSR must return to Front quickly.
 
 ## Current Safe State
 
-- Production app commit prepared cold: `e502bf0`.
+- Production app commit prepared cold: `c5d1c04`.
 - Production Twilio mode is still `mock`.
 - Production Twilio Content is still read-only.
 - No Twilio webhook has been changed by this preparation.
-- Latest production backup before Twilio Content local sync: `/opt/sales-cockpit/backups/prod/sales_cockpit_prod_20260701T080101Z.db.gz`.
+- Latest production backup before Pilotage alignment: `/opt/sales-cockpit/backups/prod/sales_cockpit_prod_20260701T085356Z.db.gz`.
 
 ## Information To Capture Before Turning The Key
 
@@ -69,7 +69,7 @@ Only restore the database if Sales Cockpit created polluted operational data dur
 ```bash
 sudo CONFIRM_RESTORE=1 bash /opt/sales-cockpit/prod/app/deploy/scripts/restore_sqlite.sh \
   prod \
-  /opt/sales-cockpit/backups/prod/sales_cockpit_prod_20260701T080101Z.db.gz
+  /opt/sales-cockpit/backups/prod/sales_cockpit_prod_20260701T085356Z.db.gz
 ```
 
 After restore:
@@ -93,17 +93,14 @@ set +a
 - Do not retry the cutover before logs and failed messages are reviewed.
 - Do not restore the DB if the incident is only external Twilio routing and no Sales Cockpit data pollution occurred.
 
-## Current Live Blocker
+## Current Pre-Live State
 
-As of 2026-07-01 10:05, `--strict-prod` is expected to fail. One staging-validated template SID is not available in Twilio anymore:
+As of 2026-07-01 11:00, production Pilotage mirrors staging. `lead_no_reply` step 3 AS uses the approved template validated in staging:
 
 ```text
-Template: relance_temoignage_as_3
-SID: HXbf6f0daf2b5fcb5b1ac94eb21beeadc7
-Twilio direct lookup: 404 not found
-Affected mappings:
-- lead_no_reply step 3, AS
-- setter_no_next_step step 3, AS
+Template: as_3_echeance_offre_450_francs
+SID: HX5e48dc8cbc78d0f20ee2d3391b447182
+Flux: lead_no_reply step 3, AS, follow_up, T+18j
 ```
 
-Do not turn the key until Laura/François either restores this Twilio template or validates a replacement approved template.
+`--strict-prod` is still expected to fail until live prerequisites are configured: HTTPS URLs, SchoolDrive prod token, Twilio prod credentials, Twilio live mode, sender/service SID, and HTTPS callbacks.

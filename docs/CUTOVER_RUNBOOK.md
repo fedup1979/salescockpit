@@ -257,12 +257,11 @@ PRAGMA foreign_key_check;
 
 Expected result: `78` active real mappings, `APP=26`, `AS=26`, `FSM=26`, and no foreign-key issue.
 
-Current blocker as of 2026-07-01 10:05:
+Pilotage alignment as of 2026-07-01 11:00:
 
-- `relance_temoignage_as_3` / `HXbf6f0daf2b5fcb5b1ac94eb21beeadc7` is mapped in staging but Twilio direct lookup returns `404 not found`.
-- It affects `lead_no_reply` step 3 AS and `setter_no_next_step` step 3 AS.
-- Do not force this template to `approved` locally.
-- Do not turn the key until Laura/François restores this Twilio template or validates a replacement approved template.
+- Production Pilotage was mirrored from staging and verified identical for `whatsapp_templates`, `sequences`, `sequence_steps`, `course_categories`, `course_default_sessions`, and `sequence_template_mappings`.
+- `lead_no_reply` step 3 AS uses `as_3_echeance_offre_450_francs` / `HX5e48dc8cbc78d0f20ee2d3391b447182`, `approved`, `T+18j`, `follow_up`.
+- `relance_temoignage_as_3` / `HXbf6f0daf2b5fcb5b1ac94eb21beeadc7` is on `setter_no_next_step` step 3, which is `manual_reprise_setter` with `requires_template=0`; it is not a strict live send blocker after alignment.
 
 ## T-1: Front Buffer Import
 
@@ -385,7 +384,7 @@ sudo CONFIRM_RESTORE=1 bash /opt/sales-cockpit/prod/app/deploy/scripts/restore_s
 - Fresh staging validation of Tiago's schema `2.1` through the real website lead and presubscription paths, before the one-time full resync.
 - Real ESSR Twilio template synchronization in read-only mode.
 - Align production to the validated staging mappings: `78` active real mappings, `APP=26`, `AS=26`, `FSM=26`, matched by Twilio Content SID.
-- Resolve unavailable mapped template `relance_temoignage_as_3` / `HXbf6f0daf2b5fcb5b1ac94eb21beeadc7` before live.
+- Re-check Pilotage equality if any staging tuning changes after 2026-07-01 11:00.
 - Capture the current Front Twilio inbound webhook and status callback before changing Twilio Console, so rollback is immediate.
 - Final Twilio production sender verification.
 - Front full-history import batch sizing.
