@@ -142,8 +142,10 @@ FRONT_NON_PERSON_NAME_TOKENS = {
     "clinic",
     "compta",
     "company",
+    "customer",
     "ecole",
     "ecoles",
+    "espace",
     "formation",
     "formations",
     "follower",
@@ -156,6 +158,9 @@ FRONT_NON_PERSON_NAME_TOKENS = {
     "institute",
     "insta",
     "instagram",
+    "manager",
+    "maneger",
+    "meta",
     "nutrition",
     "office",
     "page",
@@ -1759,7 +1764,7 @@ def _usable_front_person_name(value: str) -> bool:
         return False
     if re.search(r"[_!?]|\d", name):
         return False
-    if "." in name and not re.search(r"\b(?:dr|mme|mr|mrs|ms|m)\.", lowered):
+    if "." in name and not re.search(r"\b(?:dr|mme|mr|mrs|ms)\.", lowered):
         return False
     if name.isupper() and len(name) > 3:
         return False
