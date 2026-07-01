@@ -6,7 +6,7 @@ This is the emergency procedure if the WhatsApp cutover to Sales Cockpit causes 
 
 ## Current Safe State
 
-- Production app commit prepared cold: `ae487d8`.
+- Production app commit prepared cold: `e502bf0`.
 - Production Twilio mode is still `mock`.
 - Production Twilio Content is still read-only.
 - No Twilio webhook has been changed by this preparation.
