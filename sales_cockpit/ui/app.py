@@ -54,6 +54,7 @@ from sales_cockpit.store import (
     deactivate_course_default_session,
     deactivate_sequence_step,
     deactivate_sequence_template_mapping,
+    get_attachment_download,
     get_conversation,
     get_integration_readiness,
     get_next_action_for_lead,
@@ -1111,7 +1112,8 @@ def render_messages(conversation_id: int, show_internal_notes: bool = True) -> N
         created = format_dt(message_display_timestamp(message))
         template = f" · modèle: {message['template_name']}" if message.get("template_name") else ""
         delivery = render_delivery_status(message)
-        attachments_html = render_message_attachments(message.get("attachments") or [])
+        attachments = message.get("attachments") or []
+        attachments_html = render_message_attachments(attachments)
         body = message_body_html(message["body"])
         st.markdown(
             f"""
@@ -1125,6 +1127,7 @@ def render_messages(conversation_id: int, show_internal_notes: bool = True) -> N
             """,
             unsafe_allow_html=True,
         )
+        render_message_attachment_controls(int(message["id"]), attachments)
 
 
 def message_body_html(value: str) -> str:
@@ -1210,6 +1213,66 @@ def render_message_attachments(attachments: list[dict]) -> str:
         else:
             links.append(f'<span class="sc-attachment-link">{label}</span>')
     return f'<div class="sc-attachment-list">{"".join(links)}</div>'
+
+
+def render_message_attachment_controls(message_id: int, attachments: list[dict]) -> None:
+    if not attachments:
+        return
+    payloads = [
+        payload
+        for payload in (message_attachment_download_payload(attachment) for attachment in attachments)
+        if payload is not None
+    ]
+    if not payloads:
+        return
+    with st.container(key=f"message_attachments_{message_id}"):
+        for payload in payloads:
+            render_attachment_preview(payload)
+            st.download_button(
+                payload["button_label"],
+                data=payload["data"],
+                file_name=payload["file_name"],
+                mime=payload["mime_type"],
+                key=f"download_attachment_{message_id}_{payload['id']}",
+                use_container_width=False,
+            )
+
+
+def message_attachment_download_payload(attachment: dict) -> dict | None:
+    attachment_id = attachment.get("id")
+    token_name = Path(str(attachment.get("storage_url_or_path") or "")).name
+    if not attachment_id or not token_name:
+        return None
+    download = get_attachment_download(int(attachment_id), token_name)
+    if not download:
+        return None
+    path = download["path"]
+    file_size = path.stat().st_size
+    if file_size <= 0:
+        return None
+    file_name = str(download["file_name"] or attachment.get("file_name") or path.name)
+    mime_type = str(download["mime_type"] or attachment.get("mime_type") or "application/octet-stream")
+    size_label = format_bytes(file_size)
+    return {
+        "id": int(attachment_id),
+        "data": path.read_bytes(),
+        "file_name": file_name,
+        "mime_type": mime_type,
+        "size_label": size_label,
+        "button_label": f"Télécharger {file_name} · {size_label}",
+    }
+
+
+def render_attachment_preview(payload: dict) -> None:
+    mime_type = str(payload.get("mime_type") or "").lower()
+    data = payload.get("data") or b""
+    file_name = str(payload.get("file_name") or "Pièce jointe")
+    if mime_type.startswith("image/"):
+        st.image(data, caption=file_name)
+    elif mime_type.startswith("audio/"):
+        st.audio(data, format=mime_type)
+    elif mime_type.startswith("video/"):
+        st.video(data, format=mime_type)
 
 
 def render_delivery_status(message: dict) -> str:

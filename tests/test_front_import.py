@@ -461,6 +461,110 @@ def test_front_name_reconciliation_ignores_extended_front_aliases() -> None:
     assert lead["first_name"] == "Contact Front"
 
 
+def test_front_name_reconciliation_ignores_new_front_alias_words() -> None:
+    seed_initial_data()
+    import_front_transition_records(
+        [
+            {
+                "conversation": {
+                    **_front_conversation("cnv_new_alias_name_front", "+41760000118"),
+                    "recipient": {"name": "Green Capybara"},
+                },
+                "messages": [
+                    {
+                        **_front_message("msg_new_alias_name_front", is_inbound=True),
+                        "recipients": [
+                            {
+                                "role": "from",
+                                "handle": "+41760000118",
+                                "name": "Green Capybara",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+        "front-transition-new-alias-name",
+    )
+
+    result = reconcile_front_transition_names("front-transition-new-alias-name", dry_run=False)
+
+    assert result["counts"]["unchanged"] == 1
+
+
+def test_front_name_reconciliation_accepts_single_titlecase_first_name() -> None:
+    seed_initial_data()
+    import_front_transition_records(
+        [
+            {
+                "conversation": {
+                    **_front_conversation("cnv_single_first_name_front", "+41760000116"),
+                    "recipient": {"name": "Audrey"},
+                },
+                "messages": [
+                    {
+                        **_front_message("msg_single_first_name_front", is_inbound=True),
+                        "recipients": [
+                            {
+                                "role": "from",
+                                "handle": "+41760000116",
+                                "name": "Audrey",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+        "front-transition-single-first-name",
+    )
+
+    result = reconcile_front_transition_names("front-transition-single-first-name", dry_run=False)
+
+    assert result["counts"]["update"] == 1
+    with connect() as conn:
+        lead = conn.execute(
+            """
+            SELECT first_name, last_name
+            FROM leads
+            WHERE source = 'front_transition'
+              AND front_import_run_id = 'front-transition-single-first-name'
+            """
+        ).fetchone()
+    assert lead["first_name"] == "Audrey"
+    assert lead["last_name"] == ""
+
+
+def test_front_name_reconciliation_ignores_lowercase_handles() -> None:
+    seed_initial_data()
+    import_front_transition_records(
+        [
+            {
+                "conversation": {
+                    **_front_conversation("cnv_lowercase_handle_front", "+41760000117"),
+                    "recipient": {"name": "laviedejessy"},
+                },
+                "messages": [
+                    {
+                        **_front_message("msg_lowercase_handle_front", is_inbound=True),
+                        "recipients": [
+                            {
+                                "role": "from",
+                                "handle": "+41760000117",
+                                "name": "laviedejessy",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+        "front-transition-lowercase-handle",
+    )
+
+    result = reconcile_front_transition_names("front-transition-lowercase-handle", dry_run=False)
+
+    assert result["counts"]["unchanged"] == 1
+
+
 def test_front_name_reconciliation_ignores_non_person_names() -> None:
     seed_initial_data()
     import_front_transition_records(

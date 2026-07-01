@@ -90,6 +90,9 @@ FRONT_ANONYMIZED_SECOND_WORDS = {
     "badger",
     "beaver",
     "bison",
+    "boa",
+    "capybara",
+    "chameleon",
     "cheetah",
     "coyote",
     "dolphin",
@@ -105,6 +108,7 @@ FRONT_ANONYMIZED_SECOND_WORDS = {
     "lemur",
     "llama",
     "lynx",
+    "manatee",
     "meerkat",
     "nautilus",
     "ocelot",
@@ -114,6 +118,7 @@ FRONT_ANONYMIZED_SECOND_WORDS = {
     "platypus",
     "porcupine",
     "rhinoceros",
+    "salamander",
     "seahorse",
     "sloth",
     "stork",
@@ -1770,8 +1775,9 @@ def _usable_front_person_name(value: str) -> bool:
         return False
     if name.isupper() and len(name) > 3:
         return False
-    normalized_tokens = set(re.sub(r"[^a-z0-9]+", " ", lowered).split())
-    if len(normalized_tokens) < 2:
+    letter_tokens = _front_name_letter_tokens(name)
+    normalized_tokens = set(letter_tokens)
+    if not normalized_tokens:
         return False
     if normalized_tokens & FRONT_NON_PERSON_NAME_TOKENS:
         return False
@@ -1784,6 +1790,21 @@ def _usable_front_person_name(value: str) -> bool:
     if normalize_phone_e164(name):
         return False
     if _looks_like_front_anonymized_name(name):
+        return False
+    if len(letter_tokens) == 1 and not _usable_single_front_name_token(name, letter_tokens[0]):
+        return False
+    return True
+
+
+def _front_name_letter_tokens(value: str) -> list[str]:
+    return re.findall(r"[^\W\d_]+", value.lower(), flags=re.UNICODE)
+
+
+def _usable_single_front_name_token(value: str, token: str) -> bool:
+    raw = value.strip()
+    if len(token) < 2 or len(token) > 24:
+        return False
+    if raw == raw.lower() and raw.isascii():
         return False
     return True
 

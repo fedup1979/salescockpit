@@ -18,6 +18,7 @@ from sales_cockpit.store import (
     list_tasks,
     list_sequence_steps,
     list_conversations,
+    list_messages,
     record_inbound_message,
     send_freeform_message,
     set_conversation_status,
@@ -33,6 +34,7 @@ from sales_cockpit.ui.app import (
     labelize,
     login_hint_text,
     local_due_at,
+    message_attachment_download_payload,
     message_display_timestamp,
     message_body_html,
     simulated_template_label,
@@ -131,6 +133,38 @@ def test_message_body_html_preserves_line_breaks_without_raw_html() -> None:
     assert html == "Bonjour Dévaki,<br><br>A &lt; B"
     assert "\n" not in html
     assert "</div>" not in html
+
+
+def test_message_attachment_download_payload_works_without_public_url() -> None:
+    seed_initial_data()
+    user = authenticate("service.etudiants@essr.ch", "ChangeMe!2026")
+    result = record_inbound_message(unique_phone(), "Bonjour.")
+
+    ok, message = send_freeform_message(
+        result["conversation_id"],
+        user["id"],
+        "Voici la pièce jointe.",
+        attachments=[
+            {
+                "file_name": "qr-code.jpeg",
+                "mime_type": "image/jpeg",
+                "content": b"\xff\xd8JPEGDATA",
+            }
+        ],
+    )
+
+    assert ok, message
+    outbound = [item for item in list_messages(result["conversation_id"]) if item["direction"] == "outbound"][-1]
+    attachment = outbound["attachments"][0]
+    attachment["public_url"] = ""
+
+    payload = message_attachment_download_payload(attachment)
+
+    assert payload is not None
+    assert payload["file_name"] == "qr-code.jpeg"
+    assert payload["mime_type"] == "image/jpeg"
+    assert payload["data"] == b"\xff\xd8JPEGDATA"
+    assert payload["button_label"].startswith("Télécharger qr-code.jpeg")
 
 
 def test_front_transition_actions_have_human_labels() -> None:
