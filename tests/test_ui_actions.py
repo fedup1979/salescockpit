@@ -226,6 +226,49 @@ def test_front_transition_review_exposes_followup_planner() -> None:
     assert "Décision" in selectbox_labels
 
 
+def test_identification_chip_exposes_manual_name_popover() -> None:
+    seed_initial_data()
+    suffix = uuid4().hex[:8]
+    phone = unique_front_phone()
+    import_front_transition_records(
+        [
+            {
+                "conversation": {
+                    "id": f"cnv_front_identity_chip_{suffix}",
+                    "subject": f"WhatsApp thread with {phone}",
+                    "status": "assigned",
+                },
+                "messages": [
+                    {
+                        "id": f"msg_front_identity_chip_{suffix}",
+                        "type": "whatsapp",
+                        "is_inbound": True,
+                        "created_at": datetime.now(timezone.utc).timestamp(),
+                        "text": "Historique Front importé.",
+                    }
+                ],
+            }
+        ],
+        f"front-transition-identity-chip-{suffix}",
+    )
+    action = next(
+        item
+        for item in list_tasks("all")
+        if item["type"] == "front_transition_review" and item["phone_e164"] == phone
+    )
+
+    app = render_selected_action(action["id"], action["assigned_to_email"])
+
+    assert len(app.exception) == 0
+    button_labels = [item.label for item in app.button]
+    text_input_labels = [item.label for item in app.text_input]
+    text_area_labels = [item.label for item in app.text_area]
+    assert "Prénom" in text_input_labels
+    assert "Nom" in text_input_labels
+    assert "Note d'identification" in text_area_labels
+    assert "Enregistrer l'identification" in button_labels
+
+
 def test_reply_action_guides_to_conversation_send_without_generic_completion() -> None:
     seed_initial_data()
     user = authenticate("service.etudiants@essr.ch", "ChangeMe!2026")

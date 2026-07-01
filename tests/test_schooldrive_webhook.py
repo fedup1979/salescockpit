@@ -11,6 +11,7 @@ from sales_cockpit.config import get_settings
 from sales_cockpit.db import connect, seed_initial_data
 from sales_cockpit.services.schooldrive import SchoolDriveConnector
 from sales_cockpit.store import (
+    authenticate,
     get_conversation,
     get_next_action_for_lead,
     ingest_schooldrive_snapshot,
@@ -18,8 +19,10 @@ from sales_cockpit.store import (
     list_messages,
     record_inbound_message,
     send_freeform_message,
+    update_temporary_identity,
     upsert_course_default_session,
 )
+from sales_cockpit.services.front_import import import_front_transition_records
 from sales_cockpit.services.whatsapp_rules import iso_utc, utc_now
 
 
@@ -206,6 +209,75 @@ def test_schooldrive_snapshot_creates_lead_conversation_messages_and_followup() 
     assert action["sequence_code"] == "lead_no_reply"
     assert action["sequence_step_index"] == 1
     assert action["due_at"].startswith("2026-06-21T09:34:20")
+
+
+def test_schooldrive_identity_overwrites_manual_front_transition_identity() -> None:
+    seed_initial_data()
+    admin = authenticate("francois.dupuis@essr.ch", "ChangeMe!2026")
+    phone = "+41790012345"
+    import_front_transition_records(
+        [
+            {
+                "conversation": {
+                    "id": "cnv_front_identity_schooldrive",
+                    "subject": f"WhatsApp thread with {phone}",
+                    "status": "assigned",
+                },
+                "messages": [
+                    {
+                        "id": "msg_front_identity_schooldrive",
+                        "type": "whatsapp",
+                        "is_inbound": True,
+                        "created_at": 1780000000,
+                        "text": "Historique Front importé.",
+                    }
+                ],
+            }
+        ],
+        "front-transition-schooldrive-identity",
+    )
+    with connect() as conn:
+        front = conn.execute(
+            """
+            SELECT c.id AS conversation_id
+            FROM leads l
+            JOIN conversations c ON c.lead_id = l.id
+            WHERE l.source = 'front_transition'
+              AND l.phone_e164 = ?
+            """,
+            (phone,),
+        ).fetchone()
+    assert front is not None
+
+    ok, _message = update_temporary_identity(
+        front["conversation_id"],
+        admin["id"],
+        "Nom",
+        "Manuel",
+        "",
+        "",
+        "Saisie pendant la transition Front.",
+    )
+    assert ok is True
+    assert get_conversation(front["conversation_id"])["first_name"] == "Nom"
+
+    payload = schooldrive_payload(
+        event_id="evt_sd_front_identity_overwrite",
+        schooldrive_id="lead:front-identity-overwrite",
+        first_name="Nora",
+        last_name="SchoolDrive",
+        course_category="APP",
+    )
+    payload["data"]["person"]["phone"] = phone
+
+    ingest_schooldrive_snapshot(payload)
+
+    conversation = get_conversation(front["conversation_id"])
+    assert conversation["source"] == "front_transition"
+    assert conversation["schooldrive_lead_id"] is None
+    assert conversation["first_name"] == "Nora"
+    assert conversation["last_name"] == "SchoolDrive"
+    assert conversation["identity_status"] == "verified"
 
 
 def test_schooldrive_new_snapshot_without_autoresponder_is_ignored() -> None:

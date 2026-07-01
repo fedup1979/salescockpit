@@ -2321,7 +2321,115 @@ def _upsert_schooldrive_lead(
                 (lead_id, phone, now, now),
             ).lastrowid
         )
+    _sync_front_transition_identity_from_schooldrive(
+        conn,
+        phone=phone,
+        first_name=first_name,
+        last_name=last_name,
+        schooldrive_id=schooldrive_id,
+        course_title=course_name,
+        course_category=category,
+        now=now,
+    )
     return lead_id, conversation_id, created
+
+
+def _sync_front_transition_identity_from_schooldrive(
+    conn: Any,
+    *,
+    phone: str | None,
+    first_name: str,
+    last_name: str,
+    schooldrive_id: str,
+    course_title: str | None,
+    course_category: str | None,
+    now: str,
+) -> None:
+    phone = _clean_schooldrive_text(phone)
+    if not phone or not _schooldrive_identity_name_is_usable(first_name, last_name):
+        return
+
+    rows = rows_to_dicts(
+        conn.execute(
+            """
+            SELECT id, first_name, last_name, identity_status, identity_review_note
+            FROM leads
+            WHERE source = ?
+              AND (phone_e164 = ? OR phone_raw = ?)
+            """,
+            (FRONT_TRANSITION_SOURCE, phone, phone),
+        ).fetchall()
+    )
+    if not rows:
+        return
+
+    candidate = {
+        "source": "schooldrive_phone_match",
+        "schooldrive_lead_id": schooldrive_id,
+        "name": _schooldrive_identity_full_name(first_name, last_name),
+        "course": course_title or course_category or "",
+    }
+    candidates_json = json.dumps([candidate], ensure_ascii=False)
+    note = "Identité confirmée par SchoolDrive via téléphone exact."
+    for row in rows:
+        if (
+            row.get("first_name") == first_name
+            and row.get("last_name") == last_name
+            and row.get("identity_status") == IDENTITY_STATUS_VERIFIED
+        ):
+            continue
+        conn.execute(
+            """
+            UPDATE leads
+            SET first_name = ?,
+                last_name = ?,
+                identity_status = ?,
+                identity_review_note = ?,
+                identity_candidates_json = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                first_name,
+                last_name,
+                IDENTITY_STATUS_VERIFIED,
+                note,
+                candidates_json,
+                now,
+                row["id"],
+            ),
+        )
+        insert_event(
+            conn,
+            row["id"],
+            "front_transition_identity_confirmed_by_schooldrive",
+            previous={
+                "first_name": row.get("first_name"),
+                "last_name": row.get("last_name"),
+                "identity_status": row.get("identity_status"),
+                "identity_review_note": row.get("identity_review_note"),
+            },
+            new={
+                "first_name": first_name,
+                "last_name": last_name,
+                "identity_status": IDENTITY_STATUS_VERIFIED,
+                "schooldrive_lead_id": schooldrive_id,
+            },
+        )
+
+
+def _schooldrive_identity_name_is_usable(first_name: str, last_name: str) -> bool:
+    first = (first_name or "").strip()
+    last = (last_name or "").strip()
+    full_name = _schooldrive_identity_full_name(first, last)
+    if not full_name:
+        return False
+    generic = {"inconnu(e)", "inconnu", "inconnue", "contact", "contact front", "n/a", "na"}
+    return first.lower() not in generic and full_name.lower() not in generic
+
+
+def _schooldrive_identity_full_name(first_name: str, last_name: str) -> str:
+    return " ".join(part for part in [(first_name or "").strip(), (last_name or "").strip()] if part)
 
 
 def _replace_schooldrive_autoresponders(

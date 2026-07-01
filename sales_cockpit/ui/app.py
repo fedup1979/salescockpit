@@ -1019,11 +1019,7 @@ def render_compact_lead_state(user: dict, conv: dict) -> None:
         with state_cols[2]:
             render_contact_popover(user, conv)
         with state_cols[3]:
-            if identity_needs_review(conv):
-                st.markdown(
-                    f'<div class="sc-compact-state">{state_chip_html("Identification", "À identifier")}</div>',
-                    unsafe_allow_html=True,
-                )
+            render_identity_popover(user, conv)
 
 
 def render_qualification_popover(user: dict, conv: dict) -> None:
@@ -1091,6 +1087,69 @@ def render_contact_popover(user: dict, conv: dict) -> None:
                 st.success("Contact mis à jour.")
                 clear_widget_keys(contact_status_key)
                 st.rerun()
+
+
+def render_identity_popover(user: dict, conv: dict) -> None:
+    current_identity_status = conv.get("identity_status") or "verified"
+    identity_value = f"{labelize(current_identity_status)} ▾"
+    with st.container(key="lead_identity_chip"):
+        st.markdown(
+            f'<div class="sc-compact-state sc-clickable-state">{state_chip_html("Identification", identity_value)}</div>',
+            unsafe_allow_html=True,
+        )
+        with st.popover("Modifier l'identification", help="Modifier l'identité", use_container_width=True):
+            if conv.get("schooldrive_lead_id") and not identity_needs_review(conv):
+                st.caption("Identité confirmée par SchoolDrive. La source SchoolDrive reste prioritaire.")
+                st.text_input(
+                    "Prénom",
+                    value=conv.get("first_name") or "",
+                    disabled=True,
+                    key=f"quick_identity_first_readonly_{conv['id']}",
+                )
+                st.text_input(
+                    "Nom",
+                    value=conv.get("last_name") or "",
+                    disabled=True,
+                    key=f"quick_identity_last_readonly_{conv['id']}",
+                )
+                return
+
+            first_name_key = f"quick_identity_first_{conv['id']}"
+            last_name_key = f"quick_identity_last_{conv['id']}"
+            note_key = f"quick_identity_note_{conv['id']}"
+            with st.form(f"quick_identity_edit_{conv['id']}"):
+                first_name = st.text_input(
+                    "Prénom",
+                    value="" if conv.get("first_name") == "Inconnu(e)" else conv.get("first_name") or "",
+                    key=first_name_key,
+                )
+                last_name = st.text_input(
+                    "Nom",
+                    value=conv.get("last_name") or "",
+                    key=last_name_key,
+                )
+                note = st.text_area(
+                    "Note d'identification",
+                    value=conv.get("identity_review_note") or "",
+                    height=72,
+                    placeholder="Ex. nom donné au téléphone, à confirmer dans SchoolDrive.",
+                    key=note_key,
+                )
+                submitted = st.form_submit_button("Enregistrer l'identification")
+            if submitted:
+                ok, message = update_temporary_identity(
+                    conv["id"],
+                    user["id"],
+                    first_name,
+                    last_name,
+                    conv.get("course_category_short_title") or "",
+                    conv.get("course_title") or "",
+                    note,
+                )
+                show_result(ok, message)
+                if ok:
+                    clear_widget_keys(first_name_key, last_name_key, note_key)
+                    st.rerun()
 
 
 def render_messages(conversation_id: int, show_internal_notes: bool = True) -> None:
